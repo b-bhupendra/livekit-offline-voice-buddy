@@ -20,6 +20,12 @@ models/*.onnx
 *.pth
 *.onnx
 
+# Persistent SQLite Databases
+*.db
+*.sqlite
+*.sqlite3
+mvp_talker_offline/data/
+
 # Temporary Audio & Media Files
 *.mp3
 *.wav

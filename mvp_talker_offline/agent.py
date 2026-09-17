@@ -41,9 +41,10 @@ from livekit import rtc
 from livekit import agents
 from livekit.agents import (
     Agent, AgentServer, AgentSession, ChatContext, ChatMessage,
-    TurnHandlingOptions, inference, function_tool, RunContext, stt, utils
+    TurnHandlingOptions, inference, function_tool, RunContext, stt, utils, mcp
 )
 from livekit.plugins import openai, silero
+import memory_store
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen-buddy")
@@ -74,15 +75,28 @@ async def ensure_audio_server_async():
                 await asyncio.sleep(0.2)
 
 INSTRUCTIONS = """
-You are Buddy, a friendly, concise, and upbeat voice AI assistant.
-You are chatting with your friend Bhupendra in real-time over audio.
+You are Buddy, a friendly, supportive, and engaging English conversation buddy and speaking coach.
+You are chatting with your friend and student, Bhupendra, in real time over voice.
+Your mission is to help Bhupendra practice natural spoken English, build speaking confidence across everyday scenarios, and gently improve grammatical mistakes.
 
-RULES:
-1. Speak in short, natural sentences. Keep your response under three sentences.
-2. Deliver one clear thought per breath.
-3. NEVER output markdown symbols: no asterisks, no bullet points, no headers, no bold text.
-4. Sound warm, supportive, and natural.
-5. Ask a helpful follow-up question when it moves the conversation forward.
+CORE TEACHING & CONVERSATIONAL RULES:
+1. GENTLE CONVERSATIONAL RECASTING (NO PEDANTIC LECTURES):
+   - When the user makes a grammatical slip, awkward phrasing, or wrong tense, DO NOT interrupt aggressively or lecture.
+   - Gently recast and model the correct phrasing naturally in your reply.
+     * Example: User says "Yesterday I have went to market." -> Buddy says: "Ah, you went to the market yesterday! What did you get while you were there?"
+     * Example: User says "She don't know the answer." -> Buddy says: "Right, she doesn't know yet! How do you think she will find out?"
+   - If a quick tip is helpful, give a simple one-sentence tip, then immediately keep the dialogue moving.
+2. PRACTICE REAL-LIFE SCENARIOS & CASUAL TALK:
+   - Guide the conversation through realistic scenarios: daily small talk, ordering at a cafe, job interviews, travel situations, discussing hobbies, technology, or weekend plans.
+   - If the user seems stuck or gives very short replies, encourage them with two fun, easy options to choose from.
+3. SPOKEN VOICE CONSTRAINTS (MANDATORY FOR AUDIO):
+   - Keep answers short and natural: 1 to 3 spoken sentences per turn. Never dump long paragraphs.
+   - Deliver one clear thought per breath.
+   - NEVER emit markdown symbols: no asterisks (*), no bullet points (-), no numbered lists, no headers (#), no bold text.
+   - Output only clean, plain conversational English suitable for text-to-speech.
+4. CONTINUITY & ENGAGEMENT:
+   - Always end your turn with an engaging follow-up question or conversational prompt to invite the user to speak next.
+   - Use your memory tools and past session context to reference what you practiced earlier and pick up where you left off.
 """
 
 class FasterWhisperSTT(stt.STT):
@@ -152,18 +166,63 @@ def get_faster_whisper_stt(model_size="tiny.en") -> FasterWhisperSTT:
     return _whisper_singleton
 
 class BuddyAgent(Agent):
-    """Voice Assistant Agent implementation."""
+    """English Practice Voice Assistant Agent implementation with Memory & RAG."""
 
-    def __init__(self):
+    def __init__(self, session_id: str = "default-session"):
         super().__init__(instructions=INSTRUCTIONS)
+        self.session_id = session_id
 
     async def on_user_turn_completed(
         self, turn_ctx: ChatContext, new_message: ChatMessage
     ) -> None:
         """
-        2026 RAG & Memory Hook: Intercepts user utterance before the LLM speaks.
+        Memory & RAG Hook: Records the user's turn and injects relevant past memory
+        if the user asks about prior topics, mistakes, or learning progress.
         """
-        pass
+        content_items = getattr(new_message, "content", [])
+        if isinstance(content_items, list):
+            user_text = " ".join(str(c) for c in content_items if isinstance(c, str)).strip()
+        else:
+            user_text = str(content_items).strip()
+
+        if user_text:
+            # Check for memory recall queries
+            query_lower = user_text.lower()
+            recall_triggers = [
+                "last time", "earlier", "remember", "yesterday", "previous",
+                "mistake", "progress", "before", "what did we talk", "topics"
+            ]
+            if any(trigger in query_lower for trigger in recall_triggers):
+                past_turns = memory_store.search_conversation_history(user_text, limit=3)
+                if past_turns:
+                    memory_lines = [f"- [{t['timestamp'][:16]}] {t['role']}: {t['content']}" for t in past_turns]
+                    context_snippet = (
+                        "RECALLED MEMORY FROM PREVIOUS SESSIONS:\n"
+                        + "\n".join(memory_lines)
+                        + "\nUse this context to accurately answer the user's question about what was discussed."
+                    )
+                    turn_ctx.add_message(role="system", content=context_snippet)
+
+    @function_tool
+    async def get_learning_history(self, context: RunContext) -> str:
+        """Retrieves user's overall English learning progress, past practice topics, and recurring grammar areas."""
+        prog = memory_store.get_learning_progress()
+        recent = [t['topic'] for t in prog.get('recent_topics', []) if t.get('topic')]
+        grammar = [g['grammar_point'] for g in prog.get('grammar_focus_areas', [])]
+        recent_str = ", ".join(recent) if recent else "General English conversation"
+        grammar_str = ", ".join(grammar) if grammar else "Conversational fluency and tense accuracy"
+        return f"Past practice topics: {recent_str}. Active grammar focus areas: {grammar_str}."
+
+    @function_tool
+    async def save_practice_milestone(self, context: RunContext, topic: str, grammar_tip: str) -> str:
+        """Saves a scenario milestone or grammar rule practiced during this session to persistent memory."""
+        memory_store.update_session_summary(
+            self.session_id,
+            topic=topic,
+            grammar_focus=grammar_tip,
+            summary=f"Practiced {topic} with focus on {grammar_tip}."
+        )
+        return f"Saved milestone for topic '{topic}' with grammar focus '{grammar_tip}'."
 
     @function_tool
     async def get_current_time(self, context: RunContext) -> str:
@@ -221,16 +280,43 @@ async def entrypoint(ctx: agents.JobContext):
         vad=vad_provider,
     )
 
-    # 6. Configure session
+    # 6. Configure MCP Memory Server via MCPToolset
+    mcp_script = Path(__file__).resolve().parent / "memory_mcp_server.py"
+    memory_mcp = mcp.MCPServerStdio(
+        command=sys.executable,
+        args=[str(mcp_script)],
+    )
+    memory_toolset = mcp.MCPToolset(id="memory", mcp_server=memory_mcp)
+
+    # 7. Configure session with MCP Tools
     session = AgentSession(
         vad=vad_provider,
         turn_handling=turn_handling,
         llm=llm_provider,
         tts=tts_provider,
         stt=stt_provider,
+        tools=[memory_toolset],
     )
 
-    # Real-time console diagnostics
+    # Initialize persistent session tracking & previous context
+    current_session_id = f"session-{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    last_session = memory_store.get_last_session()
+
+    # Real-time console diagnostics & memory persistence
+    @session.on("conversation_item_added")
+    def on_conversation_item(ev):
+        item = getattr(ev, "item", None)
+        if item:
+            role = getattr(item, "role", None)
+            content = getattr(item, "content", None)
+            if role in ("user", "assistant") and content:
+                if isinstance(content, list):
+                    text = " ".join(str(c) for c in content if isinstance(c, str)).strip()
+                else:
+                    text = str(content).strip()
+                if text:
+                    memory_store.record_turn(current_session_id, role, text)
+
     @session.on("user_state_changed")
     def on_user_state(ev):
         if ev.new_state == "speaking":
@@ -251,12 +337,33 @@ async def entrypoint(ctx: agents.JobContext):
     def on_error(ev):
         print(f"\n[Session Notice]: {ev.error}")
 
-    buddy = BuddyAgent()
+    buddy = BuddyAgent(session_id=current_session_id)
     await session.start(room=ctx.room, agent=buddy)
 
-    # Speak first as demonstrated in Lesson 1 [11:26]
-    print("\n[Agent]: Speaking initial greeting...")
-    await session.say("Hello Bhupendra! Buddy here, ready to chat. How can I help you today?")
+    # Context-aware first speech: Pick up from previous session or start fresh
+    if last_session and last_session.get("topic") and last_session.get("topic") != "None":
+        prev_topic = last_session.get("topic")
+        prev_focus = last_session.get("grammar_focus") or "natural phrasing"
+        memory_store.start_session(current_session_id, topic=prev_topic, grammar_focus=prev_focus)
+        greeting = (
+            f"Hello Bhupendra! Buddy here, ready for another English practice session. "
+            f"Last time we practiced {prev_topic}. "
+            f"Would you like to pick up where we left off, or practice a new scenario today?"
+        )
+    else:
+        memory_store.start_session(
+            current_session_id,
+            topic="Daily Small Talk & Introduction",
+            grammar_focus="Conversational Fluency & Tenses"
+        )
+        greeting = (
+            "Hello Bhupendra! Buddy here, your English conversational buddy. "
+            "I am excited to chat and practice with you today! "
+            "How has your day been so far, or is there a particular scenario you want to try?"
+        )
+
+    print(f"\n[Agent]: Speaking initial greeting...")
+    await session.say(greeting)
 
 if __name__ == "__main__":
     agents.cli.run_app(server)

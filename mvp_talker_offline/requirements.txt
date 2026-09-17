@@ -16,3 +16,7 @@ piper-tts>=1.8.0
 # audio_server.py — TTS fallbacks (only used if piper has no voice installed)
 pyttsx3>=2.90
 edge-tts>=6.1.0
+
+# Memory & MCP Toolset
+mcp>=1.24.0,<2
+aiosqlite>=0.20.0

@@ -8,12 +8,15 @@ Designed according to the **Master Voice AI Agents LiveKit Full Course** and the
 
 ## ⚡ Key Highlights & Architecture
 
+- **English Conversational Coaching**: Real-time spoken dialogue practice with gentle conversational recasting (correcting grammar and tense slips naturally without lecturing).
+- **Persistent Memory & RAG**: Remembers past topics, session summaries, and grammar focus areas across restarts using SQLite.
+- **Model Context Protocol (MCP)**: Native `MCPToolset` integration hosting `memory_mcp_server.py` for stdio-based tool discovery (`get_last_conversation_state`, `search_past_topics_and_notes`, `get_grammar_progress_report`).
+- **Context-Aware Continuity**: Buddy speaks first and references what you practiced in your previous session so you always know where to begin.
 - **Zero Cloud Dependencies**: 100% local STT, LLM, Turn Detection, and TTS.
 - **In-Memory Streaming STT**: Uses an in-process `FasterWhisperSTT` directly on PCM16 audio buffers via LiveKit's `stt.StreamAdapter`, bypassing disk I/O and HTTP microservice socket overhead.
 - **Hardware-Aware Turn Detection**: Single-instance `Silero VAD` + local `TurnDetector(v1-mini)` with pure VAD interruption (`interruption={"mode": "vad"}`).
 - **Local LLM**: Local Ollama Qwen model with voice-first system prompt instructions (short natural sentences, no markdown symbols).
 - **On-Device Neural TTS**: High-speed local Piper TTS synthesizing speech in ~0.12s.
-- **First-Speaker Capability**: Buddy greets the user immediately upon room entry as demonstrated in Lesson 1 of the LiveKit course.
 
 ```
 User Voice / Mic / WebRTC
@@ -24,6 +27,8 @@ User Voice / Mic / WebRTC
     ├── Turn Detector: Local Audio Turn Detector (`v1-mini`) [VAD mode interruption]
     ├── STT: In-Memory Faster-Whisper (`tiny.en`) on CPU int8
     ├── LLM: Local Ollama Qwen (`qwen-buddy` / `qwen2.5:7b`) via `openai.LLM.with_ollama`
+    ├── MCP Tools: `memory_mcp_server.py` via `mcp.MCPToolset`
+    ├── Memory & RAG: SQLite Persistent Context (`memory_store.py`)
     └── TTS: Local Piper Neural TTS (`audio_server.py`) via `openai.TTS`
 ```
 
