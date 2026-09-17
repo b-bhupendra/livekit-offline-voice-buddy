@@ -1,0 +1,43 @@
+# Python Virtual Environments
+.venv/
+venv/
+ENV/
+env/
+*.venv
+
+# Python Bytecode & Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Large Model Weights & Binary Checkpoints
+mvp_talker_offline/models/*.onnx
+models/*.onnx
+*.bin
+*.pt
+*.pth
+*.onnx
+
+# Temporary Audio & Media Files
+*.mp3
+*.wav
+*.m4a
+*.flac
+
+# Local Environment Variables & Secrets
+.env
+!.env.example
+*.env.local
+
+# Zip Archives & Backups
+*.zip
+*.tar.gz
+
+# IDE & OS Artifacts
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo

@@ -1,0 +1,19 @@
+[project]
+name = "livekit-offline-voice-agent"
+version = "0.1.0"
+description = "Offline LiveKit Voice Agent with Ollama Qwen and in-memory Faster-Whisper"
+requires-python = ">=3.11"
+dependencies = [
+    "livekit-agents>=1.8.2",
+    "livekit-plugins-openai>=1.8.2",
+    "livekit-plugins-silero>=1.8.2",
+    "python-dotenv>=1.0.0",
+    "fastapi>=0.115.0",
+    "uvicorn>=0.30.0",
+    "faster-whisper>=1.0.0",
+    "python-multipart>=0.0.32",
+    "pyttsx3>=2.90",
+    "numpy>=1.26.0",
+    "edge-tts>=7.0.0",
+    "sounddevice>=0.5.0",
+]

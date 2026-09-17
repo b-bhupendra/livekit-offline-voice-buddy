@@ -1,0 +1,18 @@
+# Core LiveKit Agents SDK + plugins used by agent.py
+livekit-agents>=1.8.0
+livekit-plugins-openai>=1.8.0
+livekit-plugins-silero>=1.8.0
+
+python-dotenv>=1.0.0
+
+# audio_server.py — local STT
+fastapi>=0.115.0
+uvicorn>=0.30.0
+faster-whisper>=1.0.0
+
+# audio_server.py — local TTS (preferred, genuinely offline)
+piper-tts>=1.8.0
+
+# audio_server.py — TTS fallbacks (only used if piper has no voice installed)
+pyttsx3>=2.90
+edge-tts>=6.1.0
