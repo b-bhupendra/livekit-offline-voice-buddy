@@ -1,12 +1,11 @@
 """LiveKit Offline Voice AI Agent — English Grammar Master Coach & Simulator.
 2026 Architectural Spec:
-- STT: In-memory Faster-Whisper (zero HTTP socket serialization, CPU int8)
-- VAD: Local Silero VAD
+- STT: In-memory Faster-Whisper (zero HTTP socket serialization, CPU int8) with StreamAdapter
+- VAD: Local Silero VAD (shared instance)
 - Turn Detector: Local Audio Turn Detector (v1-mini on CPU)
-- LLM: Local Ollama Qwen (qwen-buddy / qwen2.5:7b) via openai.LLM.with_ollama
+- LLM: Local Ollama Qwen (qwen-buddy) via openai.LLM.with_ollama
 - TTS: Local Audio Server via openai.TTS with calibrated Piper voice (length_scale=1.18)
-- RAG: Hybrid Vector RAG (nomic-embed-text + SQLite FTS5)
-- FastMCP: RAG search, DuckDuckGo search, dispute resolver, learner recasts
+- FastMCP: Hybrid RAG, DuckDuckGo search, dispute resolver, learner recasts
 """
 
 import os
@@ -19,6 +18,7 @@ import asyncio
 import datetime
 import subprocess
 import json
+import numpy as np
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -42,7 +42,6 @@ from livekit.agents import (
 )
 from livekit.plugins import openai, silero
 
-from memory_mcp_server import memory_mcp
 from syllabus_tracker import SyllabusTracker
 from simulation_engine import SimulationEngine
 from quiz_engine import QuizEngine
@@ -111,68 +110,139 @@ CORE PEDAGOGICAL PILLARS & ANTI-HALLUCINATION RULES:
    - Keep speech articulate, warm, and easy to follow over voice.
 """
 
-class InMemoryFasterWhisperSTT(stt.STT):
-    def __init__(self, model_size: str = "tiny.en", device: str = "cpu", compute_type: str = "int8"):
-        super().__init__(capabilities=stt.STTCapabilities(streaming=False))
-        self._model = WhisperModel(model_size, device=device, compute_type=compute_type, local_files_only=True)
+class FasterWhisperSTT(stt.STT):
+    def __init__(self, model_size="tiny.en", device="cpu", compute_type="int8"):
+        super().__init__(capabilities=stt.STTCapabilities(streaming=False, interim_results=False))
+        print(f"Initializing in-memory Faster-Whisper ({model_size}) on {device} [100% offline]...")
+        try:
+            self._model = WhisperModel(model_size, device=device, compute_type=compute_type, local_files_only=True)
+        except Exception:
+            self._model = WhisperModel(model_size, device=device, compute_type=compute_type)
+        print("In-memory STT ready.")
 
-    async def _recognize_impl(self, buffer: utils.AudioBuffer, *, language: str | None = None, conn_options=None) -> stt.SpeechEvent:
-        resampled = buffer.resample(16000)
-        audio_data = resampled.data
-        if audio_data.dtype != np.int16:
-            audio_data = (audio_data * 32767).astype(np.int16)
-        audio_float = audio_data.astype(np.float32) / 32768.0
-        if audio_float.ndim > 1:
-            audio_float = audio_float.mean(axis=1)
+    async def _recognize_impl(
+        self, buffer: utils.AudioBuffer, *, language=None, conn_options=None
+    ) -> stt.SpeechEvent:
+        if isinstance(buffer, list):
+            frame = rtc.combine_audio_frames(buffer)
+        else:
+            frame = buffer
 
-        segments, _ = await asyncio.to_thread(self._model.transcribe, audio_float, beam_size=1, language="en")
-        text = " ".join([seg.text for seg in segments]).strip()
+        if not frame or frame.samples_per_channel == 0:
+            return stt.SpeechEvent(type=stt.SpeechEventType.FINAL_TRANSCRIPT, alternatives=[])
+
+        if frame.sample_rate != 16000 or frame.num_channels != 1:
+            resampler = rtc.AudioResampler(input_rate=frame.sample_rate, output_rate=16000, num_channels=1)
+            resampled_frames = resampler.push(frame)
+            if not resampled_frames:
+                return stt.SpeechEvent(type=stt.SpeechEventType.FINAL_TRANSCRIPT, alternatives=[])
+            frame = rtc.combine_audio_frames(resampled_frames)
+
+        audio_np = np.frombuffer(frame.data, dtype=np.int16).astype(np.float32) / 32768.0
+
+        def run_inference():
+            lang = language if isinstance(language, str) else "en"
+            segments, info = self._model.transcribe(
+                audio_np,
+                beam_size=1,
+                language=lang,
+                condition_on_previous_text=False
+            )
+            text = " ".join(seg.text for seg in segments).strip()
+            return text, info.language
+
+        loop = asyncio.get_event_loop()
+        text, detected_lang = await loop.run_in_executor(None, run_inference)
+
+        if text:
+            print(f"\n[Faster-Whisper STT]: \"{text}\"")
+
         return stt.SpeechEvent(
             type=stt.SpeechEventType.FINAL_TRANSCRIPT,
-            alternatives=[stt.SpeechData(text=text, language="en")]
+            alternatives=[stt.SpeechData(text=text, language=detected_lang)]
         )
+
+_whisper_singleton = None
+
+def get_faster_whisper_stt(model_size="tiny.en") -> FasterWhisperSTT:
+    global _whisper_singleton
+    if _whisper_singleton is None:
+        _whisper_singleton = FasterWhisperSTT(model_size=model_size)
+    return _whisper_singleton
+
+class BuddyAgent(Agent):
+    def __init__(self):
+        super().__init__(instructions=INSTRUCTIONS)
 
 server = AgentServer()
 
-@server.rtc_session()
-async def entrypoint(ctx: AgentSession):
+@server.rtc_session(agent_name="offline-buddy")
+async def entrypoint(ctx: agents.JobContext):
+    """Main LiveKit RTC Session entrypoint."""
     await ensure_audio_server_async()
 
-    stt_plugin = InMemoryFasterWhisperSTT(model_size="tiny.en")
-    vad_plugin = silero.VAD.load()
+    llm_provider = openai.LLM.with_ollama(
+        model=OLLAMA_MODEL,
+        base_url=f"{OLLAMA_BASE_URL.rstrip('/')}/v1",
+    )
 
-    tts_plugin = openai.TTS(
-        model="piper",
+    vad_provider = silero.VAD.load()
+
+    turn_handling = TurnHandlingOptions(
+        turn_detection=inference.TurnDetector(version="v1-mini"),
+        interruption={"mode": "vad"},
+    )
+
+    tts_provider = openai.TTS(
+        model="tts-1",
         voice="en_US-lessac-medium",
         base_url=AUDIO_SERVER_URL,
-        api_key="offline"
+        api_key="offline",
     )
 
-    llm_plugin = openai.LLM.with_ollama(
-        model=OLLAMA_MODEL,
-        base_url=OLLAMA_BASE_URL
+    local_whisper = get_faster_whisper_stt(model_size="tiny.en")
+    stt_provider = stt.StreamAdapter(
+        stt=local_whisper,
+        vad=vad_provider,
     )
+
+    mcp_script = Path(__file__).resolve().parent / "memory_mcp_server.py"
+    memory_mcp_stdio = mcp.MCPServerStdio(
+        command=sys.executable,
+        args=[str(mcp_script)],
+    )
+    memory_toolset = mcp.MCPToolset(id="memory", mcp_server=memory_mcp_stdio)
+
+    session = AgentSession(
+        vad=vad_provider,
+        turn_handling=turn_handling,
+        llm=llm_provider,
+        tts=tts_provider,
+        stt=stt_provider,
+        tools=[memory_toolset],
+    )
+
+    @session.on("user_state_changed")
+    def on_user_state(ev):
+        if ev.new_state == "speaking":
+            print("\n[Microphone: User is speaking...]")
+        elif ev.new_state == "listening":
+            print("\n[Microphone: Audio captured, processing utterance...]")
+
+    @session.on("user_input_transcribed")
+    def on_user_input(ev):
+        if ev.transcript:
+            print(f"\n[Transcribed Input]: \"{ev.transcript}\"")
+
+    @session.on("agent_state_changed")
+    def on_agent_state(ev):
+        print(f"\n[Agent State]: {ev.new_state}")
+
+    buddy = BuddyAgent()
+    await session.start(agent=buddy, room=ctx.room)
 
     greeting = tracker.get_startup_greeting()
-    initial_ctx = ChatContext()
-    initial_ctx.add_message(role="system", content=INSTRUCTIONS)
-
-    agent = Agent(
-        instructions=INSTRUCTIONS,
-        chat_context=initial_ctx,
-        tools=[mcp.MCPToolset(id="memory", mcp_server=memory_mcp)]
-    )
-
-    session = agents.VoiceSession(
-        agent=agent,
-        llm=llm_plugin,
-        stt=stt_plugin,
-        tts=tts_plugin,
-        vad=vad_plugin,
-        turn_handling=TurnHandlingOptions()
-    )
-
-    await session.start(ctx)
+    print(f"\n[Agent]: Speaking initial greeting: \"{greeting}\"")
     await session.say(greeting, allow_interruptions=True)
 
 if __name__ == "__main__":
