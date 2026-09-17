@@ -47,6 +47,10 @@ PIPER_VOICE_PATH = os.getenv(
     "PIPER_VOICE_PATH",
     str(Path(__file__).resolve().parent / "models" / "en_US-lessac-medium.onnx"),
 )
+# Voice pacing and clarity: length_scale > 1.0 makes speech slower and more articulate; noise_scale < 0.6 reduces jitter
+PIPER_LENGTH_SCALE = float(os.getenv("PIPER_LENGTH_SCALE", "1.18"))
+PIPER_NOISE_SCALE = float(os.getenv("PIPER_NOISE_SCALE", "0.5"))
+PIPER_NOISE_W_SCALE = float(os.getenv("PIPER_NOISE_W_SCALE", "0.8"))
 
 piper_voice = None
 TTS_ENGINE = None
@@ -128,9 +132,16 @@ async def create_speech(request: Request):
 
     try:
         if TTS_ENGINE == "piper":
+            from piper.config import SynthesisConfig
+
+            syn_config = SynthesisConfig(
+                length_scale=PIPER_LENGTH_SCALE,
+                noise_scale=PIPER_NOISE_SCALE,
+                noise_w_scale=PIPER_NOISE_W_SCALE,
+            )
             buffer = io.BytesIO()
             with wave.open(buffer, "wb") as wav_file:
-                piper_voice.synthesize_wav(clean_text, wav_file)
+                piper_voice.synthesize_wav(clean_text, wav_file, syn_config=syn_config)
             return Response(content=buffer.getvalue(), media_type="audio/wav")
 
         elif TTS_ENGINE == "pyttsx3":
@@ -140,6 +151,7 @@ async def create_speech(request: Request):
                 tmp_path = f.name
             try:
                 engine = pyttsx3.init()
+                engine.setProperty("rate", 155)  # Slightly slower and clearer (default 200)
                 engine.save_to_file(clean_text, tmp_path)
                 engine.runAndWait()
                 with open(tmp_path, "rb") as audio_file:
@@ -160,7 +172,8 @@ async def create_speech(request: Request):
             with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
                 tmp_path = f.name
             try:
-                communicate = edge_tts.Communicate(clean_text, voice)
+                # -12% rate for clear, well-paced spoken English
+                communicate = edge_tts.Communicate(clean_text, voice, rate="-12%")
                 await communicate.save(tmp_path)
                 with open(tmp_path, "rb") as audio_file:
                     audio_data = audio_file.read()
