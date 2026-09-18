@@ -56,6 +56,34 @@ async def broadcast_genui_event(component: str, props: Dict[str, Any]):
         except Exception:
             sse_subscribers.remove(q)
 
+async def broadcast_genui_token(token: str, role: str = "quiz", chapter: int = 0):
+    """Broadcast a single LLM output token to all connected SSE clients."""
+    payload = json.dumps({"token": token, "role": role, "chapter": chapter})
+    msg = f"event: genui_token\ndata: {payload}\n\n"
+    for q in list(sse_subscribers):
+        try:
+            await q.put(msg)
+        except Exception:
+            sse_subscribers.remove(q)
+
+async def broadcast_transcript(speaker: str, text: str):
+    """Broadcast a live transcript entry (user/agent speech) to all SSE clients."""
+    import datetime
+    payload = json.dumps({"speaker": speaker, "text": text, "ts": datetime.datetime.now().isoformat()})
+    msg = f"event: transcript\ndata: {payload}\n\n"
+    for q in list(sse_subscribers):
+        try:
+            await q.put(msg)
+        except Exception:
+            sse_subscribers.remove(q)
+
+# Direct MCP in-process tool references (clean structured calls, no loopback HTTP)
+try:
+    from memory_mcp_server import generate_quiz as _mcp_generate_quiz, generate_revision_notes as _mcp_generate_revision
+except Exception as _mcp_import_err:
+    _mcp_generate_quiz = None
+    _mcp_generate_revision = None
+
 whisper_model = None
 
 def get_whisper_model():
@@ -274,5 +302,62 @@ async def submit_quiz_answer(submission: QuizAnswerSubmission):
     eval_result = quizzer.evaluate_answer(target_q, submission.user_answer)
     return eval_result
 
+# ── MCP-Triggered LLM Generation Endpoints ─────────────────────────────────
+class TriggerQuizRequest(BaseModel):
+    chapter: int
+    mode: str = "milestone"
+
+@app.post("/api/trigger-quiz")
+async def trigger_quiz_generation(req: TriggerQuizRequest):
+    """
+    UI-triggered quiz generation via MCP tool.
+    Runs Ollama generation in background thread.
+    Token stream appears in frontend AI panel via SSE.
+    Final QuizCard rendered when complete.
+    """
+    if _mcp_generate_quiz is None:
+        # Fallback: return pre-verified bank questions via existing endpoint
+        qs = quizzer.get_milestone_quiz(req.chapter, count=5)
+        await broadcast_genui_event("QuizCard", {
+            "questions": qs, "chapter": req.chapter, "mode": req.mode, "source": "bank"
+        })
+        return {"status": "fallback", "source": "quiz_bank", "questions": len(qs)}
+
+    import threading
+    def _run():
+        try:
+            _mcp_generate_quiz(chapter=req.chapter, mode=req.mode)
+        except Exception as e:
+            print(f"[audio_server] Quiz generation error: {e}")
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    return {"status": "generating", "chapter": req.chapter, "mode": req.mode}
+
+class TriggerRevisionRequest(BaseModel):
+    chapter: int
+
+@app.post("/api/trigger-revision")
+async def trigger_revision_generation(req: TriggerRevisionRequest):
+    """
+    UI-triggered revision note generation via MCP tool.
+    Token stream appears in frontend AI panel via SSE.
+    BionicSketchNote rendered when complete.
+    """
+    if _mcp_generate_revision is None:
+        return JSONResponse(status_code=503, content={"error": "MCP revision tool not available"})
+
+    import threading
+    def _run():
+        try:
+            _mcp_generate_revision(chapter=req.chapter)
+        except Exception as e:
+            print(f"[audio_server] Revision generation error: {e}")
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    return {"status": "generating", "chapter": req.chapter}
+
 if __name__ == "__main__":
     uvicorn.run("audio_server:app", host="0.0.0.0", port=8880, reload=False)
+

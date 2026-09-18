@@ -183,6 +183,15 @@ class QuizEngine:
 
         if is_correct:
             self.tracker.resolve_failed_question(question["id"])
+            if question.get("is_isomorphic"):
+                self.tracker.log_isomorphic_mutation(
+                    original_q_id=question.get("id", "").split("_iso")[0],
+                    mutated_q_id=question.get("id", ""),
+                    original_text=question.get("question", ""),
+                    mutated_text=question.get("question", ""),
+                    rule_citation=question.get("rule_citation", ""),
+                    student_pass=True
+                )
             return {
                 "is_correct": True,
                 "feedback": "Correct! Excellent grasp of this grammatical structure.",
@@ -193,6 +202,14 @@ class QuizEngine:
             self.tracker.log_failed_question(question["id"])
             # Generate isomorphic question for instant reinforcement
             iso_q = self.mutate_isomorphic(question)
+            self.tracker.log_isomorphic_mutation(
+                original_q_id=question.get("id", ""),
+                mutated_q_id=iso_q.get("id", ""),
+                original_text=question.get("question", question.get("sentence", "")),
+                mutated_text=iso_q.get("question", iso_q.get("sentence", "")),
+                rule_citation=question.get("rule_citation", ""),
+                student_pass=False
+            )
             return {
                 "is_correct": False,
                 "feedback": f"Not quite. The correct answer is: {question.get('correct_answer')}.",

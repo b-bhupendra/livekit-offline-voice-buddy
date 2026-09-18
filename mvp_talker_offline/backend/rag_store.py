@@ -68,7 +68,8 @@ class RAGStore:
                         arr = arr / norm
                     return arr
         except Exception as e:
-            # Silently fallback to None if Ollama is unreachable
+            # Fallback to None if Ollama is unreachable, and log distinctly so callers can discern service outage vs empty match
+            print(f"[RAGStore] Warning: Embedding fetch failed ({e}). Dense search unavailable, falling back to BM25/FTS.")
             return None
         return None
 

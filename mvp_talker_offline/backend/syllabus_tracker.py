@@ -58,6 +58,19 @@ class SyllabusTracker:
                 )
             """)
             cursor.execute("""
+                CREATE TABLE IF NOT EXISTS isomorphic_mutation_audit (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT,
+                    original_question_id TEXT,
+                    mutated_question_id TEXT,
+                    original_text TEXT,
+                    mutated_text TEXT,
+                    rule_citation TEXT,
+                    student_pass INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cursor.execute("""
                 INSERT OR IGNORE INTO learner_state (user_id, current_chapter_idx, current_stage)
                 VALUES (?, 1, 'lecture')
             """, (self.user_id,))
@@ -247,3 +260,25 @@ class SyllabusTracker:
                 "is_current": (i == curr_idx)
             })
         return roadmap
+
+    def log_isomorphic_mutation(
+        self,
+        original_q_id: str,
+        mutated_q_id: str,
+        original_text: str,
+        mutated_text: str,
+        rule_citation: str,
+        student_pass: bool = False
+    ):
+        """Audit log isomorphic question generation and learner outcome."""
+        try:
+            with self._get_conn() as conn:
+                conn.execute("""
+                    INSERT INTO isomorphic_mutation_audit (
+                        user_id, original_question_id, mutated_question_id, original_text, mutated_text, rule_citation, student_pass
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (self.user_id, original_q_id, mutated_q_id, original_text, mutated_text, rule_citation, int(student_pass)))
+                conn.commit()
+        except Exception as e:
+            print(f"[SyllabusTracker] Warning: Failed to log isomorphic audit: {e}")
+

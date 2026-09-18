@@ -162,6 +162,14 @@ class SimulationEngine:
             except Exception as e:
                 pass
 
+        if not web_snippets:
+            # Offline local fallback notification
+            web_snippets.append({
+                "title": "Local Oxford/Arihant Grammar Store (Offline Mode)",
+                "snippet": local_context[0] if local_context else "Evaluated using verified local RAG grammar chunks.",
+                "url": ""
+            })
+
         # Step 3: Analyze register and formulation
         verdict = "VERIFIED_ACCURATE"
         analysis = (
@@ -170,7 +178,15 @@ class SimulationEngine:
         )
 
         lower_claim = user_claim.lower()
-        if "none" in lower_claim and ("were" in lower_claim or "was" in lower_claim):
+        if "neither" in lower_claim and ("were" in lower_claim or "was" in lower_claim):
+            verdict = "VALID_REGISTER_DIFFERENCE"
+            analysis = (
+                "Both forms are observed across registers! In formal examinations and strict academic style "
+                "(Oxford Guide Ch 2 / Arihant Rule 12), 'neither' is grammatically singular ('neither was chosen'). "
+                "However, in modern descriptive spoken corpora (BNC / COCA), plural concord ('neither were chosen') "
+                "is widely accepted in informal conversational usage."
+            )
+        elif "none" in lower_claim and ("were" in lower_claim or "was" in lower_claim):
             verdict = "VALID_REGISTER_DIFFERENCE"
             analysis = (
                 "Both forms are linguistically valid depending on register! "

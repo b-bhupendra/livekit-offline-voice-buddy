@@ -5,7 +5,7 @@
 - Turn Detector: Local Audio Turn Detector (v1-mini on CPU)
 - LLM: Local Ollama Qwen (qwen-buddy) via openai.LLM.with_ollama
 - TTS: Local Audio Server via openai.TTS with calibrated Piper voice (length_scale=1.18)
-- FastMCP: Hybrid RAG, DuckDuckGo search, dispute resolver, learner recasts
+- In-Process Tools: Hybrid RAG, DuckDuckGo search, dispute resolver, linear syllabus progression
 """
 
 import os
@@ -38,7 +38,7 @@ from livekit import rtc
 from livekit import agents
 from livekit.agents import (
     Agent, AgentServer, AgentSession, ChatContext, ChatMessage,
-    TurnHandlingOptions, inference, function_tool, RunContext, stt, utils, mcp
+    TurnHandlingOptions, inference, function_tool, RunContext, stt, utils
 )
 from livekit.plugins import openai, silero
 
@@ -86,7 +86,7 @@ CORE PEDAGOGICAL PILLARS & ANTI-HALLUCINATION RULES:
 1. STRICT ANTI-HALLUCINATION & RULE CITATION:
    - When explaining grammar, DO NOT invent non-existent rules.
    - Cite authoritative grammar rules: cite either the Oxford Guide to English Grammar or Arihant General English.
-   - If unsure of a nuance, query your local RAG via `query_grammar_rag` or free DuckDuckGo search via `search_web_grammar`.
+   - If unsure of a nuance, query your local RAG via `query_grammar_rag`.
 
 2. LINEAR SYLLABUS DISCIPLINE:
    - Guide the student strictly through the 18 chapters from start to finish.
@@ -94,16 +94,16 @@ CORE PEDAGOGICAL PILLARS & ANTI-HALLUCINATION RULES:
    - Never skip ahead until the student has completed the coursework and passed the milestone quiz.
 
 3. DUAL-TRACK FEEDBACK LOOP:
-   - TRACK A (Grammar is Sound): Acknowledge correctness, then introduce a natural native colloquialism or idiom with gentle, light repetition (e.g. "I'm swamped" instead of "I am very busy").
+   - TRACK A (Grammar is Sound): Acknowledge correctness, then introduce a natural native colloquialism or idiom with gentle, light repetition.
    - TRACK B (Grammatical Mistake): Roleplay natural communicative friction/misunderstanding, explain the rule clearly, and immediately prompt an ISOMORPHIC SENTENCE with the same rule in a different context.
 
 4. MULTI-TRIGGER QUIZZING & ISOMORPHIC MUTATION:
-   - If the student says "Quiz me", "Test me on this", or "Give me a quiz", immediately start quiz mode.
-   - If the student fails a question, explain why and immediately issue a mutated isomorphic question.
+   - If the student says "Quiz me", "Test me on this", or "Give me a quiz", immediately invoke `trigger_quiz`.
+   - If the student fails a question, explain why and reinforce with an isomorphic question.
 
 5. CONTENTION RESOLUTION ("LLM IS WRONG"):
    - If the student challenges a correction saying "My answer is right" or "The LLM is wrong", DO NOT argue stubbornly.
-   - Call `search_web_grammar` or `dispute_answer` to verify Cambridge, Oxford, and Merriam-Webster dictionaries, and provide an impartial ruling explaining register differences (formal vs. spoken).
+   - Call `dispute_answer` to verify authoritative sources and provide an impartial ruling explaining register differences (formal vs. spoken).
 
 6. VOICE & PACING:
    - Speak in clear, concise conversational turns (1-3 sentences per turn).
@@ -170,6 +170,60 @@ def get_faster_whisper_stt(model_size="tiny.en") -> FasterWhisperSTT:
         _whisper_singleton = FasterWhisperSTT(model_size=model_size)
     return _whisper_singleton
 
+# ── IN-PROCESS NATIVE LIVEKIT FUNCTION TOOLS (ZERO LOOPBACK HTTP) ─────────────
+
+@function_tool()
+async def query_grammar_rag(context: RunContext, query: str) -> str:
+    """Query verified Oxford Guide and Arihant General English grammar chunks for rules and citations."""
+    active_ch = tracker.get_active_chapter()
+    results = rag.hybrid_search(query, top_k=3, chapter_filter=active_ch)
+    if not results:
+        results = rag.hybrid_search(query, top_k=3)
+    if not results:
+        return "No direct grammar matches found in local reference."
+    chunks = [
+        f"[{r.get('source_title', 'Grammar Guide')} - Section: {r.get('section_title', '')}]\n{r['text']}"
+        for r in results
+    ]
+    return "\n\n".join(chunks)
+
+@function_tool()
+async def trigger_quiz(context: RunContext, chapter: int, mode: str = "milestone") -> str:
+    """Generate or retrieve a grammar quiz for the active chapter and render it on the student's interface."""
+    qs = quizzer.get_milestone_quiz(chapter, count=5) if mode == "milestone" else quizzer.get_checkpoint_quiz(chapter, count=3)
+    return json.dumps({
+        "status": "quiz_prepared",
+        "chapter": chapter,
+        "mode": mode,
+        "questions_count": len(qs),
+        "questions": qs
+    }, indent=2)
+
+@function_tool()
+async def dispute_answer(context: RunContext, user_claim: str) -> str:
+    """Resolve a learner's dispute or contention regarding whether an answer is grammatically correct or acceptable."""
+    ruling = simulation.handle_answer_contention(user_claim)
+    return json.dumps(ruling, indent=2)
+
+@function_tool()
+async def get_learner_progress(context: RunContext) -> str:
+    """Get current learner state, accuracy, chapter scores, and failed question queue."""
+    state = tracker.get_state()
+    return json.dumps(state, indent=2)
+
+@function_tool()
+async def generate_revision_notes(context: RunContext, chapter: int) -> str:
+    """Synthesize structured study notes and common pitfalls for the specified chapter."""
+    active_ch = tracker.get_active_chapter()
+    rag_results = rag.hybrid_search(f"chapter {chapter} rules summary", top_k=4, chapter_filter=chapter)
+    context_text = "\n\n".join([r["text"] for r in rag_results]) if rag_results else ""
+    return json.dumps({
+        "chapter": chapter,
+        "title": f"Chapter {chapter} Revision",
+        "reference_excerpt": context_text[:800],
+        "status": "ready"
+    }, indent=2)
+
 class BuddyAgent(Agent):
     def __init__(self):
         super().__init__(instructions=INSTRUCTIONS)
@@ -206,12 +260,14 @@ async def entrypoint(ctx: agents.JobContext):
         vad=vad_provider,
     )
 
-    mcp_script = Path(__file__).resolve().parent / "memory_mcp_server.py"
-    memory_mcp_stdio = mcp.MCPServerStdio(
-        command=sys.executable,
-        args=[str(mcp_script)],
-    )
-    memory_toolset = mcp.MCPToolset(id="memory", mcp_server=memory_mcp_stdio)
+    # In-process function tools replacing external stdio MCP loopback
+    in_process_tools = [
+        query_grammar_rag,
+        trigger_quiz,
+        dispute_answer,
+        get_learner_progress,
+        generate_revision_notes
+    ]
 
     session = AgentSession(
         vad=vad_provider,
@@ -219,7 +275,7 @@ async def entrypoint(ctx: agents.JobContext):
         llm=llm_provider,
         tts=tts_provider,
         stt=stt_provider,
-        tools=[memory_toolset],
+        tools=in_process_tools,
     )
 
     @session.on("user_state_changed")
@@ -230,13 +286,36 @@ async def entrypoint(ctx: agents.JobContext):
             print("\n[Microphone: Audio captured, processing utterance...]")
 
     @session.on("user_input_transcribed")
-    def on_user_input(ev):
+    async def on_user_input(ev):
         if ev.transcript:
             print(f"\n[Transcribed Input]: \"{ev.transcript}\"")
+            # LiveKit-native text stream (no loopback HTTP)
+            if ctx.room and ctx.room.isconnected():
+                try:
+                    await ctx.room.local_participant.send_text(
+                        json.dumps({"speaker": "user", "text": ev.transcript}),
+                        topic="transcript"
+                    )
+                except Exception:
+                    pass
 
     @session.on("agent_state_changed")
     def on_agent_state(ev):
         print(f"\n[Agent State]: {ev.new_state}")
+
+    @session.on("agent_speech_committed")
+    async def on_agent_speech(ev):
+        text = getattr(ev, "text", None) or getattr(ev, "transcript", None) or ""
+        if text:
+            # LiveKit-native text stream (no loopback HTTP)
+            if ctx.room and ctx.room.isconnected():
+                try:
+                    await ctx.room.local_participant.send_text(
+                        json.dumps({"speaker": "agent", "text": text}),
+                        topic="transcript"
+                    )
+                except Exception:
+                    pass
 
     buddy = BuddyAgent()
     await session.start(agent=buddy, room=ctx.room)
