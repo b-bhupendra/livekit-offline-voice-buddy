@@ -1,7 +1,7 @@
 ================================================================================
 FILE: mvp_talker_offline/backend/agent.py
 LANGUAGE: python
-LINES: 1070
+LINES: 1099
 PURPOSE: LiveKit voice AI agent entrypoint: Faster-Whisper STT, Silero VAD, Piper TTS, Ollama LLM, in-process function tools (with RunContext UI streaming), and LiveKit RPC handlers
 ================================================================================
 
@@ -27,6 +27,7 @@ import subprocess
 import json
 import sqlite3
 import aiohttp
+import contextlib
 from typing import Optional, List, Dict, Any, Union
 import numpy as np
 from pathlib import Path
@@ -37,14 +38,10 @@ from structured_logger import (
     next_turn, set_session_id, get_session_id, get_turn_id
 )
 
-# Auto-reexec with local PortAudio library if needed
+# Configure dynamic library search path if local user libraries exist (safe environment setup without re-exec)
 lib_dir = str(Path.home() / ".local/usr/lib/x86_64-linux-gnu")
 if os.path.exists(lib_dir) and lib_dir not in os.environ.get("LD_LIBRARY_PATH", ""):
     os.environ["LD_LIBRARY_PATH"] = f"{lib_dir}:{os.environ.get('LD_LIBRARY_PATH', '')}"
-    try:
-        os.execv(sys.executable, [sys.executable] + sys.argv)
-    except Exception:
-        pass
 
 load_dotenv()
 
@@ -71,21 +68,23 @@ rag = RAGStore()
 simulation = SimulationEngine(rag_store=rag)
 quizzer = QuizEngine(syllabus_tracker=tracker)
 
+_audio_server_proc: Optional[subprocess.Popen] = None
+
 def is_audio_server_running(host: str = "127.0.0.1", port: int = 8880) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(0.3)
         return s.connect_ex((host, port)) == 0
 
 async def ensure_audio_server_async():
+    global _audio_server_proc
     if not is_audio_server_running():
         server_script = Path(__file__).resolve().parent / "audio_server.py"
         if server_script.exists():
             tts_logger.info("Starting background local audio server (port 8880)...")
-            subprocess.Popen(
+            _audio_server_proc = subprocess.Popen(
                 [sys.executable, str(server_script)],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                start_new_session=True
             )
             for _ in range(15):
                 if is_audio_server_running():
@@ -153,6 +152,9 @@ class FasterWhisperSTT(stt.STT):
         if frame.sample_rate != 16000 or frame.num_channels != 1:
             resampler = rtc.AudioResampler(input_rate=frame.sample_rate, output_rate=16000, num_channels=1)
             resampled_frames = resampler.push(frame)
+            flushed = resampler.flush()
+            if flushed:
+                resampled_frames.extend(flushed)
             if not resampled_frames:
                 return stt.SpeechEvent(type=stt.SpeechEventType.FINAL_TRANSCRIPT, alternatives=[])
             frame = rtc.combine_audio_frames(resampled_frames)
@@ -235,39 +237,51 @@ WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = WORKSPACE_ROOT / "data"
 DB_PATH = DATA_DIR / "memory.db"
 
+_db_initialized = False
+
+def _init_db_schema(conn: sqlite3.Connection) -> None:
+    global _db_initialized
+    if not _db_initialized:
+        with conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS conversation_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    user_message TEXT,
+                    assistant_response TEXT
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS learner_recasts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    original_utterance TEXT,
+                    polished_recast TEXT,
+                    grammar_rule TEXT
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS sheet_payloads (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    req_id TEXT UNIQUE NOT NULL,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    component TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    session_id TEXT
+                )
+            """)
+        _db_initialized = True
+
+@contextlib.contextmanager
 def get_db_connection():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
-    with conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS conversation_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                user_message TEXT,
-                assistant_response TEXT
-            )
-        """)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS learner_recasts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                original_utterance TEXT,
-                polished_recast TEXT,
-                grammar_rule TEXT
-            )
-        """)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS sheet_payloads (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                req_id TEXT UNIQUE NOT NULL,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                component TEXT NOT NULL,
-                payload TEXT NOT NULL,
-                session_id TEXT
-            )
-        """)
-    return conn
+    _init_db_schema(conn)
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 def persist_sheet_payload(req_id: str, component: str, payload_data: Union[Dict[str, Any], str], session_id: Optional[str] = None) -> None:
     """Persist a GenUI sheet payload keyed by req_id in SQLite for in-flight reconnect hydration."""
@@ -734,6 +748,21 @@ async def entrypoint(ctx: agents.JobContext):
     """Main LiveKit RTC Session entrypoint."""
     global _active_room
     await ensure_audio_server_async()
+
+    def cleanup_audio_server():
+        global _audio_server_proc
+        if _audio_server_proc and _audio_server_proc.poll() is None:
+            tts_logger.info("Stopping spawned background audio server...")
+            try:
+                _audio_server_proc.terminate()
+                _audio_server_proc.wait(timeout=2)
+            except Exception:
+                try:
+                    _audio_server_proc.kill()
+                except Exception:
+                    pass
+
+    ctx.add_shutdown_callback(cleanup_audio_server)
 
     llm_provider = openai.LLM.with_ollama(
         model=OLLAMA_MODEL,
@@ -1886,13 +1915,14 @@ class QuizEngine:
 ================================================================================
 FILE: mvp_talker_offline/backend/syllabus_tracker.py
 LANGUAGE: python
-LINES: 359
+LINES: 364
 PURPOSE: 18-chapter linear progression tracker backed by SQLite database (memory.db) tracking coursework, mastery, and isomorphic audits
 ================================================================================
 
 import os
 import json
 import sqlite3
+import contextlib
 from typing import Dict, Any, List, Optional
 
 WORKSPACE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -1928,10 +1958,14 @@ class SyllabusTracker:
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         self._init_db()
 
-    def _get_conn(self) -> sqlite3.Connection:
+    @contextlib.contextmanager
+    def _get_conn(self):
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            yield conn
+        finally:
+            conn.close()
 
     def _init_db(self):
         with self._get_conn() as conn:
@@ -2254,13 +2288,14 @@ class SyllabusTracker:
 ================================================================================
 FILE: mvp_talker_offline/backend/rag_store.py
 LANGUAGE: python
-LINES: 314
+LINES: 319
 PURPOSE: Hybrid retrieval store combining BM25 keyword matching and dense embeddings over textbook chunks with distinct outage logging
 ================================================================================
 
 import os
 import json
 import sqlite3
+import contextlib
 import urllib.request
 import urllib.error
 import numpy as np
@@ -2285,10 +2320,14 @@ class RAGStore:
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         self._init_db()
 
-    def _get_connection(self) -> sqlite3.Connection:
+    @contextlib.contextmanager
+    def _get_connection(self):
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            yield conn
+        finally:
+            conn.close()
 
     def _init_db(self):
         with self._get_connection() as conn:
