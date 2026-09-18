@@ -581,6 +581,33 @@ async def entrypoint(ctx: agents.JobContext):
         }))
         return json.dumps({"success": True, "active_chapter": new_ch})
 
+    @ctx.room.local_participant.register_rpc_method("getSyllabus")
+    async def rpc_get_syllabus(data: rtc.RpcInvocationData) -> str:
+        try:
+            return json.dumps({
+                "active_chapter": tracker.get_active_chapter(),
+                "learner_state": tracker.get_state(),
+                "roadmap": tracker.get_roadmap()
+            })
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @ctx.room.local_participant.register_rpc_method("getQuiz")
+    async def rpc_get_quiz(data: rtc.RpcInvocationData) -> str:
+        try:
+            params = json.loads(data.payload) if data.payload else {}
+            chapter_idx = int(params.get("chapter_idx", tracker.get_active_chapter()))
+            mode = params.get("mode", "milestone")
+            if mode == "checkpoint":
+                qs = quizzer.get_checkpoint_quiz(chapter_idx, count=3)
+            elif mode == "on_demand":
+                qs = quizzer.get_on_demand_quiz(chapter_idx, count=5)
+            else:
+                qs = quizzer.get_milestone_quiz(chapter_idx, count=10)
+            return json.dumps({"chapter": chapter_idx, "mode": mode, "questions": qs})
+        except Exception as e:
+            return json.dumps({"error": str(e), "questions": []})
+
     greeting = tracker.get_startup_greeting()
     print(f"\n[Agent]: Speaking initial greeting: \"{greeting}\"")
     await session.say(greeting, allow_interruptions=True)

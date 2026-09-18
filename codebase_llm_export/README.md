@@ -9,13 +9,13 @@ codebase_llm_export/
 ├── frontend/                      # VisualsFrontend (React 19, TypeScript, Zustand, Vite)
 │   ├── 00_FRONTEND_OVERVIEW.md    # Architecture overview, component tree, state diagram
 │   ├── 01_FE_CORE_AND_CONFIG.txt  # package.json, vite.config.ts, tsconfig.json, index.html, main.tsx, index.css
-│   ├── 02_FE_STATE_AND_SERVICES.txt # types.ts, store.ts, useSSE.ts, bionic.ts
+│   ├── 02_FE_STATE_AND_SERVICES.txt # types.ts, store.ts, useLiveKit.ts, bionic.ts
 │   ├── 03_FE_CONVERSATIONAL_STAGE.txt # App.tsx, Header, AudioDock, Drawer, and inline artifact cards
 │   └── FULL_FRONTEND_CODEBASE.txt # Single bundle of all frontend source files
-└── backend/                       # mvp_talker_offline (Python, LiveKit, FastAPI, FastMCP, SQLite)
+└── backend/                       # mvp_talker_offline (Python, LiveKit, FastAPI, SQLite)
     ├── 00_BACKEND_OVERVIEW.md     # Architecture overview, voice pipeline, and in-process tools
     ├── 01_BE_CORE_PIPELINE.txt    # agent.py, audio_server.py, Modelfile, requirements
-    ├── 02_BE_MCP_AND_ENGINES.txt  # memory_mcp_server.py, simulation, quiz, syllabus, rag_store
+    ├── 02_BE_ENGINES.txt          # simulation, quiz, syllabus, rag_store
     ├── 03_BE_INGESTION_AND_DATA.txt # knowledge_ingestor.py, curriculum.json, sample quiz banks
     └── FULL_BACKEND_CODEBASE.txt  # Single bundle of all backend source files
 ```

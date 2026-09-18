@@ -56,9 +56,8 @@ FE_CHUNKS = {
     ],
     "02_FE_STATE_AND_SERVICES.txt": [
         ("VisualsFrontend/src/types.ts", "Central TypeScript interfaces (FeedItem, QuizQuestion, ContentionProps, SyllabusData)", "typescript"),
-        ("VisualsFrontend/src/store.ts", "Zustand state store managing sequential feed array, LiveKit room instance, drawer state, and RPC actions", "typescript"),
+        ("VisualsFrontend/src/store.ts", "Zustand state store managing sequential feed array, LiveKit room instance, drawer state, and LiveKit RPC actions", "typescript"),
         ("VisualsFrontend/src/hooks/useLiveKit.ts", "LiveKit WebRTC transport hook: room joining (/api/token), speaker audio track playback, text stream handling, and client RPC", "typescript"),
-        ("VisualsFrontend/src/hooks/useSSE.ts", "Fallback Server-Sent Events hook subscribing to /api/stream (genui, genui_token, transcript)", "typescript"),
         ("VisualsFrontend/src/utils/bionic.ts", "Bionic reading text transformation algorithm bolding initial letters of words", "typescript"),
     ],
     "03_FE_CONVERSATIONAL_STAGE.txt": [
@@ -91,9 +90,9 @@ Built with React 19, TypeScript, Vite, Framer Motion, and Zustand, it serves as 
   - Docked at the bottom of the viewport with an animated 5-bar active audio wave visualizer, auto-expanding composer, and quick prompt action chips.
 - **Slide-Over Syllabus & Mastery Drawer**:
   - On-demand slide-over panel on the right side displaying current chapter details, mastery statistics (Accuracy Rate, Correct Answers, Errors Detected), 18-chapter linear curriculum roadmap, and isomorphic remediation queue.
-- **Real-Time Stream Subscriber** (`useSSE.ts`):
-  - Subscribes to backend event stream with automatic reconnect and exponential backoff.
-  - Interleaves voice transcripts, live streaming LLM tokens, and generative UI component cards dynamically into the timeline.
+- **Real-Time LiveKit Transport** (`useLiveKit.ts`):
+  - Connects to LiveKit room via WebRTC data channels and text streams (`transcript`, `genui`, `genui_token`).
+  - Native RPC caller for `getSyllabus`, `getQuiz`, `submitQuizAnswer`, `disputeAnswer`, and `advanceChapter`.
 
 ## 3. Directory Tree
 ```
@@ -106,10 +105,10 @@ VisualsFrontend/
     ├── main.tsx              # React DOM render with Inter font
     ├── index.css             # Minimalist surface tokens & typography
     ├── types.ts              # FeedItem, QuizQuestion, ContentionProps
-    ├── store.ts              # Unified timeline Zustand store
+    ├── store.ts              # Unified timeline Zustand store with LiveKit RPC
     ├── App.tsx               # Conversational Live Stage
     ├── hooks/
-    │   └── useSSE.ts         # SSE event subscriber hook
+    │   └── useLiveKit.ts     # LiveKit WebRTC transport & RPC hook
     ├── utils/
     │   └── bionic.ts         # Bionic reading algorithm
     └── components/
@@ -124,7 +123,7 @@ VisualsFrontend/
 
 ## 4. Chunk Guide for LLMs
 - **`01_FE_CORE_AND_CONFIG.txt`**: Core package config, HTML entrypoint, main.tsx, and design system CSS.
-- **`02_FE_STATE_AND_SERVICES.txt`**: TypeScript interfaces, Zustand store, and SSE subscriber hook.
+- **`02_FE_STATE_AND_SERVICES.txt`**: TypeScript interfaces, Zustand store, and LiveKit WebRTC hook.
 - **`03_FE_CONVERSATIONAL_STAGE.txt`**: Conversational Live Stage component (`App.tsx`), components (`Header`, `AudioDock`, `SlideOverDrawer`, `InlineQuizCard`, `InlineDisputeCard`, `InlineNotesCard`, `StreamingCard`).
 - **`FULL_FRONTEND_CODEBASE.txt`**: Complete bundle of all frontend source files in one continuous document.
 """
@@ -141,8 +140,7 @@ BE_CHUNKS = {
         ("mvp_talker_offline/requirements.txt", "Python backend requirements (livekit, faster-whisper, mcp, fastapi, uvicorn, rank-bm25, duckduckgo-search)", "text"),
         ("mvp_talker_offline/.env.example", "Environment variable documentation (LiveKit keys, Ollama URL, Piper voice model path)", "ini"),
     ],
-    "02_BE_MCP_AND_ENGINES.txt": [
-        ("mvp_talker_offline/backend/memory_mcp_server.py", "FastMCP server exposing tools: query_grammar_rag, get_learner_progress, advance_chapter, search_web_grammar, dispute_answer, log_learner_recast, generate_quiz, generate_revision_notes", "python"),
+    "02_BE_ENGINES.txt": [
         ("mvp_talker_offline/backend/simulation_engine.py", "Pedagogical simulation engine handling error detection, dispute resolution via local RAG & DuckDuckGo, and colloquial recasts", "python"),
         ("mvp_talker_offline/backend/quiz_engine.py", "Quiz state machine managing chapter banks, answer verification, error tracking, and isomorphic repeat questions with SQLite audit logging", "python"),
         ("mvp_talker_offline/backend/syllabus_tracker.py", "18-chapter linear progression tracker backed by SQLite database (memory.db) tracking coursework, mastery, and isomorphic audits", "python"),
@@ -224,13 +222,13 @@ codebase_llm_export/
 ├── frontend/                      # VisualsFrontend (React 19, TypeScript, Zustand, Vite)
 │   ├── 00_FRONTEND_OVERVIEW.md    # Architecture overview, component tree, state diagram
 │   ├── 01_FE_CORE_AND_CONFIG.txt  # package.json, vite.config.ts, tsconfig.json, index.html, main.tsx, index.css
-│   ├── 02_FE_STATE_AND_SERVICES.txt # types.ts, store.ts, useSSE.ts, bionic.ts
+│   ├── 02_FE_STATE_AND_SERVICES.txt # types.ts, store.ts, useLiveKit.ts, bionic.ts
 │   ├── 03_FE_CONVERSATIONAL_STAGE.txt # App.tsx, Header, AudioDock, Drawer, and inline artifact cards
 │   └── FULL_FRONTEND_CODEBASE.txt # Single bundle of all frontend source files
-└── backend/                       # mvp_talker_offline (Python, LiveKit, FastAPI, FastMCP, SQLite)
+└── backend/                       # mvp_talker_offline (Python, LiveKit, FastAPI, SQLite)
     ├── 00_BACKEND_OVERVIEW.md     # Architecture overview, voice pipeline, and in-process tools
     ├── 01_BE_CORE_PIPELINE.txt    # agent.py, audio_server.py, Modelfile, requirements
-    ├── 02_BE_MCP_AND_ENGINES.txt  # memory_mcp_server.py, simulation, quiz, syllabus, rag_store
+    ├── 02_BE_ENGINES.txt          # simulation, quiz, syllabus, rag_store
     ├── 03_BE_INGESTION_AND_DATA.txt # knowledge_ingestor.py, curriculum.json, sample quiz banks
     └── FULL_BACKEND_CODEBASE.txt  # Single bundle of all backend source files
 ```

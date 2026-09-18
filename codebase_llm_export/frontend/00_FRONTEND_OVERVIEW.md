@@ -16,9 +16,9 @@ Built with React 19, TypeScript, Vite, Framer Motion, and Zustand, it serves as 
   - Docked at the bottom of the viewport with an animated 5-bar active audio wave visualizer, auto-expanding composer, and quick prompt action chips.
 - **Slide-Over Syllabus & Mastery Drawer**:
   - On-demand slide-over panel on the right side displaying current chapter details, mastery statistics (Accuracy Rate, Correct Answers, Errors Detected), 18-chapter linear curriculum roadmap, and isomorphic remediation queue.
-- **Real-Time Stream Subscriber** (`useSSE.ts`):
-  - Subscribes to backend event stream with automatic reconnect and exponential backoff.
-  - Interleaves voice transcripts, live streaming LLM tokens, and generative UI component cards dynamically into the timeline.
+- **Real-Time LiveKit Transport** (`useLiveKit.ts`):
+  - Connects to LiveKit room via WebRTC data channels and text streams (`transcript`, `genui`, `genui_token`).
+  - Native RPC caller for `getSyllabus`, `getQuiz`, `submitQuizAnswer`, `disputeAnswer`, and `advanceChapter`.
 
 ## 3. Directory Tree
 ```
@@ -31,10 +31,10 @@ VisualsFrontend/
     ├── main.tsx              # React DOM render with Inter font
     ├── index.css             # Minimalist surface tokens & typography
     ├── types.ts              # FeedItem, QuizQuestion, ContentionProps
-    ├── store.ts              # Unified timeline Zustand store
+    ├── store.ts              # Unified timeline Zustand store with LiveKit RPC
     ├── App.tsx               # Conversational Live Stage
     ├── hooks/
-    │   └── useSSE.ts         # SSE event subscriber hook
+    │   └── useLiveKit.ts     # LiveKit WebRTC transport & RPC hook
     ├── utils/
     │   └── bionic.ts         # Bionic reading algorithm
     └── components/
@@ -49,6 +49,6 @@ VisualsFrontend/
 
 ## 4. Chunk Guide for LLMs
 - **`01_FE_CORE_AND_CONFIG.txt`**: Core package config, HTML entrypoint, main.tsx, and design system CSS.
-- **`02_FE_STATE_AND_SERVICES.txt`**: TypeScript interfaces, Zustand store, and SSE subscriber hook.
+- **`02_FE_STATE_AND_SERVICES.txt`**: TypeScript interfaces, Zustand store, and LiveKit WebRTC hook.
 - **`03_FE_CONVERSATIONAL_STAGE.txt`**: Conversational Live Stage component (`App.tsx`), components (`Header`, `AudioDock`, `SlideOverDrawer`, `InlineQuizCard`, `InlineDisputeCard`, `InlineNotesCard`, `StreamingCard`).
 - **`FULL_FRONTEND_CODEBASE.txt`**: Complete bundle of all frontend source files in one continuous document.

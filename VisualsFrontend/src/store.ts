@@ -12,8 +12,6 @@ import type {
   GenUIEvent
 } from './types';
 
-const API = 'http://localhost:8880';
-
 // ── Default 18-Chapter Curriculum Roadmap ─────────────────────────────────────
 export const DEFAULT_ROADMAP: ChapterInfo[] = [
   { index: 1, title: 'Course Foundations & Sentence Transformations', topic: 'Affirmative to Negative & Question forms', status: 'active', coursework_done: true, quiz_passed: false },
@@ -304,49 +302,11 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
           isomorphic_question: data.isomorphic_question
         };
       } catch (rpcErr) {
-        console.warn('[LiveKit RPC] submitQuizAnswer failed, trying HTTP or local fallback:', rpcErr);
+        console.warn('[LiveKit RPC] submitQuizAnswer failed, falling back to local evaluation:', rpcErr);
       }
     }
 
-    // 2. HTTP Endpoint Fallback
-    try {
-      const res = await fetch(`${API}/api/quiz/submit`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          question_id: questionId,
-          user_answer: chosenVal,
-          chapter_idx: chapter
-        }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const isCorrect = Boolean(data.is_correct);
-
-        set((s) => ({
-          learnerState: {
-            ...s.learnerState,
-            total_correct: isCorrect ? s.learnerState.total_correct + 1 : s.learnerState.total_correct,
-            total_errors: !isCorrect ? s.learnerState.total_errors + 1 : s.learnerState.total_errors,
-            failed_questions_queue: !isCorrect
-              ? Array.from(new Set([...(s.learnerState.failed_questions_queue || []), questionId]))
-              : (s.learnerState.failed_questions_queue || []).filter((id) => id !== questionId)
-          }
-        }));
-
-        return {
-          is_correct: isCorrect,
-          feedback: data.feedback,
-          explanation: data.explanation,
-          rule_citation: data.rule_citation,
-          isomorphic_question: data.isomorphic_question
-        };
-      }
-    } catch {
-      // Offline fallback: Check against initial sample
-    }
-
-    // 3. Local Evaluation Fallback
+    // 2. Local Evaluation Fallback
     const allQuizItems = get().feed.filter((i) => i.type === 'quiz') as { questions: QuizQuestion[] }[];
     const allQuestions = allQuizItems.flatMap((q) => q.questions);
     const target = allQuestions.find((q) => q.id === questionId);
@@ -528,27 +488,11 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
         get().pushInlineDispute(ruling);
         return;
       } catch (rpcErr) {
-        console.warn('[LiveKit RPC] disputeAnswer failed, falling back:', rpcErr);
+        console.warn('[LiveKit RPC] disputeAnswer failed, falling back to local simulation:', rpcErr);
       }
     }
 
-    // 2. HTTP Endpoint Fallback
-    try {
-      const res = await fetch(`${API}/api/dispute-answer`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_claim: claim, question_id: questionId }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        get().pushInlineDispute(data);
-        return;
-      }
-    } catch {
-      // Fallback local dispute resolution
-    }
-
-    // 3. Local Simulated Impartial Arbitration
+    // 2. Local Simulated Impartial Arbitration
     const isNeitherContention = claim.toLowerCase().includes('neither') || claim.toLowerCase().includes('plural') || claim.toLowerCase().includes('were');
     get().pushInlineDispute({
       user_claim: claim,
@@ -575,39 +519,68 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
   },
 
   fetchSyllabus: async () => {
-    try {
-      const res = await fetch(`${API}/api/syllabus`);
-      if (res.ok) {
-        const data: SyllabusData = await res.json();
-        set({
-          syllabus: data,
-          learnerState: data.learner_state,
-          activeChapter: data.active_chapter || 1
+    const room = get().livekitRoom;
+    const agentId = getAgentParticipantIdentity(room);
+
+    // LiveKit Native RPC (Phase 1)
+    if (room && room.state === 'connected' && agentId) {
+      try {
+        console.log(`[LiveKit RPC] Invoking getSyllabus on ${agentId}...`);
+        const rpcRes = await room.localParticipant.performRpc({
+          destinationIdentity: agentId,
+          method: 'getSyllabus',
+          payload: '',
+          responseTimeout: 4000
         });
+        const data: SyllabusData = JSON.parse(rpcRes);
+        if (data && data.roadmap) {
+          set({
+            syllabus: data,
+            learnerState: data.learner_state,
+            activeChapter: data.active_chapter || 1
+          });
+          return;
+        }
+      } catch (rpcErr) {
+        console.warn('[LiveKit RPC] getSyllabus failed, retaining default roadmap:', rpcErr);
       }
-    } catch {
-      // Keep rich default roadmap
     }
+    // Offline or disconnected: default 18-chapter curriculum roadmap is already in state
   },
 
   fetchQuiz: async (chapter, mode = 'milestone') => {
-    try {
-      const res = await fetch(`${API}/api/quiz/${chapter}?mode=${mode}`);
-      if (res.ok) {
-        const data = await res.json();
+    const room = get().livekitRoom;
+    const agentId = getAgentParticipantIdentity(room);
+
+    // LiveKit Native RPC (Phase 1)
+    if (room && room.state === 'connected' && agentId) {
+      try {
+        console.log(`[LiveKit RPC] Invoking getQuiz on ${agentId}...`);
+        const rpcRes = await room.localParticipant.performRpc({
+          destinationIdentity: agentId,
+          method: 'getQuiz',
+          payload: JSON.stringify({ chapter_idx: chapter, mode }),
+          responseTimeout: 4000
+        });
+        const data = JSON.parse(rpcRes);
         const questions: QuizQuestion[] = data.questions || [];
-        get().pushInlineQuiz(questions, 'bank', chapter);
+        if (questions.length > 0) {
+          get().pushInlineQuiz(questions, 'bank', chapter);
+          return;
+        }
+      } catch (rpcErr) {
+        console.warn('[LiveKit RPC] getQuiz failed, falling back to LLM generation:', rpcErr);
       }
-    } catch {
-      get().triggerLLMQuiz(chapter, mode);
     }
+    // Fall back to LLM synthesis
+    get().triggerLLMQuiz(chapter, mode);
   },
 
   advanceChapter: async () => {
     const room = get().livekitRoom;
     const agentId = getAgentParticipantIdentity(room);
 
-    // 1. LiveKit Native RPC (Phase 0)
+    // 1. LiveKit Native RPC (Phase 1)
     if (room && room.state === 'connected' && agentId) {
       try {
         console.log(`[LiveKit RPC] Invoking advanceChapter on ${agentId}...`);
@@ -624,21 +597,11 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
           return;
         }
       } catch (rpcErr) {
-        console.warn('[LiveKit RPC] advanceChapter failed, falling back:', rpcErr);
+        console.warn('[LiveKit RPC] advanceChapter failed, falling back to local simulation:', rpcErr);
       }
     }
 
-    // 2. HTTP Endpoint Fallback
-    try {
-      const res = await fetch(`${API}/api/advance-chapter`, { method: 'POST' });
-      if (res.ok) {
-        await get().fetchSyllabus();
-        return;
-      }
-    } catch {
-      // Local advance simulation
-    }
-
+    // 2. Local advance simulation fallback
     const nextCh = Math.min(get().activeChapter + 1, 18);
     set((s) => ({
       activeChapter: nextCh,
@@ -688,5 +651,3 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
 
   setSseConnected: (v) => set({ sseConnected: v }),
 }));
-
-export const API_BASE = API;

@@ -189,6 +189,18 @@ export function useLiveKit() {
           store.setLivekitConnected(true);
           store.setLivekitRoom(room);
           store.setSseConnected(true); // Signal online status to UI
+          // Hydrate syllabus immediately via LiveKit RPC
+          store.fetchSyllabus().catch((err) => {
+            console.warn('[LiveKit] Initial syllabus hydration notice:', err);
+          });
+        });
+
+        room.on(RoomEvent.ParticipantConnected, (participant) => {
+          const ident = participant.identity.toLowerCase();
+          if (ident.includes('agent') || ident.includes('buddy') || participant.isAgent) {
+            console.log(`[LiveKit] Agent participant ${participant.identity} connected. Hydrating syllabus...`);
+            useBuddyStore.getState().fetchSyllabus().catch(() => {});
+          }
         });
 
         room.on(RoomEvent.Disconnected, () => {
