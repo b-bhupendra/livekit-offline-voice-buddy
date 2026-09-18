@@ -1,3 +1,17 @@
+"""
+audio_server.py — Local TTS microservice + LiveKit JWT token minting.
+
+TTS synthesis tiers (in priority order):
+  Tier 1: Kokoro-82M ONNX  — warm, expressive, ~80-150ms first chunk  (af_heart voice)
+  Tier 2: Piper ONNX       — fallback if Kokoro model files missing
+  Tier 3: pyttsx3          — system TTS, always available offline
+  Tier 4: Silence WAV      — 100ms silent buffer; ensures client never crashes
+
+LiveKit official Kokoro pattern:
+  openai.TTS(model="kokoro", voice="af_heart", base_url=AUDIO_SERVER_URL)
+  → hits /v1/audio/speech here → Kokoro synthesis → WAV bytes back to agent
+"""
+
 import io
 import os
 import re
@@ -18,9 +32,8 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from structured_logger import tts_logger
 
-app = FastAPI(title="Buddy Offline Piper TTS & Audio Server")
+app = FastAPI(title="Buddy Offline Kokoro TTS & Audio Server")
 
-# Enable CORS for local dashboards
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -29,54 +42,140 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Piper TTS setup ---
+# ─────────────────────────────────────────────────────────────────────────────
+# Kokoro-82M ONNX — Tier 1 (warm, expressive, ~80-150ms)
+# ─────────────────────────────────────────────────────────────────────────────
 MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
+
+KOKORO_MODEL_PATH = os.getenv(
+    "KOKORO_MODEL_PATH",
+    str(MODELS_DIR / "kokoro-v1.0.onnx"),
+)
+KOKORO_VOICES_PATH = os.getenv(
+    "KOKORO_VOICES_PATH",
+    str(MODELS_DIR / "voices-v1.0.bin"),
+)
+KOKORO_VOICE = os.getenv("KOKORO_VOICE", "af_heart")   # warm sweet American female
+KOKORO_SPEED = float(os.getenv("KOKORO_SPEED", "1.0"))
+
+kokoro_tts = None
+
+try:
+    from kokoro_onnx import Kokoro as KokoroOnnx
+    import soundfile as sf
+
+    if os.path.exists(KOKORO_MODEL_PATH) and os.path.exists(KOKORO_VOICES_PATH):
+        kokoro_tts = KokoroOnnx(KOKORO_MODEL_PATH, KOKORO_VOICES_PATH)
+        tts_logger.info(
+            f"Kokoro-82M TTS ready | voice={KOKORO_VOICE} | speed={KOKORO_SPEED} | "
+            f"model={KOKORO_MODEL_PATH}"
+        )
+    else:
+        tts_logger.warning(
+            f"Kokoro model files not found — Tier 1 unavailable.\n"
+            f"  Expected: {KOKORO_MODEL_PATH}\n"
+            f"  Expected: {KOKORO_VOICES_PATH}\n"
+            f"  Download: wget https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx\n"
+            f"            wget https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin"
+        )
+except ImportError:
+    tts_logger.warning("kokoro-onnx not installed. Run: pip install kokoro-onnx soundfile")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Piper ONNX — Tier 2 (fallback)
+# ─────────────────────────────────────────────────────────────────────────────
 PIPER_VOICE_PATH = os.getenv(
     "PIPER_VOICE_PATH",
     str(MODELS_DIR / "en_US-lessac-medium.onnx"),
 )
-PIPER_LENGTH_SCALE = float(os.getenv("PIPER_LENGTH_SCALE", "1.18"))
-PIPER_NOISE_SCALE = float(os.getenv("PIPER_NOISE_SCALE", "0.5"))
+PIPER_LENGTH_SCALE  = float(os.getenv("PIPER_LENGTH_SCALE",  "1.05"))
+PIPER_NOISE_SCALE   = float(os.getenv("PIPER_NOISE_SCALE",   "0.667"))
 PIPER_NOISE_W_SCALE = float(os.getenv("PIPER_NOISE_W_SCALE", "0.8"))
 
 piper_voice = None
+if kokoro_tts is None:   # only load Piper when Kokoro is unavailable
+    try:
+        from piper import PiperVoice
+        if os.path.exists(PIPER_VOICE_PATH):
+            piper_voice = PiperVoice.load(PIPER_VOICE_PATH)
+            tts_logger.info(f"Piper TTS ready (Tier 2 fallback) | voice={PIPER_VOICE_PATH}")
+    except ImportError:
+        pass
 
-try:
-    from piper import PiperVoice
-    if os.path.exists(PIPER_VOICE_PATH):
-        piper_voice = PiperVoice.load(PIPER_VOICE_PATH)
-        tts_logger.info(f"Piper TTS ready (voice: {PIPER_VOICE_PATH}, length_scale: {PIPER_LENGTH_SCALE}).")
-except ImportError:
-    pass
+# ─────────────────────────────────────────────────────────────────────────────
+# Text cleaning
+# ─────────────────────────────────────────────────────────────────────────────
 
 def clean_tts_text(text: str) -> str:
+    """Strip emoji / non-ASCII decoration; normalise whitespace."""
     cleaned = re.sub(r'[\U00010000-\U0010ffff]', '', text)
     cleaned = re.sub(r'[^\w\s.,!?;:\'\"-]', ' ', cleaned)
     cleaned = re.sub(r'\s+', ' ', cleaned).strip()
     return cleaned
 
-def synthesize_wav_piper(text: str) -> bytes:
-    text = clean_tts_text(text)
-    if not text:
-        text = "..."
+# ─────────────────────────────────────────────────────────────────────────────
+# Synthesis tiers
+# ─────────────────────────────────────────────────────────────────────────────
 
-    # Tier 1: Local Piper ONNX Voice (preferred offline high-fidelity neural TTS)
+def _silence_wav(duration_ms: int = 100) -> bytes:
+    """Return a valid PCM WAV buffer of silence (never crashes the OpenAI TTS client)."""
+    frames = int(24000 * duration_ms / 1000)
+    with io.BytesIO() as buf:
+        with wave.open(buf, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(24000)
+            wf.writeframes(b"\x00\x00" * frames)
+        return buf.getvalue()
+
+
+def synthesize_wav(text: str, voice: str | None = None) -> bytes:
+    """
+    Four-tier TTS synthesis with graceful degradation.
+
+    voice param is passed through from the /v1/audio/speech request
+    (e.g. "af_heart", "af_bella") and overrides the env default for Kokoro.
+    """
+    text = clean_tts_text(text) or "..."
+    kokoro_voice = voice or KOKORO_VOICE
+
+    # ── Tier 1: Kokoro-82M ONNX ──────────────────────────────────────────────
+    if kokoro_tts is not None:
+        try:
+            import soundfile as sf
+            samples, sample_rate = kokoro_tts.create(
+                text,
+                voice=kokoro_voice,
+                speed=KOKORO_SPEED,
+                lang="en-us",
+            )
+            with io.BytesIO() as buf:
+                sf.write(buf, samples, sample_rate, format="WAV")
+                data = buf.getvalue()
+            tts_logger.debug(f"Kokoro synthesis ok | voice={kokoro_voice} | chars={len(text)}")
+            return data
+        except Exception as exc:
+            tts_logger.error(f"Kokoro Tier 1 failed ({exc}), trying Piper fallback")
+
+    # ── Tier 2: Piper ONNX ───────────────────────────────────────────────────
     if piper_voice is not None:
         try:
             from piper import SynthesisConfig
             config = SynthesisConfig(
                 length_scale=PIPER_LENGTH_SCALE,
                 noise_scale=PIPER_NOISE_SCALE,
-                noise_w_scale=PIPER_NOISE_W_SCALE
+                noise_w_scale=PIPER_NOISE_W_SCALE,
             )
-            with io.BytesIO() as wav_io:
-                with wave.open(wav_io, "wb") as wav_file:
-                    piper_voice.synthesize_wav(text, wav_file, syn_config=config)
-                return wav_io.getvalue()
-        except Exception as e:
-            tts_logger.error(f"Piper synthesis error, attempting fallback: {e}")
+            with io.BytesIO() as buf:
+                with wave.open(buf, "wb") as wf:
+                    piper_voice.synthesize_wav(text, wf, syn_config=config)
+                data = buf.getvalue()
+            tts_logger.warning("Piper Tier 2 used (Kokoro unavailable)")
+            return data
+        except Exception as exc:
+            tts_logger.error(f"Piper Tier 2 failed ({exc}), trying pyttsx3 fallback")
 
-    # Tier 2: pyttsx3 offline system TTS
+    # ── Tier 3: pyttsx3 system TTS ───────────────────────────────────────────
     try:
         import pyttsx3
         import tempfile
@@ -92,42 +191,51 @@ def synthesize_wav_piper(text: str) -> bytes:
         except OSError:
             pass
         if data:
+            tts_logger.warning("pyttsx3 Tier 3 used")
             return data
-    except Exception as e:
-        tts_logger.warning(f"pyttsx3 fallback failed: {e}")
+    except Exception as exc:
+        tts_logger.warning(f"pyttsx3 Tier 3 failed ({exc}), returning silence")
 
-    # Tier 3: Valid PCM WAV buffer fallback (ensures OpenAI TTS client never crashes with 500/AttributeError)
-    with io.BytesIO() as wav_io:
-        with wave.open(wav_io, "wb") as wav_file:
-            wav_file.setnchannels(1)
-            wav_file.setsampwidth(2)
-            wav_file.setframerate(22050)
-            wav_file.writeframes(b"\x00\x00" * 2205)  # 100ms silence
-        return wav_io.getvalue()
+    # ── Tier 4: Silence WAV (guaranteed non-crash) ────────────────────────────
+    tts_logger.error("All TTS tiers exhausted — returning silence buffer")
+    return _silence_wav(100)
 
-# --- Focused Piper TTS Endpoint ---
+
+# ─────────────────────────────────────────────────────────────────────────────
+# OpenAI-compatible speech endpoint
+# ─────────────────────────────────────────────────────────────────────────────
+
 @app.post("/v1/audio/speech")
 @app.post("/synthesize")
 async def speech(request: Request):
-    """OpenAI-compatible audio speech synthesis endpoint powered by local Piper TTS with fallback."""
+    """
+    OpenAI-compatible /v1/audio/speech endpoint.
+    Accepts: { "input": "...", "voice": "af_heart", "model": "kokoro" }
+    Returns: audio/wav
+    """
     data = await request.json()
     input_text = data.get("input", "") or data.get("text", "")
+    voice      = data.get("voice")   # e.g. "af_heart", "af_bella", "am_adam"
     if not input_text:
-        return Response(content=b"", media_type="audio/wav")
-    wav_bytes = synthesize_wav_piper(input_text)
+        return Response(content=_silence_wav(50), media_type="audio/wav")
+    wav_bytes = synthesize_wav(input_text, voice=voice)
     return Response(content=wav_bytes, media_type="audio/wav")
 
-# --- LiveKit Token Minting Endpoint ---
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LiveKit JWT token minting
+# ─────────────────────────────────────────────────────────────────────────────
+
 @app.get("/api/token")
 async def get_livekit_token(identity: str = "web-user", room_name: str = "buddy-room"):
     """
-    Mints a LiveKit JWT access token allowing the browser to join as a full WebRTC participant.
-    Grants room_join, audio publishing (mic), audio subscription (speaker), and data streams.
+    Mint a LiveKit JWT access token for the browser participant.
+    Uses the official LiveKit Python SDK api.AccessToken — no hand-rolled JWT hacks.
     """
     from livekit import api
-    api_key = os.getenv("LIVEKIT_API_KEY", "devkey")
+    api_key    = os.getenv("LIVEKIT_API_KEY",    "devkey")
     api_secret = os.getenv("LIVEKIT_API_SECRET", "secret")
-    lk_url = os.getenv("LIVEKIT_URL", "ws://127.0.0.1:7880")
+    lk_url     = os.getenv("LIVEKIT_URL",         "ws://127.0.0.1:7880")
 
     token = (
         api.AccessToken(api_key, api_secret)
@@ -149,11 +257,12 @@ async def get_livekit_token(identity: str = "web-user", room_name: str = "buddy-
         )
     )
     return {
-        "token": token.to_jwt(),
-        "url": lk_url,
-        "room": room_name,
-        "identity": identity
+        "token":    token.to_jwt(),
+        "url":      lk_url,
+        "room":     room_name,
+        "identity": identity,
     }
+
 
 if __name__ == "__main__":
     uvicorn.run("audio_server:app", host="0.0.0.0", port=8880, reload=False)

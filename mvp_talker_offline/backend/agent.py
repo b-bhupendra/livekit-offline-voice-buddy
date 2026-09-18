@@ -4,8 +4,8 @@
 - VAD: Local Silero VAD (shared instance)
 - Turn Detector: Local Audio Turn Detector (v1-mini on CPU)
 - LLM: Local Ollama Qwen (qwen-buddy) via openai.LLM.with_ollama
-- TTS: Local Audio Server via openai.TTS with calibrated Piper voice (length_scale=1.18)
-- In-Process Tools: Hybrid RAG, DuckDuckGo search, dispute resolver, linear syllabus progression
+- TTS: Kokoro-82M ONNX af_heart voice (warm, expressive, ~80-150ms) via local audio_server
+- In-Process Tools: Hybrid ChromaDB RAG, DuckDuckGo search, dispute resolver, LangGraph tutor
 """
 
 import os
@@ -13,10 +13,8 @@ import sys
 
 os.environ["HF_HUB_OFFLINE"] = "1"
 import time
-import socket
 import asyncio
 import datetime
-import subprocess
 import json
 import sqlite3
 import aiohttp
@@ -70,29 +68,30 @@ rag = RAGStore()
 simulation = SimulationEngine(rag_store=rag)
 quizzer = QuizEngine(syllabus_tracker=tracker)
 
-_audio_server_proc: Optional[subprocess.Popen] = None
-
-def is_audio_server_running(host: str = "127.0.0.1", port: int = 8880) -> bool:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.settimeout(0.3)
-        return s.connect_ex((host, port)) == 0
-
 async def ensure_audio_server_async():
-    global _audio_server_proc
-    if not is_audio_server_running():
-        server_script = Path(__file__).resolve().parent / "audio_server.py"
-        if server_script.exists():
-            tts_logger.info("Starting background local audio server (port 8880)...")
-            _audio_server_proc = subprocess.Popen(
-                [sys.executable, str(server_script)],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            for _ in range(15):
-                if is_audio_server_running():
-                    tts_logger.info("Local audio server online.")
+    """
+    Verify the local audio server is reachable via HTTP.
+    Uses aiohttp (already imported) — no raw socket.connect() hacks.
+    If not running, log a clear actionable message rather than spawning a subprocess.
+    (Run audio_server.py as a separate process before starting the agent.)
+    """
+    url = f"{AUDIO_SERVER_URL.rstrip('/v1')}/v1/audio/speech"
+    try:
+        async with aiohttp.ClientSession() as sess:
+            async with sess.post(
+                url,
+                json={"input": "."},
+                timeout=aiohttp.ClientTimeout(total=3),
+            ) as resp:
+                if resp.status < 500:
+                    tts_logger.info("Audio server (Kokoro TTS) is reachable.")
                     return
-                await asyncio.sleep(0.2)
+    except Exception:
+        pass
+    tts_logger.warning(
+        "Audio server not reachable at port 8880. "
+        "Start it with: python backend/audio_server.py"
+    )
 
 INSTRUCTIONS = """
 You are Buddy, a warm, friendly conversational English companion who can seamlessly switch into Master English Tutor Mode.
@@ -1080,11 +1079,14 @@ async def entrypoint(ctx: agents.JobContext):
         interruption={"mode": "vad"},
     )
 
+    # Kokoro-82M via official LiveKit openai.TTS pattern:
+    # openai.TTS(model="kokoro", voice="af_heart", base_url=...) per LiveKit docs.
     tts_provider = openai.TTS(
-        model="tts-1",
-        voice="en_US-lessac-medium",
+        model="kokoro",
+        voice=os.getenv("KOKORO_VOICE", "af_heart"),
         base_url=AUDIO_SERVER_URL,
         api_key="offline",
+        response_format="wav",
     )
 
     local_whisper = get_faster_whisper_stt(model_size="tiny.en")

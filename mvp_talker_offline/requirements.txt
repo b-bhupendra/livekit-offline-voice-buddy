@@ -30,3 +30,7 @@ langchain-core>=1.0.0
 # Ingestion & Web Search
 pypdf>=6.0.0
 duckduckgo-search>=8.0.0
+
+# TTS — Kokoro-82M ONNX (Tier 1, warm expressive voice)
+kokoro-onnx>=0.3.0
+soundfile>=0.12.0
