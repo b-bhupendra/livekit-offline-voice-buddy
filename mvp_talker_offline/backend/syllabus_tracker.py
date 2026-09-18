@@ -282,3 +282,78 @@ class SyllabusTracker:
         except Exception as e:
             print(f"[SyllabusTracker] Warning: Failed to log isomorphic audit: {e}")
 
+    def get_isomorphic_audits(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Retrieve logged (original_question, mutated_question, student_pass/fail) triples from SQLite."""
+        try:
+            with self._get_conn() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT id, user_id, original_question_id, mutated_question_id, original_text, mutated_text, rule_citation, student_pass, created_at
+                    FROM isomorphic_mutation_audit
+                    WHERE user_id = ?
+                    ORDER BY id DESC
+                    LIMIT ?
+                """, (self.user_id, limit))
+                rows = cursor.fetchall()
+                return [
+                    {
+                        "id": r["id"],
+                        "user_id": r["user_id"],
+                        "original_question_id": r["original_question_id"],
+                        "mutated_question_id": r["mutated_question_id"],
+                        "original_text": r["original_text"],
+                        "mutated_text": r["mutated_text"],
+                        "rule_citation": r["rule_citation"],
+                        "student_pass": bool(r["student_pass"]),
+                        "created_at": r["created_at"]
+                    }
+                    for r in rows
+                ]
+        except Exception as e:
+            print(f"[SyllabusTracker] Error retrieving isomorphic audits: {e}")
+            return []
+
+    def audit_mutation_drift(self) -> Dict[str, Any]:
+        """Calculate drift and performance metrics across mutated questions."""
+        audits = self.get_isomorphic_audits(limit=500)
+        total = len(audits)
+        if total == 0:
+            return {"total_mutations": 0, "pass_count": 0, "fail_count": 0, "pass_rate": 0.0, "status": "no_audits"}
+        passes = sum(1 for a in audits if a["student_pass"])
+        fails = total - passes
+        return {
+            "total_mutations": total,
+            "pass_count": passes,
+            "fail_count": fails,
+            "pass_rate": round((passes / total) * 100.0, 2),
+            "status": "active_monitoring"
+        }
+
+    def get_learner_summary(self) -> Dict[str, Any]:
+        """Returns complete authoritative state for real-time frontend synchronization."""
+        state = self.get_state()
+        active_info = self.get_active_chapter()
+        drift = self.audit_mutation_drift()
+        return {
+            "user_id": self.user_id,
+            "active_chapter": active_info["chapter_idx"],
+            "active_chapter_title": active_info["title"],
+            "stage": state["current_stage"],
+            "coursework_completed": state["coursework_completed"],
+            "quiz_passed": state["quiz_passed"],
+            "cumulative_accuracy": state["cumulative_accuracy"],
+            "failed_questions_queue": state["failed_questions_queue"],
+            "completed_chapters": state["completed_chapters"],
+            "roadmap": self.get_roadmap(),
+            "learner_state": {
+                "active_chapter": active_info["chapter_idx"],
+                "coursework_completed": state["coursework_completed"],
+                "milestone_quiz_passed": state["quiz_passed"],
+                "chapter_scores": {str(active_info["chapter_idx"]): state["cumulative_accuracy"]},
+                "total_errors": len(state["failed_questions_queue"]),
+                "total_correct": max(0, 10 - len(state["failed_questions_queue"])),
+                "failed_questions_queue": state["failed_questions_queue"]
+            },
+            "drift_audit": drift
+        }
+

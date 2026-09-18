@@ -69,9 +69,11 @@ FE_CHUNKS = {
         ("mvp_talker_offline/VisualsFrontend/src/components/Header.tsx", "Top navigation bar with engine status indicator, active chapter pill, and quick triggers", "typescript"),
         ("mvp_talker_offline/VisualsFrontend/src/components/AudioDock.tsx", "Floating voice visualizer dock with active waveform, composer textarea, and action chips", "typescript"),
         ("mvp_talker_offline/VisualsFrontend/src/components/SlideOverDrawer.tsx", "Collapsible slide-over drawer with 18-chapter roadmap, analytics, and remediation queue", "typescript"),
+        ("mvp_talker_offline/VisualsFrontend/src/components/SyllabusSection.tsx", "Modular syllabus section displaying active chapter hero, stage badges, coursework gating, 18-chapter roadmap, and drift audit metrics", "typescript"),
         ("mvp_talker_offline/VisualsFrontend/src/components/InlineQuizCard.tsx", "Inline generative quiz artifact card with feedback, rule citations, dispute handling, and isomorphic retry", "typescript"),
         ("mvp_talker_offline/VisualsFrontend/src/components/InlineDisputeCard.tsx", "Inline dispute ruling card comparing formal grammar vs colloquial usage with citations", "typescript"),
         ("mvp_talker_offline/VisualsFrontend/src/components/InlineNotesCard.tsx", "Inline revision notes artifact card with bionic reading toggle and common traps", "typescript"),
+        ("mvp_talker_offline/VisualsFrontend/src/components/InlineGrammarMovementCard.tsx", "Inline syntactic movement animation card with Framer Motion layoutId spring physics and role capsules", "typescript"),
         ("mvp_talker_offline/VisualsFrontend/src/components/StreamingCard.tsx", "Live LLM token synthesis card with typewriter animation and blinking cursor", "typescript"),
     ]
 }
@@ -85,7 +87,7 @@ Built with React 19, TypeScript, Vite, Framer Motion, and Zustand, it serves as 
 ## 2. Key Architecture Patterns
 - **Event-Driven Conversation Timeline**:
   - Entire layout centers on a unified, chronological `feed: FeedItem[]` array.
-  - Transcript utterances, in-flight token streaming cards (`StreamingCard`), interactive quiz cards (`InlineQuizCard`), linguistic dispute verdicts (`InlineDisputeCard`), and study notes (`InlineNotesCard`) render directly inline at their exact chronological position in the chat stream.
+  - Transcript utterances, in-flight token streaming cards (`StreamingCard`), interactive quiz cards (`InlineQuizCard`), linguistic dispute verdicts (`InlineDisputeCard`), study notes (`InlineNotesCard`), and syntactic movement cards (`InlineGrammarMovementCard`) render directly inline at their exact chronological position in the chat stream.
 - **Top Header Bar**:
   - Live Audio / Engine status indicator pill (`Live Audio Connected` / `Engine Ready`).
   - Active chapter display pill.
@@ -109,7 +111,7 @@ mvp_talker_offline/
     └── src/
         ├── main.tsx              # React DOM render with Inter font
         ├── index.css             # Minimalist surface tokens & typography
-        ├── types.ts              # FeedItem, QuizQuestion, ContentionProps
+        ├── types.ts              # FeedItem, QuizQuestion, ContentionProps, GrammarMovementProps
         ├── store.ts              # Unified timeline Zustand store with LiveKit RPC
         ├── App.tsx               # Conversational Live Stage
         ├── hooks/
@@ -123,13 +125,14 @@ mvp_talker_offline/
             ├── InlineQuizCard.tsx# Inline interactive quiz card artifact
             ├── InlineDisputeCard.tsx # Inline linguistic dispute ruling artifact
             ├── InlineNotesCard.tsx # Inline study notes with Bionic reading
+            ├── InlineGrammarMovementCard.tsx # Inline syntactic movement card with Framer Motion layoutId
             └── StreamingCard.tsx # Live LLM token synthesis typewriter
 ```
 
 ## 4. Chunk Guide for LLMs
 - **`01_FE_CORE_AND_CONFIG.txt`**: Core package config, HTML entrypoint, main.tsx, and design system CSS.
 - **`02_FE_STATE_AND_SERVICES.txt`**: TypeScript interfaces, Zustand store, and LiveKit WebRTC hook.
-- **`03_FE_CONVERSATIONAL_STAGE.txt`**: Conversational Live Stage component (`App.tsx`), components (`Header`, `AudioDock`, `SlideOverDrawer`, `InlineQuizCard`, `InlineDisputeCard`, `InlineNotesCard`, `StreamingCard`).
+- **`03_FE_CONVERSATIONAL_STAGE.txt`**: Conversational Live Stage component (`App.tsx`), components (`Header`, `AudioDock`, `SlideOverDrawer`, `InlineQuizCard`, `InlineDisputeCard`, `InlineNotesCard`, `InlineGrammarMovementCard`, `StreamingCard`).
 - **`FULL_FRONTEND_CODEBASE.txt`**: Complete bundle of all frontend source files in one continuous document.
 """
 
@@ -154,6 +157,9 @@ BE_CHUNKS = {
     "03_BE_INGESTION_AND_DATA.txt": [
         ("mvp_talker_offline/backend/knowledge_ingestor.py", "Textbook & PDF ingestion pipeline indexing Oxford Guide, Arihant Grammar, Espresso English, and narrative stories into SQLite & RAG", "python"),
         ("mvp_talker_offline/backend/verify_phase1.py", "Automated test suite verifying RAG search, syllabus progression, quiz evaluation, and dispute handling", "python"),
+        ("mvp_talker_offline/backend/verify_phase2.py", "Automated test suite verifying embedding outage fallback, offline dispute, SQLite isomorphic audits, and learner state sync", "python"),
+        ("mvp_talker_offline/backend/verify_phase3.py", "Automated test suite verifying streaming STT capabilities, StreamingFasterWhisperAdapter, and VoiceTurnPriorityManager", "python"),
+        ("mvp_talker_offline/backend/verify_phase4.py", "Automated test suite verifying versioned GenUI schema ('1.0'), demonstrate_grammar_movement tool, and frontend motion integration", "python"),
         ("mvp_talker_offline/data/curriculum.json", "Official 18-chapter English grammar curriculum definition with title, topics, rules, and coursework requirements", "json"),
         ("mvp_talker_offline/data/quiz_banks/chapter_01_bank.json", "Pre-verified milestone quiz bank schema for Chapter 1 (Present Simple & Continuous) with citations and explanations", "json"),
         ("mvp_talker_offline/data/stories/aesop_dilemmas.txt", "Sample narrative conversation scenario used by agent for conversational grammar practice", "text"),

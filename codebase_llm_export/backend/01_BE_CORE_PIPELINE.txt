@@ -1,7 +1,7 @@
 ================================================================================
 FILE: mvp_talker_offline/backend/agent.py
 LANGUAGE: python
-LINES: 616
+LINES: 850
 PURPOSE: LiveKit voice AI agent entrypoint: Faster-Whisper STT, Silero VAD, Piper TTS, Ollama LLM, in-process function tools (with RunContext UI streaming), and LiveKit RPC handlers
 ================================================================================
 
@@ -19,12 +19,13 @@ import os
 import sys
 
 os.environ["HF_HUB_OFFLINE"] = "1"
-
+import time
 import socket
 import asyncio
 import datetime
 import subprocess
 import json
+import aiohttp
 from typing import Optional, List, Dict, Any, Union
 import numpy as np
 from pathlib import Path
@@ -113,14 +114,18 @@ CORE PEDAGOGICAL PILLARS & ANTI-HALLUCINATION RULES:
    - If the student challenges a correction saying "My answer is right" or "The LLM is wrong", DO NOT argue stubbornly.
    - Call `dispute_answer` to verify authoritative sources and provide an impartial ruling explaining register differences (formal vs. spoken).
 
-6. VOICE & PACING:
+6. VISUAL SYNTACTIC MOVEMENT & WORD ORDER:
+   - If the student struggles with word order, auxiliary verb placement, inversion, cleft sentences, or asks how a sentence structure works visually, immediately invoke `demonstrate_grammar_movement`.
+   - Specify the syntactic tokens for the base structure and transformed structure with clear explanation and authoritative citation.
+
+7. VOICE & PACING:
    - Speak in clear, concise conversational turns (1-3 sentences per turn).
    - Keep speech articulate, warm, and easy to follow over voice.
 """
 
 class FasterWhisperSTT(stt.STT):
     def __init__(self, model_size="tiny.en", device="cpu", compute_type="int8"):
-        super().__init__(capabilities=stt.STTCapabilities(streaming=False, interim_results=False))
+        super().__init__(capabilities=stt.STTCapabilities(streaming=True, interim_results=True))
         print(f"Initializing in-memory Faster-Whisper ({model_size}) on {device} [100% offline]...")
         try:
             self._model = WhisperModel(model_size, device=device, compute_type=compute_type, local_files_only=True)
@@ -178,11 +183,48 @@ def get_faster_whisper_stt(model_size="tiny.en") -> FasterWhisperSTT:
         _whisper_singleton = FasterWhisperSTT(model_size=model_size)
     return _whisper_singleton
 
+class StreamingFasterWhisperAdapter(stt.StreamAdapter):
+    """Subclass of StreamAdapter explicitly configured to support and emit INTERIM_TRANSCRIPT events."""
+    def __init__(self, stt_instance: Optional[stt.STT] = None, vad_instance: Optional[silero.VAD] = None, **kwargs):
+        target_stt = stt_instance or kwargs.get('stt')
+        target_vad = vad_instance or kwargs.get('vad')
+        super().__init__(stt=target_stt, vad=target_vad)
+        self._capabilities = stt.STTCapabilities(
+            streaming=True,
+            interim_results=True,
+            diarization=False,
+            keyterms=target_stt.capabilities.keyterms if target_stt else False,
+            chat_context=target_stt.capabilities.chat_context if target_stt else False,
+        )
+
+# ── PRIORITY MANAGER ──
+OLLAMA_BG_URL = os.getenv("OLLAMA_BG_URL", "")
+
+class VoiceTurnPriorityManager:
+    def __init__(self):
+        self.user_speaking = False
+        self.agent_state = "listening"
+
+    @property
+    def is_voice_active(self) -> bool:
+        return self.user_speaking or self.agent_state in ["thinking", "speaking"]
+
+    async def wait_if_active(self):
+        while self.is_voice_active:
+            await asyncio.sleep(0.05)
+
+    async def __aenter__(self):
+        await self.wait_if_active()
+        return self
+        
+    async def __aexit__(self, exc_type, exc, tb):
+        pass
+
+voice_priority_lock = VoiceTurnPriorityManager()
+
 # ── IN-PROCESS NATIVE LIVEKIT FUNCTION TOOLS & TEXT STREAM BROADCASTS ────────
 
 _active_room: Optional[rtc.Room] = None
-
-import sqlite3
 WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = WORKSPACE_ROOT / "data"
 DB_PATH = DATA_DIR / "memory.db"
@@ -226,20 +268,75 @@ async def send_room_text(context: Optional[RunContext], topic: str, payload_str:
         except Exception as e:
             print(f"[send_room_text] send_text({topic}) failed: {e}")
 
+async def broadcast_livekit_text(topic: str, payload_str: str):
+    await send_room_text(None, topic, payload_str)
+
+async def _ollama_stream(prompt: str, system: str = "", model: str = None):
+    """
+    Asynchronous generator that streams tokens from Ollama using aiohttp.
+    Respects the VoiceTurnPriorityManager lock so background generations 
+    don't starve the conversational audio pipeline.
+    """
+    model = model or OLLAMA_MODEL
+    body = {
+        "model": model,
+        "prompt": prompt,
+        "system": system,
+        "stream": True,
+        "options": {"temperature": 0.4, "num_predict": 800}
+    }
+    
+    bg_url = OLLAMA_BG_URL if OLLAMA_BG_URL else OLLAMA_BASE_URL
+    use_lock = not bool(OLLAMA_BG_URL)
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(f"{bg_url.rstrip('/')}/api/generate", json=body) as resp:
+                async for line in resp.content:
+                    line_str = line.decode('utf-8').strip()
+                    if line_str:
+                        if use_lock:
+                            # Yield execution if voice is active
+                            async with voice_priority_lock:
+                                pass
+                        try:
+                            chunk = json.loads(line_str)
+                            token = chunk.get("response", "")
+                            if token:
+                                yield token
+                            if chunk.get("done"):
+                                break
+                        except json.JSONDecodeError:
+                            continue
+    except Exception as e:
+        yield f"[Ollama error: {e}]"
+
 @function_tool()
 async def query_grammar_rag(context: RunContext, query: str) -> str:
     """Query verified Oxford Guide and Arihant General English grammar chunks for rules and citations."""
-    active_ch = tracker.get_active_chapter()
+    active_info = tracker.get_active_chapter()
+    active_ch = active_info.get("chapter_idx", 1)
     results = rag.hybrid_search(query, top_k=3, chapter_filter=active_ch)
     if not results:
         results = rag.hybrid_search(query, top_k=3)
     if not results:
+        emb_status = rag.get_embedding_status()
+        if not emb_status.get("is_available"):
+            return (
+                f"[Embedding Service Offline]: Local embedding engine ({emb_status.get('model')}) is unreachable. "
+                f"Sparse keyword search returned no direct matches in the local grammar reference. "
+                f"Check local Ollama service at {emb_status.get('endpoint')}."
+            )
         return "No direct grammar matches found in local reference."
+    
     chunks = [
         f"[{r.get('source_title', 'Grammar Guide')} - Section: {r.get('section_title', '')}]\n{r['text']}"
         for r in results
     ]
-    return "\n\n".join(chunks)
+    header = ""
+    if not rag.is_embedding_available:
+        header = "[Notice: Embedding service offline; results retrieved via verified keyword search]\n\n"
+    return header + "\n\n".join(chunks)
 
 @function_tool()
 async def trigger_quiz(context: RunContext, chapter: int, mode: str = "milestone") -> str:
@@ -248,6 +345,7 @@ async def trigger_quiz(context: RunContext, chapter: int, mode: str = "milestone
     
     # Broadcast native LiveKit GenUI artifact directly to browser timeline
     payload = {
+        "schema_version": "1.0",
         "type": "genui_render",
         "component": "QuizCard",
         "props": {
@@ -279,6 +377,7 @@ async def dispute_answer(context: RunContext, user_claim: str) -> str:
     
     # Broadcast native LiveKit GenUI artifact directly to browser timeline
     payload = {
+        "schema_version": "1.0",
         "type": "genui_render",
         "component": "ContentionResolver",
         "props": ruling
@@ -316,6 +415,7 @@ async def generate_revision_notes(context: RunContext, chapter: int) -> str:
         ]
     }
     payload = {
+        "schema_version": "1.0",
         "type": "genui_render",
         "component": "BionicSketchNote",
         "props": {"notes": notes_payload}
@@ -327,6 +427,70 @@ async def generate_revision_notes(context: RunContext, chapter: int) -> str:
         "title": f"Chapter {chapter} Revision",
         "reference_excerpt": context_text[:800],
         "status": "ready"
+    }, indent=2)
+
+@function_tool()
+async def demonstrate_grammar_movement(
+    context: RunContext,
+    title: str = "Subject-Auxiliary Inversion",
+    rule: str = "In questions and emphatic inversions, the auxiliary verb moves before the subject.",
+    chapter: int = 2,
+    initial_tokens: Optional[Union[str, List[Dict[str, Any]]]] = None,
+    transformed_tokens: Optional[Union[str, List[Dict[str, Any]]]] = None,
+    explanation: str = "Observe how the auxiliary verb shifts position across the subject boundary.",
+    rule_citation: str = "Oxford Guide Ch 2 & Arihant Rule 14"
+) -> str:
+    """Demonstrate syntactic movement (e.g. subject-auxiliary inversion, cleft sentences, passive shifts) with animated GenUI cards."""
+    if isinstance(initial_tokens, str):
+        try:
+            initial_tokens = json.loads(initial_tokens)
+        except Exception:
+            initial_tokens = None
+    if isinstance(transformed_tokens, str):
+        try:
+            transformed_tokens = json.loads(transformed_tokens)
+        except Exception:
+            transformed_tokens = None
+
+    if not initial_tokens:
+        initial_tokens = [
+            {"id": "tok-1", "text": "She", "role": "subject"},
+            {"id": "tok-2", "text": "is", "role": "aux"},
+            {"id": "tok-3", "text": "reading", "role": "verb"},
+            {"id": "tok-4", "text": "the book.", "role": "object"}
+        ]
+    if not transformed_tokens:
+        transformed_tokens = [
+            {"id": "tok-2", "text": "Is", "role": "aux"},
+            {"id": "tok-1", "text": "she", "role": "subject"},
+            {"id": "tok-3", "text": "reading", "role": "verb"},
+            {"id": "tok-4", "text": "the book?", "role": "object"}
+        ]
+
+    movement_id = f"movement_{int(time.time() * 1000)}"
+    props = {
+        "id": movement_id,
+        "title": title,
+        "rule": rule,
+        "chapter": chapter,
+        "initial_tokens": initial_tokens,
+        "transformed_tokens": transformed_tokens,
+        "explanation": explanation,
+        "rule_citation": rule_citation
+    }
+
+    payload = {
+        "schema_version": "1.0",
+        "type": "genui_render",
+        "component": "GrammarMovement",
+        "props": props
+    }
+    await send_room_text(context, "genui", json.dumps(payload))
+    return json.dumps({
+        "status": "demonstration_rendered",
+        "movement_id": movement_id,
+        "title": title,
+        "chapter": chapter
     }, indent=2)
 
 @function_tool()
@@ -393,6 +557,7 @@ IN_PROCESS_TOOLS = [
     dispute_answer,
     get_learner_progress,
     generate_revision_notes,
+    demonstrate_grammar_movement,
     advance_chapter,
     log_learner_recast,
     save_conversation_turn,
@@ -422,6 +587,7 @@ async def entrypoint(ctx: agents.JobContext):
     turn_handling = TurnHandlingOptions(
         turn_detection=inference.TurnDetector(version="v1-mini"),
         interruption={"mode": "vad"},
+        preemptive_generation=True,
     )
 
     tts_provider = openai.TTS(
@@ -432,9 +598,9 @@ async def entrypoint(ctx: agents.JobContext):
     )
 
     local_whisper = get_faster_whisper_stt(model_size="tiny.en")
-    stt_provider = stt.StreamAdapter(
-        stt=local_whisper,
-        vad=vad_provider,
+    stt_provider = StreamingFasterWhisperAdapter(
+        stt_instance=local_whisper,
+        vad_instance=vad_provider,
     )
 
     session = AgentSession(
@@ -444,42 +610,56 @@ async def entrypoint(ctx: agents.JobContext):
         tts=tts_provider,
         stt=stt_provider,
         tools=IN_PROCESS_TOOLS,
+        preemptive_generation=True,
     )
 
     @session.on("user_state_changed")
     def on_user_state(ev):
         if ev.new_state == "speaking":
+            voice_priority_lock.user_speaking = True
             print("\n[Microphone: User is speaking...]")
         elif ev.new_state == "listening":
+            voice_priority_lock.user_speaking = False
             print("\n[Microphone: Audio captured, processing utterance...]")
+
+    @session.on("agent_state_changed")
+    def on_agent_state(ev):
+        voice_priority_lock.agent_state = str(ev.new_state).split('.')[-1].lower()
+        print(f"\n[Agent State]: {ev.new_state}")
 
     @session.on("user_input_transcribed")
     async def on_user_input(ev):
-        if ev.transcript:
-            print(f"\n[Transcribed Input]: \"{ev.transcript}\"")
-            # LiveKit-native text stream (no loopback HTTP)
+        is_final = getattr(ev, "is_final", ev.type == stt.SpeechEventType.FINAL_TRANSCRIPT)
+        transcript = ev.alternatives[0].text if ev.alternatives else getattr(ev, "transcript", "")
+        
+        if transcript:
+            if is_final:
+                print(f"\n[Transcribed Input] (final=True): \"{transcript}\"")
             if ctx.room and ctx.room.isconnected():
                 try:
                     await ctx.room.local_participant.send_text(
-                        json.dumps({"speaker": "user", "text": ev.transcript}),
+                        json.dumps({
+                            "speaker": "user", 
+                            "text": transcript,
+                            "is_final": is_final
+                        }),
                         topic="transcript"
                     )
                 except Exception:
                     pass
 
-    @session.on("agent_state_changed")
-    def on_agent_state(ev):
-        print(f"\n[Agent State]: {ev.new_state}")
-
     @session.on("agent_speech_committed")
     async def on_agent_speech(ev):
         text = getattr(ev, "text", None) or getattr(ev, "transcript", None) or ""
         if text:
-            # LiveKit-native text stream (no loopback HTTP)
             if ctx.room and ctx.room.isconnected():
                 try:
                     await ctx.room.local_participant.send_text(
-                        json.dumps({"speaker": "agent", "text": text}),
+                        json.dumps({
+                            "speaker": "agent", 
+                            "text": text,
+                            "is_final": True
+                        }),
                         topic="transcript"
                     )
                 except Exception:
@@ -514,6 +694,11 @@ async def entrypoint(ctx: agents.JobContext):
                 }
             
             eval_result = quizzer.evaluate_answer(target_q, user_ans)
+            # Push authoritative progress update immediately over WebRTC
+            try:
+                await send_room_text(None, "progress", json.dumps(tracker.get_learner_summary()))
+            except Exception as e:
+                print(f"[LiveKit] Failed to broadcast progress after answer: {e}")
             return json.dumps(eval_result)
         except Exception as e:
             return json.dumps({"error": str(e), "is_correct": False})
@@ -524,7 +709,7 @@ async def entrypoint(ctx: agents.JobContext):
             params = json.loads(data.payload)
             user_claim = params.get("user_claim", "")
             ruling = simulation.handle_answer_contention(user_claim)
-            await broadcast_livekit_text("genui", json.dumps({
+            await send_room_text(None, "genui", json.dumps({
                 "type": "genui_render",
                 "component": "ContentionResolver",
                 "props": ruling
@@ -540,7 +725,7 @@ async def entrypoint(ctx: agents.JobContext):
             chapter = int(params.get("chapter", tracker.get_active_chapter()))
             mode = params.get("mode", "milestone")
             qs = quizzer.get_milestone_quiz(chapter, count=5) if mode == "milestone" else quizzer.get_checkpoint_quiz(chapter, count=3)
-            await broadcast_livekit_text("genui", json.dumps({
+            await send_room_text(None, "genui", json.dumps({
                 "type": "genui_render",
                 "component": "QuizCard",
                 "props": {"questions": qs, "chapter": chapter, "mode": mode, "source": "bank"}
@@ -565,7 +750,7 @@ async def entrypoint(ctx: agents.JobContext):
                 ],
                 "pitfalls": ["Avoid subject-verb discord across intervening clauses."]
             }
-            await broadcast_livekit_text("genui", json.dumps({
+            await send_room_text(None, "genui", json.dumps({
                 "type": "genui_render",
                 "component": "BionicSketchNote",
                 "props": {"notes": notes_payload}
@@ -580,8 +765,11 @@ async def entrypoint(ctx: agents.JobContext):
         if not can:
             return json.dumps({"success": False, "message": "Cannot advance: coursework and milestone quiz must be completed."})
         advanced = tracker.advance_to_next_chapter()
-        new_ch = tracker.get_active_chapter()
-        await broadcast_livekit_text("genui", json.dumps({
+        active_info = tracker.get_active_chapter()
+        new_ch = active_info.get("chapter_idx", 1)
+        summary = tracker.get_learner_summary()
+        await send_room_text(None, "progress", json.dumps(summary))
+        await send_room_text(None, "genui", json.dumps({
             "type": "genui_render",
             "component": "SyllabusProgressTree",
             "props": {"new_chapter": new_ch}
@@ -591,11 +779,8 @@ async def entrypoint(ctx: agents.JobContext):
     @ctx.room.local_participant.register_rpc_method("getSyllabus")
     async def rpc_get_syllabus(data: rtc.RpcInvocationData) -> str:
         try:
-            return json.dumps({
-                "active_chapter": tracker.get_active_chapter(),
-                "learner_state": tracker.get_state(),
-                "roadmap": tracker.get_roadmap()
-            })
+            summary = tracker.get_learner_summary()
+            return json.dumps(summary)
         except Exception as e:
             return json.dumps({"error": str(e)})
 
@@ -603,7 +788,8 @@ async def entrypoint(ctx: agents.JobContext):
     async def rpc_get_quiz(data: rtc.RpcInvocationData) -> str:
         try:
             params = json.loads(data.payload) if data.payload else {}
-            chapter_idx = int(params.get("chapter_idx", tracker.get_active_chapter()))
+            active_info = tracker.get_active_chapter()
+            chapter_idx = int(params.get("chapter_idx", active_info.get("chapter_idx", 1)))
             mode = params.get("mode", "milestone")
             if mode == "checkpoint":
                 qs = quizzer.get_checkpoint_quiz(chapter_idx, count=3)
@@ -614,6 +800,54 @@ async def entrypoint(ctx: agents.JobContext):
             return json.dumps({"chapter": chapter_idx, "mode": mode, "questions": qs})
         except Exception as e:
             return json.dumps({"error": str(e), "questions": []})
+
+    @ctx.room.local_participant.register_rpc_method("demonstrateGrammarMovement")
+    async def rpc_demonstrate_grammar_movement(data: rtc.RpcInvocationData) -> str:
+        try:
+            params = json.loads(data.payload) if data.payload else {}
+            title = params.get("title", "Subject-Auxiliary Inversion")
+            rule = params.get("rule", "In questions and emphatic inversions, the auxiliary verb moves before the subject.")
+            active_info = tracker.get_active_chapter()
+            chapter = int(params.get("chapter", active_info.get("chapter_idx", 2)))
+            initial_tokens = params.get("initial_tokens")
+            transformed_tokens = params.get("transformed_tokens")
+            explanation = params.get("explanation", "Observe how the auxiliary verb shifts position across the subject boundary.")
+            rule_citation = params.get("rule_citation", "Oxford Guide Ch 2 & Arihant Rule 14")
+            res = await demonstrate_grammar_movement(
+                None,
+                title=title,
+                rule=rule,
+                chapter=chapter,
+                initial_tokens=initial_tokens,
+                transformed_tokens=transformed_tokens,
+                explanation=explanation,
+                rule_citation=rule_citation
+            )
+            return res
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    # ── Periodic Authoritative Learner State Sync Loop ───────────────
+    async def push_periodic_progress():
+        """Periodically pushes authoritative learner summary to room on topic 'progress'."""
+        while True:
+            try:
+                await asyncio.sleep(10)
+                summary = tracker.get_learner_summary()
+                await send_room_text(None, "progress", json.dumps(summary))
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                print(f"[Periodic Progress] notice: {e}")
+
+    progress_task = asyncio.create_task(push_periodic_progress())
+    ctx.add_shutdown_callback(lambda: progress_task.cancel())
+
+    # Broadcast initial state immediately to room
+    try:
+        await send_room_text(None, "progress", json.dumps(tracker.get_learner_summary()))
+    except Exception as e:
+        print(f"[LiveKit] Initial progress broadcast notice: {e}")
 
     greeting = tracker.get_startup_greeting()
     print(f"\n[Agent]: Speaking initial greeting: \"{greeting}\"")
@@ -789,7 +1023,7 @@ CORE TEACHING & CONVERSATIONAL RULES:
 ================================================================================
 FILE: mvp_talker_offline/requirements.txt
 LANGUAGE: text
-LINES: 22
+LINES: 23
 PURPOSE: Python backend requirements (livekit, faster-whisper, fastapi, uvicorn, rank-bm25, duckduckgo-search)
 ================================================================================
 
@@ -815,6 +1049,7 @@ edge-tts>=6.1.0
 # Memory & MCP Toolset
 mcp>=1.24.0,<2
 aiosqlite>=0.20.0
+aiohttp>=3.9.0
 
 
 ================================================================================

@@ -6,13 +6,11 @@ import {
   BarChart3,
   RefreshCw,
   CheckCircle2,
-  Lock,
-  ArrowRight,
-  Sparkles,
   AlertCircle
 } from 'lucide-react';
-import { useBuddyStore, DEFAULT_ROADMAP } from '../store';
+import { useBuddyStore } from '../store';
 import type { DrawerTab } from '../types';
+import { SyllabusSection } from './SyllabusSection';
 
 export const SlideOverDrawer: React.FC = () => {
   const {
@@ -21,15 +19,9 @@ export const SlideOverDrawer: React.FC = () => {
     activeDrawerTab,
     setActiveDrawerTab,
     activeChapter,
-    setActiveChapter,
-    syllabus,
     learnerState,
-    advanceChapter,
     triggerLLMQuiz
   } = useBuddyStore();
-
-  const roadmap = syllabus?.roadmap || DEFAULT_ROADMAP;
-  const currentChapterInfo = roadmap.find((c) => c.index === activeChapter) || roadmap[0];
 
   const totalCorrect = learnerState.total_correct || 0;
   const totalErrors = learnerState.total_errors || 0;
@@ -158,186 +150,8 @@ export const SlideOverDrawer: React.FC = () => {
 
             {/* Content Body */}
             <div style={{ flex: 1, overflowY: 'auto', padding: '20px' }}>
-              {/* ── TAB 1: ROADMAP ── */}
-              {activeDrawerTab === 'syllabus' && (
-                <div>
-                  {/* Current Chapter Hero Card */}
-                  <div
-                    style={{
-                      background: 'var(--surface-2)',
-                      border: '1px solid var(--border-subtle)',
-                      borderRadius: 'var(--radius-md)',
-                      padding: '16px',
-                      marginBottom: '20px'
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        marginBottom: '6px'
-                      }}
-                    >
-                      <span
-                        style={{
-                          fontSize: '11px',
-                          textTransform: 'uppercase',
-                          color: 'var(--accent)',
-                          fontWeight: 600,
-                          letterSpacing: '0.06em'
-                        }}
-                      >
-                        Active Chapter
-                      </span>
-                      <span
-                        style={{
-                          fontSize: '11.5px',
-                          color: 'var(--success)',
-                          background: 'var(--success-soft)',
-                          padding: '2px 8px',
-                          borderRadius: 'var(--radius-full)',
-                          fontWeight: 500
-                        }}
-                      >
-                        Coursework Ready
-                      </span>
-                    </div>
-
-                    <div style={{ fontSize: '15px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}>
-                      Chapter {activeChapter}: {currentChapterInfo.title}
-                    </div>
-
-                    <div style={{ fontSize: '12.5px', color: 'var(--text-secondary)', marginBottom: '14px' }}>
-                      Focus: {currentChapterInfo.topic}
-                    </div>
-
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      <button
-                        onClick={() => {
-                          triggerLLMQuiz(activeChapter);
-                          toggleDrawer();
-                        }}
-                        style={{
-                          flex: 1,
-                          background: 'var(--surface-3)',
-                          border: '1px solid var(--border-subtle)',
-                          color: 'var(--text-primary)',
-                          padding: '7px 12px',
-                          borderRadius: 'var(--radius-sm)',
-                          fontSize: '12px',
-                          fontWeight: 500,
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          gap: '6px'
-                        }}
-                      >
-                        <Sparkles size={12} color="var(--accent)" />
-                        <span>Launch Quiz</span>
-                      </button>
-
-                      <button
-                        onClick={() => advanceChapter()}
-                        style={{
-                          flex: 1,
-                          background: 'var(--accent)',
-                          border: 'none',
-                          color: '#ffffff',
-                          padding: '7px 12px',
-                          borderRadius: 'var(--radius-sm)',
-                          fontSize: '12px',
-                          fontWeight: 600,
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          gap: '6px'
-                        }}
-                      >
-                        <span>Advance</span>
-                        <ArrowRight size={13} />
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* 18-Chapter Curriculum List */}
-                  <div
-                    style={{
-                      fontSize: '11.5px',
-                      textTransform: 'uppercase',
-                      color: 'var(--text-tertiary)',
-                      letterSpacing: '0.06em',
-                      marginBottom: '10px'
-                    }}
-                  >
-                    18-Chapter Progressive Roadmap
-                  </div>
-
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    {roadmap.map((ch) => {
-                      const isCurrent = ch.index === activeChapter;
-                      const isCompleted = ch.index < activeChapter || ch.status === 'completed';
-
-                      return (
-                        <button
-                          key={ch.index}
-                          onClick={() => setActiveChapter(ch.index)}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'flex-start',
-                            gap: '12px',
-                            padding: '10px 14px',
-                            borderRadius: 'var(--radius-md)',
-                            background: isCurrent ? 'var(--surface-2)' : 'transparent',
-                            border: isCurrent ? '1px solid var(--accent)' : '1px solid transparent',
-                            cursor: 'pointer',
-                            textAlign: 'left',
-                            transition: 'all 0.15s ease'
-                          }}
-                        >
-                          <div style={{ marginTop: '2px' }}>
-                            {isCompleted ? (
-                              <CheckCircle2 size={16} color="var(--success)" />
-                            ) : isCurrent ? (
-                              <Sparkles size={16} color="var(--accent)" />
-                            ) : (
-                              <Lock size={15} color="var(--text-tertiary)" />
-                            )}
-                          </div>
-
-                          <div style={{ flex: 1 }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '2px' }}>
-                              <span
-                                style={{
-                                  fontSize: '11px',
-                                  fontFamily: 'var(--font-mono)',
-                                  color: isCurrent ? 'var(--accent)' : 'var(--text-tertiary)'
-                                }}
-                              >
-                                {String(ch.index).padStart(2, '0')}
-                              </span>
-                              <span
-                                style={{
-                                  fontSize: '13px',
-                                  fontWeight: isCurrent ? 600 : 500,
-                                  color: isCurrent ? 'var(--text-primary)' : isCompleted ? 'var(--text-secondary)' : 'var(--text-tertiary)'
-                                }}
-                              >
-                                {ch.title}
-                              </span>
-                            </div>
-                            <div style={{ fontSize: '11.5px', color: 'var(--text-tertiary)' }}>
-                              {ch.topic}
-                            </div>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
+              {/* ── TAB 1: ROADMAP / SYLLABUS SECTION ── */}
+              {activeDrawerTab === 'syllabus' && <SyllabusSection />}
 
               {/* ── TAB 2: ANALYTICS ── */}
               {activeDrawerTab === 'analytics' && (

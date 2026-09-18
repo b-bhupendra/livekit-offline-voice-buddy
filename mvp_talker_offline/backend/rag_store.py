@@ -10,10 +10,18 @@ DEFAULT_DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data
 OLLAMA_EMBED_URL = os.getenv("OLLAMA_EMBED_URL", "http://127.0.0.1:11434/api/embeddings")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
 
+class EmbeddingServiceUnavailable(Exception):
+    """Raised when the local Ollama embedding service is unreachable or down."""
+    pass
+
 class RAGStore:
     def __init__(self, db_path: str = DEFAULT_DB_PATH, embed_model: str = EMBEDDING_MODEL):
         self.db_path = db_path
         self.embed_model = embed_model
+        self.embed_url = OLLAMA_EMBED_URL
+        self.is_embedding_available: bool = True
+        self.last_embedding_error: Optional[str] = None
+        self.embedding_status: str = "operational"
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         self._init_db()
 
@@ -49,11 +57,32 @@ class RAGStore:
             """)
             conn.commit()
 
-    def get_embedding(self, text: str) -> Optional[np.ndarray]:
-        """Fetch 768-dim normalized embedding from local Ollama nomic-embed-text."""
-        payload = json.dumps({"model": self.embed_model, "prompt": text.strip()}).encode("utf-8")
+    def get_embedding_status(self) -> Dict[str, Any]:
+        """Provides a distinct diagnostic snapshot of the embedding microservice health."""
+        return {
+            "status": self.embedding_status,
+            "is_available": self.is_embedding_available,
+            "model": self.embed_model,
+            "endpoint": self.embed_url,
+            "last_error": self.last_embedding_error
+        }
+
+    def get_embedding(self, text: str, raise_on_error: bool = False) -> Optional[np.ndarray]:
+        """
+        Fetch 768-dim normalized embedding from local Ollama nomic-embed-text.
+        Provides distinct return paths:
+        - Returns np.ndarray on successful normalization.
+        - Returns None for empty / whitespace input without error.
+        - Sets self.is_embedding_available = False and records self.last_embedding_error on service downtime.
+        - Raises EmbeddingServiceUnavailable if raise_on_error=True.
+        """
+        stripped = text.strip() if text else ""
+        if not stripped:
+            return None
+
+        payload = json.dumps({"model": self.embed_model, "prompt": stripped}).encode("utf-8")
         req = urllib.request.Request(
-            OLLAMA_EMBED_URL,
+            self.embed_url,
             data=payload,
             headers={"Content-Type": "application/json"}
         )
@@ -66,10 +95,19 @@ class RAGStore:
                     norm = np.linalg.norm(arr)
                     if norm > 0:
                         arr = arr / norm
+                    self.is_embedding_available = True
+                    self.last_embedding_error = None
+                    self.embedding_status = "operational"
                     return arr
         except Exception as e:
-            # Fallback to None if Ollama is unreachable, and log distinctly so callers can discern service outage vs empty match
-            print(f"[RAGStore] Warning: Embedding fetch failed ({e}). Dense search unavailable, falling back to BM25/FTS.")
+            self.is_embedding_available = False
+            self.last_embedding_error = str(e)
+            self.embedding_status = "unreachable"
+            print(f"[RAGStore] Warning: Embedding service unreachable ({e}). Dense search degraded, falling back to BM25/FTS.")
+            if raise_on_error:
+                raise EmbeddingServiceUnavailable(
+                    f"Local embedding service at {OLLAMA_EMBED_URL} is down: {e}"
+                ) from e
             return None
         return None
 

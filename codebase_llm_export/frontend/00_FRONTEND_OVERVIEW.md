@@ -7,7 +7,7 @@ Built with React 19, TypeScript, Vite, Framer Motion, and Zustand, it serves as 
 ## 2. Key Architecture Patterns
 - **Event-Driven Conversation Timeline**:
   - Entire layout centers on a unified, chronological `feed: FeedItem[]` array.
-  - Transcript utterances, in-flight token streaming cards (`StreamingCard`), interactive quiz cards (`InlineQuizCard`), linguistic dispute verdicts (`InlineDisputeCard`), and study notes (`InlineNotesCard`) render directly inline at their exact chronological position in the chat stream.
+  - Transcript utterances, in-flight token streaming cards (`StreamingCard`), interactive quiz cards (`InlineQuizCard`), linguistic dispute verdicts (`InlineDisputeCard`), study notes (`InlineNotesCard`), and syntactic movement cards (`InlineGrammarMovementCard`) render directly inline at their exact chronological position in the chat stream.
 - **Top Header Bar**:
   - Live Audio / Engine status indicator pill (`Live Audio Connected` / `Engine Ready`).
   - Active chapter display pill.
@@ -31,7 +31,7 @@ mvp_talker_offline/
     └── src/
         ├── main.tsx              # React DOM render with Inter font
         ├── index.css             # Minimalist surface tokens & typography
-        ├── types.ts              # FeedItem, QuizQuestion, ContentionProps
+        ├── types.ts              # FeedItem, QuizQuestion, ContentionProps, GrammarMovementProps
         ├── store.ts              # Unified timeline Zustand store with LiveKit RPC
         ├── App.tsx               # Conversational Live Stage
         ├── hooks/
@@ -45,11 +45,12 @@ mvp_talker_offline/
             ├── InlineQuizCard.tsx# Inline interactive quiz card artifact
             ├── InlineDisputeCard.tsx # Inline linguistic dispute ruling artifact
             ├── InlineNotesCard.tsx # Inline study notes with Bionic reading
+            ├── InlineGrammarMovementCard.tsx # Inline syntactic movement card with Framer Motion layoutId
             └── StreamingCard.tsx # Live LLM token synthesis typewriter
 ```
 
 ## 4. Chunk Guide for LLMs
 - **`01_FE_CORE_AND_CONFIG.txt`**: Core package config, HTML entrypoint, main.tsx, and design system CSS.
 - **`02_FE_STATE_AND_SERVICES.txt`**: TypeScript interfaces, Zustand store, and LiveKit WebRTC hook.
-- **`03_FE_CONVERSATIONAL_STAGE.txt`**: Conversational Live Stage component (`App.tsx`), components (`Header`, `AudioDock`, `SlideOverDrawer`, `InlineQuizCard`, `InlineDisputeCard`, `InlineNotesCard`, `StreamingCard`).
+- **`03_FE_CONVERSATIONAL_STAGE.txt`**: Conversational Live Stage component (`App.tsx`), components (`Header`, `AudioDock`, `SlideOverDrawer`, `InlineQuizCard`, `InlineDisputeCard`, `InlineNotesCard`, `InlineGrammarMovementCard`, `StreamingCard`).
 - **`FULL_FRONTEND_CODEBASE.txt`**: Complete bundle of all frontend source files in one continuous document.

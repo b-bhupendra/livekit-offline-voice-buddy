@@ -9,7 +9,9 @@ import type {
   FeedItem,
   DrawerTab,
   ChapterInfo,
-  GenUIEvent
+  GenUIEvent,
+  LearnerSummary,
+  GrammarMovementProps
 } from './types';
 
 // ── Default 18-Chapter Curriculum Roadmap ─────────────────────────────────────
@@ -75,6 +77,7 @@ export interface BuddyStore {
   livekitRoom: Room | null;
   syllabus: SyllabusData | null;
   learnerState: LearnerState;
+  learnerSummary: LearnerSummary | null;
   activeChapter: number;
   drawerOpen: boolean;
   activeDrawerTab: DrawerTab;
@@ -88,14 +91,16 @@ export interface BuddyStore {
   setActiveDrawerTab: (tab: DrawerTab) => void;
   setActiveChapter: (chapter: number) => void;
   setIsVoiceActive: (active: boolean) => void;
+  syncProgress: (data: Partial<LearnerSummary> & Record<string, any>) => void;
 
-  appendTranscript: (speaker: 'user' | 'agent', text: string) => void;
+  appendTranscript: (speaker: 'user' | 'agent', text: string, isFinal?: boolean) => void;
   appendStreamToken: (token: string, role: string) => void;
   finalizeStreamCard: () => void;
 
   pushInlineQuiz: (questions: QuizQuestion[], source: 'bank' | 'llm_generated', chapter?: number) => void;
   pushInlineDispute: (data: ContentionProps) => void;
   pushInlineNotes: (notes: Record<string, unknown>) => void;
+  pushInlineMovement: (data: GrammarMovementProps) => void;
   pushGenUI: (evt: GenUIEvent) => void;
 
   submitAnswer: (questionId: string, optionId: string, chapter: number, rawText?: string) => Promise<QuizSubmitResult>;
@@ -165,6 +170,7 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
     total_correct: 14,
     failed_questions_queue: ['ch01_q01']
   },
+  learnerSummary: null,
   activeChapter: 1,
   drawerOpen: false,
   activeDrawerTab: 'syllabus',
@@ -182,18 +188,92 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
   setActiveChapter: (chapter) => set({ activeChapter: chapter }),
   setIsVoiceActive: (active) => set({ isVoiceActive: active }),
 
-  appendTranscript: (speaker, text) => set((s) => ({
-    feed: [
-      ...s.feed,
-      {
-        id: Math.random().toString(36).slice(2, 9),
-        type: 'transcript',
-        speaker,
-        text,
-        ts: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      }
-    ]
-  })),
+  syncProgress: (data) => {
+    if (!data) return;
+    const currentSyllabus = get().syllabus;
+    const currentLearner = get().learnerState;
+
+    const activeCh = Number(data.active_chapter || data.learner_state?.active_chapter || get().activeChapter || 1);
+
+    // Normalize roadmap if provided
+    let updatedRoadmap = currentSyllabus?.roadmap || DEFAULT_ROADMAP;
+    if (Array.isArray(data.roadmap) && data.roadmap.length > 0) {
+      updatedRoadmap = data.roadmap.map((item: any, idx: number) => {
+        const chIdx = Number(item.chapter_idx || item.index || idx + 1);
+        const defaultMatch = DEFAULT_ROADMAP.find((d) => d.index === chIdx);
+        const isCurrent = chIdx === activeCh;
+        const isCompleted = item.status === 'completed' || chIdx < activeCh;
+        return {
+          index: chIdx,
+          title: item.title || defaultMatch?.title || `Chapter ${chIdx}`,
+          topic: item.topic || defaultMatch?.topic || 'Grammar Mastery & Applied Fluency',
+          status: (item.status as 'locked' | 'active' | 'completed') || (isCurrent ? 'active' : isCompleted ? 'completed' : 'locked'),
+          coursework_done: item.coursework_done ?? (isCompleted || (isCurrent && Boolean(data.coursework_completed))),
+          quiz_passed: item.quiz_passed ?? (isCompleted || (isCurrent && Boolean(data.quiz_passed)))
+        };
+      });
+    }
+
+    const updatedLearnerState: LearnerState = {
+      active_chapter: activeCh,
+      coursework_completed: Boolean(data.coursework_completed ?? data.learner_state?.coursework_completed ?? currentLearner.coursework_completed),
+      milestone_quiz_passed: Boolean(data.quiz_passed ?? data.learner_state?.milestone_quiz_passed ?? currentLearner.milestone_quiz_passed),
+      chapter_scores: data.learner_state?.chapter_scores || currentLearner.chapter_scores || { [String(activeCh)]: data.cumulative_accuracy || 85 },
+      total_errors: (data.failed_questions_queue?.length) ?? data.learner_state?.total_errors ?? currentLearner.total_errors,
+      total_correct: data.learner_state?.total_correct ?? currentLearner.total_correct,
+      failed_questions_queue: data.failed_questions_queue || data.learner_state?.failed_questions_queue || currentLearner.failed_questions_queue || []
+    };
+
+    set({
+      activeChapter: activeCh,
+      learnerState: updatedLearnerState,
+      syllabus: {
+        active_chapter: activeCh,
+        learner_state: updatedLearnerState,
+        roadmap: updatedRoadmap
+      },
+      learnerSummary: data as LearnerSummary
+    });
+  },
+
+  appendTranscript: (speaker, text, isFinal = true) => set((s) => {
+    const lastItem = s.feed[s.feed.length - 1];
+    
+    // Update existing interim bubble if same speaker
+    if (!isFinal && lastItem && lastItem.type === 'transcript' && lastItem.speaker === speaker && lastItem.is_interim) {
+        return {
+            feed: [
+                ...s.feed.slice(0, -1),
+                { ...lastItem, text }
+            ]
+        };
+    }
+    
+    // Finalize an existing interim bubble
+    if (isFinal && lastItem && lastItem.type === 'transcript' && lastItem.speaker === speaker && lastItem.is_interim) {
+        return {
+            feed: [
+                ...s.feed.slice(0, -1),
+                { ...lastItem, text, is_interim: false }
+            ]
+        };
+    }
+
+    // Append new bubble
+    return {
+      feed: [
+        ...s.feed,
+        {
+          id: Math.random().toString(36).slice(2, 9),
+          type: 'transcript',
+          speaker,
+          text,
+          ts: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          is_interim: !isFinal
+        }
+      ]
+    };
+  }),
 
   appendStreamToken: (token, role) => set((s) => {
     const lastItem = s.feed[s.feed.length - 1];
@@ -247,6 +327,13 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
     ]
   })),
 
+  pushInlineMovement: (data) => set((s) => ({
+    feed: [
+      ...s.feed.filter((i) => i.type !== 'streaming_card'),
+      { id: data.id || Math.random().toString(36).slice(2, 9), type: 'movement', data }
+    ]
+  })),
+
   pushGenUI: (evt) => {
     if (evt.component === 'QuizCard') {
       const questions = (evt.props?.questions as QuizQuestion[]) || [];
@@ -258,6 +345,8 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
       get().pushInlineNotes(notes);
     } else if (evt.component === 'ContentionResolver') {
       get().pushInlineDispute(evt.props as unknown as ContentionProps);
+    } else if (evt.component === 'GrammarMovement') {
+      get().pushInlineMovement(evt.props as unknown as GrammarMovementProps);
     }
   },
 
@@ -532,13 +621,9 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
           payload: '',
           responseTimeout: 4000
         });
-        const data: SyllabusData = JSON.parse(rpcRes);
-        if (data && data.roadmap) {
-          set({
-            syllabus: data,
-            learnerState: data.learner_state,
-            activeChapter: data.active_chapter || 1
-          });
+        const data = JSON.parse(rpcRes);
+        if (data) {
+          get().syncProgress(data);
           return;
         }
       } catch (rpcErr) {

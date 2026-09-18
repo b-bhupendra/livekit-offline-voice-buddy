@@ -6,7 +6,7 @@ import {
   type RpcInvocationData
 } from 'livekit-client';
 import { useBuddyStore } from '../store';
-import type { QuizQuestion, ContentionProps } from '../types';
+import type { QuizQuestion, ContentionProps, GrammarMovementProps } from '../types';
 
 const TOKEN_URL = 'http://localhost:8880/api/token?identity=web-user&room_name=buddy-room';
 
@@ -81,12 +81,13 @@ export function useLiveKit() {
 
         // ── Text Stream Handlers ─────────────────────────────────────
         try {
-          // Topic: "transcript" (conversational speech stream)
+          // Topic: "transcript" (conversational speech stream w/ interim updates)
           room.registerTextStreamHandler('transcript', async (reader) => {
             try {
               const raw = await reader.readAll();
               const payload = JSON.parse(raw);
-              useBuddyStore.getState().appendTranscript(payload.speaker || 'agent', payload.text || '');
+              const isFinal = payload.is_final !== undefined ? payload.is_final : true;
+              useBuddyStore.getState().appendTranscript(payload.speaker || 'agent', payload.text || '', isFinal);
             } catch (err) {
               console.error('[LiveKit TextStream] transcript parse error:', err);
             }
@@ -110,6 +111,8 @@ export function useLiveKit() {
                   store.pushInlineNotes(notes);
                 } else if (evt.component === 'ContentionResolver') {
                   store.pushInlineDispute(evt.props as unknown as ContentionProps);
+                } else if (evt.component === 'GrammarMovement') {
+                  store.pushInlineMovement(evt.props as unknown as GrammarMovementProps);
                 } else if (evt.component === 'SyllabusProgressTree') {
                   if (evt.props?.new_chapter) {
                     store.setActiveChapter(evt.props.new_chapter);
@@ -132,6 +135,17 @@ export function useLiveKit() {
               useBuddyStore.getState().appendStreamToken(raw, 'llm');
             }
           });
+
+          // Topic: "progress" (authoritative learner state push from backend)
+          room.registerTextStreamHandler('progress', async (reader) => {
+            try {
+              const raw = await reader.readAll();
+              const payload = JSON.parse(raw);
+              useBuddyStore.getState().syncProgress(payload);
+            } catch (err) {
+              console.error('[LiveKit TextStream] progress parse error:', err);
+            }
+          });
         } catch (e) {
           console.warn('[LiveKit] registerTextStreamHandler notice:', e);
         }
@@ -144,7 +158,10 @@ export function useLiveKit() {
             const store = useBuddyStore.getState();
 
             if (topic === 'transcript' || data.speaker) {
-              store.appendTranscript(data.speaker, data.text);
+              const isFinal = data.is_final !== undefined ? data.is_final : true;
+              store.appendTranscript(data.speaker, data.text, isFinal);
+            } else if (topic === 'progress' || data.stage || (data.learner_state && data.roadmap)) {
+              store.syncProgress(data);
             } else if (topic === 'genui' || data.type === 'genui_render') {
               if (data.component === 'QuizCard') {
                 store.pushInlineQuiz(data.props?.questions || [], data.props?.source || 'llm_generated', data.props?.chapter || store.activeChapter);
@@ -152,6 +169,8 @@ export function useLiveKit() {
                 store.pushInlineNotes(data.props?.notes || {});
               } else if (data.component === 'ContentionResolver') {
                 store.pushInlineDispute(data.props);
+              } else if (data.component === 'GrammarMovement') {
+                store.pushInlineMovement(data.props);
               }
             } else if (topic === 'genui_token' || data.token) {
               store.appendStreamToken(data.token, data.role || 'llm');
@@ -172,6 +191,8 @@ export function useLiveKit() {
               store.pushInlineNotes(evt.props?.notes || {});
             } else if (evt.component === 'ContentionResolver') {
               store.pushInlineDispute(evt.props);
+            } else if (evt.component === 'GrammarMovement') {
+              store.pushInlineMovement(evt.props);
             }
             return JSON.stringify({ received: true });
           } catch (e) {

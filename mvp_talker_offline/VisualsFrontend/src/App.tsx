@@ -11,6 +11,7 @@ import { SlideOverDrawer } from './components/SlideOverDrawer';
 import { InlineQuizCard } from './components/InlineQuizCard';
 import { InlineDisputeCard } from './components/InlineDisputeCard';
 import { InlineNotesCard } from './components/InlineNotesCard';
+import { InlineGrammarMovementCard } from './components/InlineGrammarMovementCard';
 import { StreamingCard } from './components/StreamingCard';
 
 export default function App() {
@@ -104,7 +105,7 @@ export default function App() {
                   <motion.div
                     key={item.id}
                     initial={{ opacity: 0, y: 6 }}
-                    animate={{ opacity: 1, y: 0 }}
+                    animate={{ opacity: item.is_interim ? 0.75 : 1, y: 0 }}
                     transition={{ duration: 0.2 }}
                     style={{
                       display: 'flex',
@@ -129,8 +130,14 @@ export default function App() {
                       {isUser ? (
                         <>
                           <span>You</span>
-                          <span>·</span>
-                          <span>{item.ts}</span>
+                          {item.is_interim ? (
+                            <span style={{ color: 'var(--accent)', fontWeight: 500 }}>· speaking...</span>
+                          ) : (
+                            <>
+                              <span>·</span>
+                              <span>{item.ts}</span>
+                            </>
+                          )}
                         </>
                       ) : (
                         <>
@@ -160,16 +167,32 @@ export default function App() {
                       style={{
                         padding: isUser ? '12px 18px' : '6px 0',
                         borderRadius: isUser ? '16px 16px 4px 16px' : '0px',
-                        background: isUser ? 'var(--surface-2)' : 'transparent',
-                        border: isUser ? '1px solid var(--border-subtle)' : 'none',
-                        color: 'var(--text-primary)',
+                        background: isUser ? (item.is_interim ? 'rgba(99, 102, 241, 0.08)' : 'var(--surface-2)') : 'transparent',
+                        border: isUser ? (item.is_interim ? '1px dashed var(--accent)' : '1px solid var(--border-subtle)') : 'none',
+                        color: item.is_interim ? 'var(--text-secondary)' : 'var(--text-primary)',
                         fontSize: '14.5px',
                         lineHeight: 1.65,
-                        maxWidth: isUser ? '85%' : '100%'
+                        maxWidth: isUser ? '85%' : '100%',
+                        transition: 'all 0.2s ease'
                       }}
                     >
                       {isUser ? (
-                        item.text
+                        <>
+                          {item.text}
+                          {item.is_interim && (
+                            <span
+                              style={{
+                                display: 'inline-block',
+                                width: '6px',
+                                height: '6px',
+                                borderRadius: '50%',
+                                background: 'var(--accent)',
+                                marginLeft: '6px',
+                                verticalAlign: 'middle'
+                              }}
+                            />
+                          )}
+                        </>
                       ) : (
                         <div className="markdown-content">
                           <Markdown remarkPlugins={[remarkGfm]}>{item.text}</Markdown>
@@ -205,6 +228,11 @@ export default function App() {
               // ── Inline Revision Notes Card ──
               if (item.type === 'notes') {
                 return <InlineNotesCard key={item.id} notes={item.notes} />;
+              }
+
+              // ── Inline Syntactic Grammar Movement Card ──
+              if (item.type === 'movement') {
+                return <InlineGrammarMovementCard key={item.id} data={item.data} />;
               }
 
               return null;

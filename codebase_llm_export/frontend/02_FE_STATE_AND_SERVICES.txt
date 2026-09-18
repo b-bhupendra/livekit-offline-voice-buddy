@@ -1,7 +1,7 @@
 ================================================================================
 FILE: mvp_talker_offline/VisualsFrontend/src/types.ts
 LANGUAGE: typescript
-LINES: 117
+LINES: 179
 PURPOSE: Central TypeScript interfaces (FeedItem, QuizQuestion, ContentionProps, SyllabusData)
 ================================================================================
 
@@ -73,6 +73,38 @@ export interface LearnerState {
   failed_questions_queue?: string[];
 }
 
+export interface DriftAuditData {
+  total_mutations: number;
+  pass_count: number;
+  fail_count: number;
+  pass_rate: number;
+  status: string;
+}
+
+export interface LearnerSummary {
+  user_id: string;
+  active_chapter: number;
+  active_chapter_title: string;
+  stage: string;
+  coursework_completed: boolean;
+  quiz_passed: boolean;
+  cumulative_accuracy: number;
+  failed_questions_queue: string[];
+  completed_chapters: number[];
+  roadmap: Array<{
+    chapter_idx?: number;
+    index?: number;
+    title: string;
+    topic?: string;
+    status: 'locked' | 'active' | 'completed';
+    is_current?: boolean;
+    coursework_done?: boolean;
+    quiz_passed?: boolean;
+  }>;
+  learner_state?: LearnerState;
+  drift_audit?: DriftAuditData;
+}
+
 export interface SyllabusData {
   active_chapter: number;
   learner_state: LearnerState;
@@ -85,12 +117,41 @@ export type GenUIComponent =
   | 'ContentionResolver'
   | 'InteractiveWorksheet'
   | 'BionicSketchNote'
-  | 'SyllabusProgressTree';
+  | 'SyllabusProgressTree'
+  | 'GrammarMovement';
 
 export interface GenUIEvent {
+  schema_version?: '1.0' | string;
   type: 'genui_render';
   component: GenUIComponent;
   props: Record<string, unknown>;
+}
+
+export type GrammarRole = 'subject' | 'aux' | 'verb' | 'object' | 'particle' | 'rest';
+
+export interface GrammarMovementToken {
+  id: string;
+  text: string;
+  role: GrammarRole;
+  original_index?: number;
+}
+
+export interface GrammarMovementProps {
+  id: string;
+  title: string;
+  rule: string;
+  chapter: number;
+  initial_tokens: GrammarMovementToken[];
+  transformed_tokens: GrammarMovementToken[];
+  explanation: string;
+  rule_citation?: string;
+}
+
+export interface VersionedGenUIEvent<T = Record<string, unknown>> {
+  schema_version: '1.0';
+  type: 'genui_render';
+  component: GenUIComponent;
+  props: T;
 }
 
 // Live AI Activity types
@@ -115,11 +176,12 @@ export interface EventLogEntry {
 }
 
 export type FeedItem =
-  | { id: string; type: 'transcript'; speaker: 'user' | 'agent'; text: string; ts: string }
+  | { id: string; type: 'transcript'; speaker: 'user' | 'agent'; text: string; ts: string; is_interim?: boolean }
   | { id: string; type: 'streaming_card'; role: string; content: string }
   | { id: string; type: 'quiz'; questions: QuizQuestion[]; source: 'bank' | 'llm_generated'; chapter?: number }
   | { id: string; type: 'dispute'; data: ContentionProps }
-  | { id: string; type: 'notes'; notes: Record<string, unknown> };
+  | { id: string; type: 'notes'; notes: Record<string, unknown> }
+  | { id: string; type: 'movement'; data: GrammarMovementProps };
 
 export type DrawerTab = 'syllabus' | 'analytics' | 'remediation';
 
@@ -127,7 +189,7 @@ export type DrawerTab = 'syllabus' | 'analytics' | 'remediation';
 ================================================================================
 FILE: mvp_talker_offline/VisualsFrontend/src/store.ts
 LANGUAGE: typescript
-LINES: 653
+LINES: 738
 PURPOSE: Zustand state store managing sequential feed array, LiveKit room instance, drawer state, and LiveKit RPC actions
 ================================================================================
 
@@ -142,7 +204,9 @@ import type {
   FeedItem,
   DrawerTab,
   ChapterInfo,
-  GenUIEvent
+  GenUIEvent,
+  LearnerSummary,
+  GrammarMovementProps
 } from './types';
 
 // ── Default 18-Chapter Curriculum Roadmap ─────────────────────────────────────
@@ -208,6 +272,7 @@ export interface BuddyStore {
   livekitRoom: Room | null;
   syllabus: SyllabusData | null;
   learnerState: LearnerState;
+  learnerSummary: LearnerSummary | null;
   activeChapter: number;
   drawerOpen: boolean;
   activeDrawerTab: DrawerTab;
@@ -221,14 +286,16 @@ export interface BuddyStore {
   setActiveDrawerTab: (tab: DrawerTab) => void;
   setActiveChapter: (chapter: number) => void;
   setIsVoiceActive: (active: boolean) => void;
+  syncProgress: (data: Partial<LearnerSummary> & Record<string, any>) => void;
 
-  appendTranscript: (speaker: 'user' | 'agent', text: string) => void;
+  appendTranscript: (speaker: 'user' | 'agent', text: string, isFinal?: boolean) => void;
   appendStreamToken: (token: string, role: string) => void;
   finalizeStreamCard: () => void;
 
   pushInlineQuiz: (questions: QuizQuestion[], source: 'bank' | 'llm_generated', chapter?: number) => void;
   pushInlineDispute: (data: ContentionProps) => void;
   pushInlineNotes: (notes: Record<string, unknown>) => void;
+  pushInlineMovement: (data: GrammarMovementProps) => void;
   pushGenUI: (evt: GenUIEvent) => void;
 
   submitAnswer: (questionId: string, optionId: string, chapter: number, rawText?: string) => Promise<QuizSubmitResult>;
@@ -298,6 +365,7 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
     total_correct: 14,
     failed_questions_queue: ['ch01_q01']
   },
+  learnerSummary: null,
   activeChapter: 1,
   drawerOpen: false,
   activeDrawerTab: 'syllabus',
@@ -315,18 +383,92 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
   setActiveChapter: (chapter) => set({ activeChapter: chapter }),
   setIsVoiceActive: (active) => set({ isVoiceActive: active }),
 
-  appendTranscript: (speaker, text) => set((s) => ({
-    feed: [
-      ...s.feed,
-      {
-        id: Math.random().toString(36).slice(2, 9),
-        type: 'transcript',
-        speaker,
-        text,
-        ts: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      }
-    ]
-  })),
+  syncProgress: (data) => {
+    if (!data) return;
+    const currentSyllabus = get().syllabus;
+    const currentLearner = get().learnerState;
+
+    const activeCh = Number(data.active_chapter || data.learner_state?.active_chapter || get().activeChapter || 1);
+
+    // Normalize roadmap if provided
+    let updatedRoadmap = currentSyllabus?.roadmap || DEFAULT_ROADMAP;
+    if (Array.isArray(data.roadmap) && data.roadmap.length > 0) {
+      updatedRoadmap = data.roadmap.map((item: any, idx: number) => {
+        const chIdx = Number(item.chapter_idx || item.index || idx + 1);
+        const defaultMatch = DEFAULT_ROADMAP.find((d) => d.index === chIdx);
+        const isCurrent = chIdx === activeCh;
+        const isCompleted = item.status === 'completed' || chIdx < activeCh;
+        return {
+          index: chIdx,
+          title: item.title || defaultMatch?.title || `Chapter ${chIdx}`,
+          topic: item.topic || defaultMatch?.topic || 'Grammar Mastery & Applied Fluency',
+          status: (item.status as 'locked' | 'active' | 'completed') || (isCurrent ? 'active' : isCompleted ? 'completed' : 'locked'),
+          coursework_done: item.coursework_done ?? (isCompleted || (isCurrent && Boolean(data.coursework_completed))),
+          quiz_passed: item.quiz_passed ?? (isCompleted || (isCurrent && Boolean(data.quiz_passed)))
+        };
+      });
+    }
+
+    const updatedLearnerState: LearnerState = {
+      active_chapter: activeCh,
+      coursework_completed: Boolean(data.coursework_completed ?? data.learner_state?.coursework_completed ?? currentLearner.coursework_completed),
+      milestone_quiz_passed: Boolean(data.quiz_passed ?? data.learner_state?.milestone_quiz_passed ?? currentLearner.milestone_quiz_passed),
+      chapter_scores: data.learner_state?.chapter_scores || currentLearner.chapter_scores || { [String(activeCh)]: data.cumulative_accuracy || 85 },
+      total_errors: (data.failed_questions_queue?.length) ?? data.learner_state?.total_errors ?? currentLearner.total_errors,
+      total_correct: data.learner_state?.total_correct ?? currentLearner.total_correct,
+      failed_questions_queue: data.failed_questions_queue || data.learner_state?.failed_questions_queue || currentLearner.failed_questions_queue || []
+    };
+
+    set({
+      activeChapter: activeCh,
+      learnerState: updatedLearnerState,
+      syllabus: {
+        active_chapter: activeCh,
+        learner_state: updatedLearnerState,
+        roadmap: updatedRoadmap
+      },
+      learnerSummary: data as LearnerSummary
+    });
+  },
+
+  appendTranscript: (speaker, text, isFinal = true) => set((s) => {
+    const lastItem = s.feed[s.feed.length - 1];
+    
+    // Update existing interim bubble if same speaker
+    if (!isFinal && lastItem && lastItem.type === 'transcript' && lastItem.speaker === speaker && lastItem.is_interim) {
+        return {
+            feed: [
+                ...s.feed.slice(0, -1),
+                { ...lastItem, text }
+            ]
+        };
+    }
+    
+    // Finalize an existing interim bubble
+    if (isFinal && lastItem && lastItem.type === 'transcript' && lastItem.speaker === speaker && lastItem.is_interim) {
+        return {
+            feed: [
+                ...s.feed.slice(0, -1),
+                { ...lastItem, text, is_interim: false }
+            ]
+        };
+    }
+
+    // Append new bubble
+    return {
+      feed: [
+        ...s.feed,
+        {
+          id: Math.random().toString(36).slice(2, 9),
+          type: 'transcript',
+          speaker,
+          text,
+          ts: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          is_interim: !isFinal
+        }
+      ]
+    };
+  }),
 
   appendStreamToken: (token, role) => set((s) => {
     const lastItem = s.feed[s.feed.length - 1];
@@ -380,6 +522,13 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
     ]
   })),
 
+  pushInlineMovement: (data) => set((s) => ({
+    feed: [
+      ...s.feed.filter((i) => i.type !== 'streaming_card'),
+      { id: data.id || Math.random().toString(36).slice(2, 9), type: 'movement', data }
+    ]
+  })),
+
   pushGenUI: (evt) => {
     if (evt.component === 'QuizCard') {
       const questions = (evt.props?.questions as QuizQuestion[]) || [];
@@ -391,6 +540,8 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
       get().pushInlineNotes(notes);
     } else if (evt.component === 'ContentionResolver') {
       get().pushInlineDispute(evt.props as unknown as ContentionProps);
+    } else if (evt.component === 'GrammarMovement') {
+      get().pushInlineMovement(evt.props as unknown as GrammarMovementProps);
     }
   },
 
@@ -665,13 +816,9 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
           payload: '',
           responseTimeout: 4000
         });
-        const data: SyllabusData = JSON.parse(rpcRes);
-        if (data && data.roadmap) {
-          set({
-            syllabus: data,
-            learnerState: data.learner_state,
-            activeChapter: data.active_chapter || 1
-          });
+        const data = JSON.parse(rpcRes);
+        if (data) {
+          get().syncProgress(data);
           return;
         }
       } catch (rpcErr) {
@@ -789,7 +936,7 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
 ================================================================================
 FILE: mvp_talker_offline/VisualsFrontend/src/hooks/useLiveKit.ts
 LANGUAGE: typescript
-LINES: 257
+LINES: 278
 PURPOSE: LiveKit WebRTC transport hook: room joining (/api/token), speaker audio track playback, text stream handling, and client RPC
 ================================================================================
 
@@ -801,7 +948,7 @@ import {
   type RpcInvocationData
 } from 'livekit-client';
 import { useBuddyStore } from '../store';
-import type { QuizQuestion, ContentionProps } from '../types';
+import type { QuizQuestion, ContentionProps, GrammarMovementProps } from '../types';
 
 const TOKEN_URL = 'http://localhost:8880/api/token?identity=web-user&room_name=buddy-room';
 
@@ -876,12 +1023,13 @@ export function useLiveKit() {
 
         // ── Text Stream Handlers ─────────────────────────────────────
         try {
-          // Topic: "transcript" (conversational speech stream)
+          // Topic: "transcript" (conversational speech stream w/ interim updates)
           room.registerTextStreamHandler('transcript', async (reader) => {
             try {
               const raw = await reader.readAll();
               const payload = JSON.parse(raw);
-              useBuddyStore.getState().appendTranscript(payload.speaker || 'agent', payload.text || '');
+              const isFinal = payload.is_final !== undefined ? payload.is_final : true;
+              useBuddyStore.getState().appendTranscript(payload.speaker || 'agent', payload.text || '', isFinal);
             } catch (err) {
               console.error('[LiveKit TextStream] transcript parse error:', err);
             }
@@ -905,6 +1053,8 @@ export function useLiveKit() {
                   store.pushInlineNotes(notes);
                 } else if (evt.component === 'ContentionResolver') {
                   store.pushInlineDispute(evt.props as unknown as ContentionProps);
+                } else if (evt.component === 'GrammarMovement') {
+                  store.pushInlineMovement(evt.props as unknown as GrammarMovementProps);
                 } else if (evt.component === 'SyllabusProgressTree') {
                   if (evt.props?.new_chapter) {
                     store.setActiveChapter(evt.props.new_chapter);
@@ -927,6 +1077,17 @@ export function useLiveKit() {
               useBuddyStore.getState().appendStreamToken(raw, 'llm');
             }
           });
+
+          // Topic: "progress" (authoritative learner state push from backend)
+          room.registerTextStreamHandler('progress', async (reader) => {
+            try {
+              const raw = await reader.readAll();
+              const payload = JSON.parse(raw);
+              useBuddyStore.getState().syncProgress(payload);
+            } catch (err) {
+              console.error('[LiveKit TextStream] progress parse error:', err);
+            }
+          });
         } catch (e) {
           console.warn('[LiveKit] registerTextStreamHandler notice:', e);
         }
@@ -939,7 +1100,10 @@ export function useLiveKit() {
             const store = useBuddyStore.getState();
 
             if (topic === 'transcript' || data.speaker) {
-              store.appendTranscript(data.speaker, data.text);
+              const isFinal = data.is_final !== undefined ? data.is_final : true;
+              store.appendTranscript(data.speaker, data.text, isFinal);
+            } else if (topic === 'progress' || data.stage || (data.learner_state && data.roadmap)) {
+              store.syncProgress(data);
             } else if (topic === 'genui' || data.type === 'genui_render') {
               if (data.component === 'QuizCard') {
                 store.pushInlineQuiz(data.props?.questions || [], data.props?.source || 'llm_generated', data.props?.chapter || store.activeChapter);
@@ -947,6 +1111,8 @@ export function useLiveKit() {
                 store.pushInlineNotes(data.props?.notes || {});
               } else if (data.component === 'ContentionResolver') {
                 store.pushInlineDispute(data.props);
+              } else if (data.component === 'GrammarMovement') {
+                store.pushInlineMovement(data.props);
               }
             } else if (topic === 'genui_token' || data.token) {
               store.appendStreamToken(data.token, data.role || 'llm');
@@ -967,6 +1133,8 @@ export function useLiveKit() {
               store.pushInlineNotes(evt.props?.notes || {});
             } else if (evt.component === 'ContentionResolver') {
               store.pushInlineDispute(evt.props);
+            } else if (evt.component === 'GrammarMovement') {
+              store.pushInlineMovement(evt.props);
             }
             return JSON.stringify({ received: true });
           } catch (e) {

@@ -1,7 +1,7 @@
 ================================================================================
 FILE: mvp_talker_offline/VisualsFrontend/src/App.tsx
 LANGUAGE: typescript
-LINES: 224
+LINES: 252
 PURPOSE: Conversational Live Stage: Timeline feed, top status bar, bottom audio dock, and slide-over drawer
 ================================================================================
 
@@ -18,6 +18,7 @@ import { SlideOverDrawer } from './components/SlideOverDrawer';
 import { InlineQuizCard } from './components/InlineQuizCard';
 import { InlineDisputeCard } from './components/InlineDisputeCard';
 import { InlineNotesCard } from './components/InlineNotesCard';
+import { InlineGrammarMovementCard } from './components/InlineGrammarMovementCard';
 import { StreamingCard } from './components/StreamingCard';
 
 export default function App() {
@@ -111,7 +112,7 @@ export default function App() {
                   <motion.div
                     key={item.id}
                     initial={{ opacity: 0, y: 6 }}
-                    animate={{ opacity: 1, y: 0 }}
+                    animate={{ opacity: item.is_interim ? 0.75 : 1, y: 0 }}
                     transition={{ duration: 0.2 }}
                     style={{
                       display: 'flex',
@@ -136,8 +137,14 @@ export default function App() {
                       {isUser ? (
                         <>
                           <span>You</span>
-                          <span>·</span>
-                          <span>{item.ts}</span>
+                          {item.is_interim ? (
+                            <span style={{ color: 'var(--accent)', fontWeight: 500 }}>· speaking...</span>
+                          ) : (
+                            <>
+                              <span>·</span>
+                              <span>{item.ts}</span>
+                            </>
+                          )}
                         </>
                       ) : (
                         <>
@@ -167,16 +174,32 @@ export default function App() {
                       style={{
                         padding: isUser ? '12px 18px' : '6px 0',
                         borderRadius: isUser ? '16px 16px 4px 16px' : '0px',
-                        background: isUser ? 'var(--surface-2)' : 'transparent',
-                        border: isUser ? '1px solid var(--border-subtle)' : 'none',
-                        color: 'var(--text-primary)',
+                        background: isUser ? (item.is_interim ? 'rgba(99, 102, 241, 0.08)' : 'var(--surface-2)') : 'transparent',
+                        border: isUser ? (item.is_interim ? '1px dashed var(--accent)' : '1px solid var(--border-subtle)') : 'none',
+                        color: item.is_interim ? 'var(--text-secondary)' : 'var(--text-primary)',
                         fontSize: '14.5px',
                         lineHeight: 1.65,
-                        maxWidth: isUser ? '85%' : '100%'
+                        maxWidth: isUser ? '85%' : '100%',
+                        transition: 'all 0.2s ease'
                       }}
                     >
                       {isUser ? (
-                        item.text
+                        <>
+                          {item.text}
+                          {item.is_interim && (
+                            <span
+                              style={{
+                                display: 'inline-block',
+                                width: '6px',
+                                height: '6px',
+                                borderRadius: '50%',
+                                background: 'var(--accent)',
+                                marginLeft: '6px',
+                                verticalAlign: 'middle'
+                              }}
+                            />
+                          )}
+                        </>
                       ) : (
                         <div className="markdown-content">
                           <Markdown remarkPlugins={[remarkGfm]}>{item.text}</Markdown>
@@ -212,6 +235,11 @@ export default function App() {
               // ── Inline Revision Notes Card ──
               if (item.type === 'notes') {
                 return <InlineNotesCard key={item.id} notes={item.notes} />;
+              }
+
+              // ── Inline Syntactic Grammar Movement Card ──
+              if (item.type === 'movement') {
+                return <InlineGrammarMovementCard key={item.id} data={item.data} />;
               }
 
               return null;
@@ -690,7 +718,7 @@ export const AudioDock: React.FC = () => {
 ================================================================================
 FILE: mvp_talker_offline/VisualsFrontend/src/components/SlideOverDrawer.tsx
 LANGUAGE: typescript
-LINES: 518
+LINES: 332
 PURPOSE: Collapsible slide-over drawer with 18-chapter roadmap, analytics, and remediation queue
 ================================================================================
 
@@ -702,13 +730,11 @@ import {
   BarChart3,
   RefreshCw,
   CheckCircle2,
-  Lock,
-  ArrowRight,
-  Sparkles,
   AlertCircle
 } from 'lucide-react';
-import { useBuddyStore, DEFAULT_ROADMAP } from '../store';
+import { useBuddyStore } from '../store';
 import type { DrawerTab } from '../types';
+import { SyllabusSection } from './SyllabusSection';
 
 export const SlideOverDrawer: React.FC = () => {
   const {
@@ -717,15 +743,9 @@ export const SlideOverDrawer: React.FC = () => {
     activeDrawerTab,
     setActiveDrawerTab,
     activeChapter,
-    setActiveChapter,
-    syllabus,
     learnerState,
-    advanceChapter,
     triggerLLMQuiz
   } = useBuddyStore();
-
-  const roadmap = syllabus?.roadmap || DEFAULT_ROADMAP;
-  const currentChapterInfo = roadmap.find((c) => c.index === activeChapter) || roadmap[0];
 
   const totalCorrect = learnerState.total_correct || 0;
   const totalErrors = learnerState.total_errors || 0;
@@ -854,186 +874,8 @@ export const SlideOverDrawer: React.FC = () => {
 
             {/* Content Body */}
             <div style={{ flex: 1, overflowY: 'auto', padding: '20px' }}>
-              {/* ── TAB 1: ROADMAP ── */}
-              {activeDrawerTab === 'syllabus' && (
-                <div>
-                  {/* Current Chapter Hero Card */}
-                  <div
-                    style={{
-                      background: 'var(--surface-2)',
-                      border: '1px solid var(--border-subtle)',
-                      borderRadius: 'var(--radius-md)',
-                      padding: '16px',
-                      marginBottom: '20px'
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        marginBottom: '6px'
-                      }}
-                    >
-                      <span
-                        style={{
-                          fontSize: '11px',
-                          textTransform: 'uppercase',
-                          color: 'var(--accent)',
-                          fontWeight: 600,
-                          letterSpacing: '0.06em'
-                        }}
-                      >
-                        Active Chapter
-                      </span>
-                      <span
-                        style={{
-                          fontSize: '11.5px',
-                          color: 'var(--success)',
-                          background: 'var(--success-soft)',
-                          padding: '2px 8px',
-                          borderRadius: 'var(--radius-full)',
-                          fontWeight: 500
-                        }}
-                      >
-                        Coursework Ready
-                      </span>
-                    </div>
-
-                    <div style={{ fontSize: '15px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}>
-                      Chapter {activeChapter}: {currentChapterInfo.title}
-                    </div>
-
-                    <div style={{ fontSize: '12.5px', color: 'var(--text-secondary)', marginBottom: '14px' }}>
-                      Focus: {currentChapterInfo.topic}
-                    </div>
-
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      <button
-                        onClick={() => {
-                          triggerLLMQuiz(activeChapter);
-                          toggleDrawer();
-                        }}
-                        style={{
-                          flex: 1,
-                          background: 'var(--surface-3)',
-                          border: '1px solid var(--border-subtle)',
-                          color: 'var(--text-primary)',
-                          padding: '7px 12px',
-                          borderRadius: 'var(--radius-sm)',
-                          fontSize: '12px',
-                          fontWeight: 500,
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          gap: '6px'
-                        }}
-                      >
-                        <Sparkles size={12} color="var(--accent)" />
-                        <span>Launch Quiz</span>
-                      </button>
-
-                      <button
-                        onClick={() => advanceChapter()}
-                        style={{
-                          flex: 1,
-                          background: 'var(--accent)',
-                          border: 'none',
-                          color: '#ffffff',
-                          padding: '7px 12px',
-                          borderRadius: 'var(--radius-sm)',
-                          fontSize: '12px',
-                          fontWeight: 600,
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          gap: '6px'
-                        }}
-                      >
-                        <span>Advance</span>
-                        <ArrowRight size={13} />
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* 18-Chapter Curriculum List */}
-                  <div
-                    style={{
-                      fontSize: '11.5px',
-                      textTransform: 'uppercase',
-                      color: 'var(--text-tertiary)',
-                      letterSpacing: '0.06em',
-                      marginBottom: '10px'
-                    }}
-                  >
-                    18-Chapter Progressive Roadmap
-                  </div>
-
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    {roadmap.map((ch) => {
-                      const isCurrent = ch.index === activeChapter;
-                      const isCompleted = ch.index < activeChapter || ch.status === 'completed';
-
-                      return (
-                        <button
-                          key={ch.index}
-                          onClick={() => setActiveChapter(ch.index)}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'flex-start',
-                            gap: '12px',
-                            padding: '10px 14px',
-                            borderRadius: 'var(--radius-md)',
-                            background: isCurrent ? 'var(--surface-2)' : 'transparent',
-                            border: isCurrent ? '1px solid var(--accent)' : '1px solid transparent',
-                            cursor: 'pointer',
-                            textAlign: 'left',
-                            transition: 'all 0.15s ease'
-                          }}
-                        >
-                          <div style={{ marginTop: '2px' }}>
-                            {isCompleted ? (
-                              <CheckCircle2 size={16} color="var(--success)" />
-                            ) : isCurrent ? (
-                              <Sparkles size={16} color="var(--accent)" />
-                            ) : (
-                              <Lock size={15} color="var(--text-tertiary)" />
-                            )}
-                          </div>
-
-                          <div style={{ flex: 1 }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '2px' }}>
-                              <span
-                                style={{
-                                  fontSize: '11px',
-                                  fontFamily: 'var(--font-mono)',
-                                  color: isCurrent ? 'var(--accent)' : 'var(--text-tertiary)'
-                                }}
-                              >
-                                {String(ch.index).padStart(2, '0')}
-                              </span>
-                              <span
-                                style={{
-                                  fontSize: '13px',
-                                  fontWeight: isCurrent ? 600 : 500,
-                                  color: isCurrent ? 'var(--text-primary)' : isCompleted ? 'var(--text-secondary)' : 'var(--text-tertiary)'
-                                }}
-                              >
-                                {ch.title}
-                              </span>
-                            </div>
-                            <div style={{ fontSize: '11.5px', color: 'var(--text-tertiary)' }}>
-                              {ch.topic}
-                            </div>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
+              {/* ── TAB 1: ROADMAP / SYLLABUS SECTION ── */}
+              {activeDrawerTab === 'syllabus' && <SyllabusSection />}
 
               {/* ── TAB 2: ANALYTICS ── */}
               {activeDrawerTab === 'analytics' && (
@@ -1210,6 +1052,391 @@ export const SlideOverDrawer: React.FC = () => {
         </>
       )}
     </AnimatePresence>
+  );
+};
+
+
+================================================================================
+FILE: mvp_talker_offline/VisualsFrontend/src/components/SyllabusSection.tsx
+LANGUAGE: typescript
+LINES: 376
+PURPOSE: Modular syllabus section displaying active chapter hero, stage badges, coursework gating, 18-chapter roadmap, and drift audit metrics
+================================================================================
+
+import React from 'react';
+import {
+  Sparkles,
+  CheckCircle2,
+  Lock,
+  ArrowRight,
+  ShieldCheck,
+  Award,
+  AlertTriangle,
+  RotateCcw
+} from 'lucide-react';
+import { useBuddyStore, DEFAULT_ROADMAP } from '../store';
+
+export const SyllabusSection: React.FC = () => {
+  const {
+    activeChapter,
+    setActiveChapter,
+    syllabus,
+    learnerState,
+    learnerSummary,
+    advanceChapter,
+    triggerLLMQuiz,
+    toggleDrawer
+  } = useBuddyStore();
+
+  const roadmap = syllabus?.roadmap || DEFAULT_ROADMAP;
+  const currentChapterInfo = roadmap.find((c) => c.index === activeChapter) || roadmap[0];
+
+  const stage = learnerSummary?.stage || 'EXPLANATION';
+  const courseworkDone = learnerState.coursework_completed || currentChapterInfo.coursework_done;
+  const quizPassed = learnerState.milestone_quiz_passed || currentChapterInfo.quiz_passed;
+  const failedQueue = learnerState.failed_questions_queue || [];
+  const driftAudit = learnerSummary?.drift_audit;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+      {/* ── Active Chapter Hero Card ── */}
+      <div
+        style={{
+          background: 'linear-gradient(145deg, var(--surface-2) 0%, var(--surface-1) 100%)',
+          border: '1px solid var(--border-subtle)',
+          borderRadius: 'var(--radius-md)',
+          padding: '16px',
+          boxShadow: '0 4px 20px rgba(0,0,0,0.2)'
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: '8px'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span
+              style={{
+                fontSize: '10.5px',
+                textTransform: 'uppercase',
+                color: 'var(--accent)',
+                fontWeight: 700,
+                letterSpacing: '0.08em',
+                background: 'rgba(99, 102, 241, 0.12)',
+                padding: '2px 8px',
+                borderRadius: 'var(--radius-full)'
+              }}
+            >
+              Chapter {activeChapter}
+            </span>
+            <span
+              style={{
+                fontSize: '10.5px',
+                textTransform: 'uppercase',
+                color: 'var(--text-tertiary)',
+                fontWeight: 600,
+                letterSpacing: '0.06em'
+              }}
+            >
+              Stage: {stage}
+            </span>
+          </div>
+
+          <span
+            style={{
+              fontSize: '11px',
+              color: courseworkDone ? 'var(--success)' : 'var(--text-secondary)',
+              background: courseworkDone ? 'var(--success-soft)' : 'var(--surface-3)',
+              padding: '2px 8px',
+              borderRadius: 'var(--radius-full)',
+              fontWeight: 500,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px'
+            }}
+          >
+            {courseworkDone ? (
+              <>
+                <CheckCircle2 size={11} /> Coursework Complete
+              </>
+            ) : (
+              'Coursework In Progress'
+            )}
+          </span>
+        </div>
+
+        <div style={{ fontSize: '15.5px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}>
+          {currentChapterInfo.title}
+        </div>
+
+        <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '14px', lineHeight: 1.4 }}>
+          Focus: {currentChapterInfo.topic}
+        </div>
+
+        {/* Status Pills */}
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '14px', flexWrap: 'wrap' }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '5px',
+              fontSize: '11.5px',
+              padding: '4px 10px',
+              borderRadius: 'var(--radius-sm)',
+              background: quizPassed ? 'var(--success-soft)' : 'rgba(234, 179, 8, 0.1)',
+              color: quizPassed ? 'var(--success)' : '#eab308',
+              border: `1px solid ${quizPassed ? 'rgba(34,197,94,0.2)' : 'rgba(234,179,8,0.2)'}`
+            }}
+          >
+            <Award size={12} />
+            <span>{quizPassed ? 'Milestone Passed' : 'Quiz Gated (Pass Required to Advance)'}</span>
+          </div>
+        </div>
+
+        {/* Quick Actions */}
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button
+            onClick={() => {
+              triggerLLMQuiz(activeChapter);
+              toggleDrawer();
+            }}
+            style={{
+              flex: 1,
+              background: 'var(--surface-3)',
+              border: '1px solid var(--border-subtle)',
+              color: 'var(--text-primary)',
+              padding: '8px 12px',
+              borderRadius: 'var(--radius-sm)',
+              fontSize: '12px',
+              fontWeight: 500,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+              transition: 'background 0.15s ease'
+            }}
+          >
+            <Sparkles size={13} color="var(--accent)" />
+            <span>Launch Quiz</span>
+          </button>
+
+          <button
+            onClick={() => advanceChapter()}
+            style={{
+              flex: 1,
+              background: courseworkDone ? 'var(--accent)' : 'var(--surface-3)',
+              border: 'none',
+              color: courseworkDone ? '#ffffff' : 'var(--text-secondary)',
+              padding: '8px 12px',
+              borderRadius: 'var(--radius-sm)',
+              fontSize: '12px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+              transition: 'opacity 0.15s ease'
+            }}
+          >
+            <span>Advance</span>
+            <ArrowRight size={13} />
+          </button>
+        </div>
+      </div>
+
+      {/* ── Isomorphic Drift & Engine Auditing ── */}
+      {driftAudit && driftAudit.total_mutations > 0 && (
+        <div
+          style={{
+            background: 'var(--surface-2)',
+            border: '1px solid var(--border-subtle)',
+            borderRadius: 'var(--radius-md)',
+            padding: '12px 14px'
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: '8px'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <ShieldCheck size={14} color="var(--success)" />
+              <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                Isomorphic Drift Audit
+              </span>
+            </div>
+            <span
+              style={{
+                fontSize: '10.5px',
+                color: 'var(--success)',
+                background: 'var(--success-soft)',
+                padding: '2px 6px',
+                borderRadius: 'var(--radius-full)',
+                fontWeight: 600
+              }}
+            >
+              {driftAudit.status.toUpperCase()}
+            </span>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', textAlign: 'center' }}>
+            <div style={{ background: 'var(--surface-1)', padding: '6px', borderRadius: 'var(--radius-sm)' }}>
+              <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                {driftAudit.total_mutations}
+              </div>
+              <div style={{ fontSize: '10px', color: 'var(--text-tertiary)' }}>Variants</div>
+            </div>
+            <div style={{ background: 'var(--surface-1)', padding: '6px', borderRadius: 'var(--radius-sm)' }}>
+              <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--success)' }}>
+                {driftAudit.pass_rate}%
+              </div>
+              <div style={{ fontSize: '10px', color: 'var(--text-tertiary)' }}>Pass Rate</div>
+            </div>
+            <div style={{ background: 'var(--surface-1)', padding: '6px', borderRadius: 'var(--radius-sm)' }}>
+              <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                {driftAudit.fail_count}
+              </div>
+              <div style={{ fontSize: '10px', color: 'var(--text-tertiary)' }}>Remediations</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Remediation Alert (If Any) ── */}
+      {failedQueue.length > 0 && (
+        <div
+          style={{
+            background: 'rgba(239, 68, 68, 0.08)',
+            border: '1px solid rgba(239, 68, 68, 0.25)',
+            borderRadius: 'var(--radius-md)',
+            padding: '12px 14px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <AlertTriangle size={15} color="#ef4444" />
+            <div>
+              <div style={{ fontSize: '12px', fontWeight: 600, color: '#fca5a5' }}>
+                {failedQueue.length} Remediation Questions Pending
+              </div>
+              <div style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>
+                Isomorphic variations queued for concept retention
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              triggerLLMQuiz(activeChapter, 'remediation');
+              toggleDrawer();
+            }}
+            style={{
+              background: '#ef4444',
+              color: '#ffffff',
+              border: 'none',
+              padding: '4px 8px',
+              borderRadius: 'var(--radius-sm)',
+              fontSize: '11px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px'
+            }}
+          >
+            <RotateCcw size={11} />
+            <span>Retry</span>
+          </button>
+        </div>
+      )}
+
+      {/* ── 18-Chapter Progressive Roadmap ── */}
+      <div>
+        <div
+          style={{
+            fontSize: '11.5px',
+            textTransform: 'uppercase',
+            color: 'var(--text-tertiary)',
+            letterSpacing: '0.06em',
+            marginBottom: '10px',
+            fontWeight: 600
+          }}
+        >
+          18-Chapter Progressive Roadmap
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          {roadmap.map((ch) => {
+            const isCurrent = ch.index === activeChapter;
+            const isCompleted = ch.index < activeChapter || ch.status === 'completed';
+
+            return (
+              <button
+                key={ch.index}
+                onClick={() => setActiveChapter(ch.index)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: '12px',
+                  padding: '10px 14px',
+                  borderRadius: 'var(--radius-md)',
+                  background: isCurrent ? 'var(--surface-2)' : 'transparent',
+                  border: isCurrent ? '1px solid var(--accent)' : '1px solid transparent',
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                <div style={{ marginTop: '2px' }}>
+                  {isCompleted ? (
+                    <CheckCircle2 size={16} color="var(--success)" />
+                  ) : isCurrent ? (
+                    <Sparkles size={16} color="var(--accent)" />
+                  ) : (
+                    <Lock size={15} color="var(--text-tertiary)" />
+                  )}
+                </div>
+
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '2px' }}>
+                    <span
+                      style={{
+                        fontSize: '11px',
+                        fontFamily: 'var(--font-mono)',
+                        color: isCurrent ? 'var(--accent)' : 'var(--text-tertiary)'
+                      }}
+                    >
+                      {String(ch.index).padStart(2, '0')}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: '13px',
+                        fontWeight: isCurrent ? 600 : 500,
+                        color: isCurrent ? 'var(--text-primary)' : isCompleted ? 'var(--text-secondary)' : 'var(--text-tertiary)'
+                      }}
+                    >
+                      {ch.title}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: '11.5px', color: 'var(--text-tertiary)' }}>
+                    {ch.topic}
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
   );
 };
 
@@ -2203,6 +2430,383 @@ export const InlineNotesCard: React.FC<InlineNotesCardProps> = ({ notes }) => {
               />
             ))}
           </div>
+        </div>
+      )}
+    </motion.div>
+  );
+};
+
+
+================================================================================
+FILE: mvp_talker_offline/VisualsFrontend/src/components/InlineGrammarMovementCard.tsx
+LANGUAGE: typescript
+LINES: 368
+PURPOSE: Inline syntactic movement animation card with Framer Motion layoutId spring physics and role capsules
+================================================================================
+
+import React, { useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { ArrowRightLeft, RotateCcw, Play, BookOpen, Sparkles, CheckCircle2 } from 'lucide-react';
+import type { GrammarMovementProps, GrammarRole } from '../types';
+
+interface InlineGrammarMovementCardProps {
+  data: GrammarMovementProps;
+}
+
+const ROLE_CONFIG: Record<
+  GrammarRole,
+  { label: string; color: string; bg: string; border: string }
+> = {
+  subject: {
+    label: 'Subject',
+    color: 'var(--role-subject, #38bdf8)',
+    bg: 'var(--role-subject-soft, rgba(56, 189, 248, 0.12))',
+    border: 'rgba(56, 189, 248, 0.35)',
+  },
+  aux: {
+    label: 'Auxiliary',
+    color: 'var(--role-aux, #a855f7)',
+    bg: 'var(--role-aux-soft, rgba(168, 85, 247, 0.12))',
+    border: 'rgba(168, 85, 247, 0.35)',
+  },
+  verb: {
+    label: 'Verb',
+    color: 'var(--role-verb, #10b981)',
+    bg: 'var(--role-verb-soft, rgba(16, 185, 129, 0.12))',
+    border: 'rgba(16, 185, 129, 0.35)',
+  },
+  object: {
+    label: 'Object',
+    color: 'var(--role-object, #f59e0b)',
+    bg: 'var(--role-object-soft, rgba(245, 158, 11, 0.12))',
+    border: 'rgba(245, 158, 11, 0.35)',
+  },
+  particle: {
+    label: 'Particle',
+    color: 'var(--role-particle, #ec4899)',
+    bg: 'var(--role-particle-soft, rgba(236, 72, 153, 0.12))',
+    border: 'rgba(236, 72, 153, 0.35)',
+  },
+  rest: {
+    label: 'Adjunct',
+    color: 'var(--text-secondary, #94a3b8)',
+    bg: 'rgba(148, 163, 184, 0.08)',
+    border: 'rgba(148, 163, 184, 0.2)',
+  },
+};
+
+export const InlineGrammarMovementCard: React.FC<InlineGrammarMovementCardProps> = ({ data }) => {
+  const [isTransformed, setIsTransformed] = useState(false);
+  const [showExplanation, setShowExplanation] = useState(true);
+
+  const activeTokens = isTransformed ? data.transformed_tokens : data.initial_tokens;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.28, ease: 'easeOut' }}
+      style={{
+        margin: '20px 0',
+        background: 'var(--surface-2, #18181b)',
+        border: '1px solid var(--border-subtle, rgba(255, 255, 255, 0.08))',
+        borderRadius: 'var(--radius-lg, 16px)',
+        padding: '24px',
+        maxWidth: '740px',
+        width: '100%',
+        boxShadow: 'var(--shadow-glass, 0 8px 32px rgba(0, 0, 0, 0.37))',
+        backdropFilter: 'blur(12px)',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '20px',
+      }}
+    >
+      {/* ── Top Header Badge Bar ── */}
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: '8px',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: '28px',
+              height: '28px',
+              borderRadius: '8px',
+              background: 'var(--accent-gradient, linear-gradient(135deg, #6366f1, #8b5cf6))',
+              color: '#fff',
+            }}
+          >
+            <ArrowRightLeft size={16} />
+          </div>
+          <div>
+            <span
+              style={{
+                fontSize: '11px',
+                fontWeight: 700,
+                letterSpacing: '0.08em',
+                textTransform: 'uppercase',
+                color: 'var(--accent-light, #a5b4fc)',
+              }}
+            >
+              Syntactic Movement Engine
+            </span>
+            <h3
+              style={{
+                fontSize: '17px',
+                fontWeight: 600,
+                color: 'var(--text-primary, #ffffff)',
+                margin: '2px 0 0 0',
+              }}
+            >
+              {data.title}
+            </h3>
+          </div>
+        </div>
+
+        {data.chapter && (
+          <span
+            style={{
+              fontSize: '12px',
+              fontWeight: 600,
+              padding: '4px 10px',
+              borderRadius: '999px',
+              background: 'rgba(99, 102, 241, 0.15)',
+              color: 'var(--accent-light, #a5b4fc)',
+              border: '1px solid rgba(99, 102, 241, 0.3)',
+            }}
+          >
+            Chapter {data.chapter}
+          </span>
+        )}
+      </div>
+
+      {/* ── Rule summary ── */}
+      <div
+        style={{
+          fontSize: '13.5px',
+          lineHeight: '1.5',
+          color: 'var(--text-secondary, #94a3b8)',
+          background: 'rgba(255, 255, 255, 0.02)',
+          borderLeft: '3px solid var(--accent, #6366f1)',
+          padding: '8px 14px',
+          borderRadius: '0 8px 8px 0',
+        }}
+      >
+        {data.rule}
+      </div>
+
+      {/* ── Visual Movement Stage ── */}
+      <div
+        style={{
+          background: 'var(--surface-1, #0f172a)',
+          border: '1px solid rgba(255, 255, 255, 0.05)',
+          borderRadius: 'var(--radius-md, 12px)',
+          padding: '24px 20px',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: '16px',
+        }}
+      >
+        <div
+          style={{
+            fontSize: '11px',
+            textTransform: 'uppercase',
+            letterSpacing: '0.06em',
+            color: 'var(--text-tertiary, #64748b)',
+            alignSelf: 'flex-start',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+          }}
+        >
+          <Sparkles size={12} color="var(--accent-light)" />
+          Current Stage: <strong style={{ color: isTransformed ? 'var(--role-verb, #10b981)' : 'var(--text-secondary, #cbd5e1)' }}>
+            {isTransformed ? 'Transformed Structure' : 'Base Declarative Structure'}
+          </strong>
+        </div>
+
+        {/* Tokens Container with Layout tweening */}
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: '12px',
+            alignItems: 'center',
+            justifyContent: 'center',
+            minHeight: '76px',
+            padding: '8px 0',
+            width: '100%',
+          }}
+        >
+          {activeTokens.map((token) => {
+            const roleStyle = ROLE_CONFIG[token.role] || ROLE_CONFIG.rest;
+            return (
+              <motion.div
+                key={token.id}
+                layoutId={token.id}
+                transition={{
+                  type: 'spring',
+                  stiffness: 350,
+                  damping: 25,
+                }}
+                style={{
+                  display: 'inline-flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  gap: '4px',
+                  background: roleStyle.bg,
+                  border: `1px solid ${roleStyle.border}`,
+                  borderRadius: '10px',
+                  padding: '8px 14px',
+                  boxShadow: '0 2px 8px rgba(0, 0, 0, 0.2)',
+                  cursor: 'default',
+                  userSelect: 'none',
+                }}
+              >
+                <span
+                  style={{
+                    fontSize: '16px',
+                    fontWeight: 600,
+                    color: '#ffffff',
+                    letterSpacing: '0.01em',
+                  }}
+                >
+                  {token.text}
+                </span>
+                <span
+                  style={{
+                    fontSize: '10px',
+                    fontWeight: 700,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.06em',
+                    color: roleStyle.color,
+                  }}
+                >
+                  {roleStyle.label}
+                </span>
+              </motion.div>
+            );
+          })}
+        </div>
+
+        {/* Control Button Bar */}
+        <div
+          style={{
+            display: 'flex',
+            gap: '10px',
+            marginTop: '8px',
+          }}
+        >
+          <button
+            onClick={() => setIsTransformed((prev) => !prev)}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '8px',
+              background: isTransformed
+                ? 'rgba(255, 255, 255, 0.08)'
+                : 'var(--accent-gradient, linear-gradient(135deg, #6366f1, #8b5cf6))',
+              color: '#ffffff',
+              border: isTransformed ? '1px solid rgba(255, 255, 255, 0.15)' : 'none',
+              borderRadius: '8px',
+              padding: '8px 18px',
+              fontSize: '13px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              transition: 'all 0.2s ease',
+              boxShadow: isTransformed ? 'none' : '0 4px 14px rgba(99, 102, 241, 0.35)',
+            }}
+          >
+            {isTransformed ? (
+              <>
+                <RotateCcw size={14} /> Revert to Base
+              </>
+            ) : (
+              <>
+                <Play size={14} /> Animate Transformation
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+
+      {/* ── Explanation & Citation Accordion ── */}
+      {data.explanation && (
+        <div
+          style={{
+            background: 'rgba(255, 255, 255, 0.02)',
+            border: '1px solid rgba(255, 255, 255, 0.05)',
+            borderRadius: '10px',
+            padding: '12px 16px',
+          }}
+        >
+          <div
+            onClick={() => setShowExplanation((prev) => !prev)}
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              cursor: 'pointer',
+              userSelect: 'none',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <BookOpen size={14} color="var(--accent-light, #a5b4fc)" />
+              <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary, #cbd5e1)' }}>
+                Pedagogical Breakdown
+              </span>
+            </div>
+            <span style={{ fontSize: '11px', color: 'var(--text-tertiary, #64748b)' }}>
+              {showExplanation ? 'Hide' : 'Show Details'}
+            </span>
+          </div>
+
+          <AnimatePresence>
+            {showExplanation && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.2 }}
+                style={{ overflow: 'hidden' }}
+              >
+                <p
+                  style={{
+                    fontSize: '13px',
+                    lineHeight: '1.6',
+                    color: 'var(--text-secondary, #94a3b8)',
+                    margin: '10px 0 6px 0',
+                  }}
+                >
+                  {data.explanation}
+                </p>
+                {data.rule_citation && (
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      fontSize: '11px',
+                      color: 'var(--accent-light, #a5b4fc)',
+                      marginTop: '8px',
+                    }}
+                  >
+                    <CheckCircle2 size={12} />
+                    <span>Citation: {data.rule_citation}</span>
+                  </div>
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       )}
     </motion.div>

@@ -15,13 +15,14 @@
   --surface-2: #18181b;       /* Cards & Elevated Bubbles */
   --surface-3: #27272a;       /* Input & Hover States */
   --surface-elevated: #222226;
+  --surface-glass: rgba(18, 18, 22, 0.78);
 
   /* ── Hairlines & Borders ── */
   --border-subtle: rgba(255, 255, 255, 0.08);
   --border-strong: rgba(255, 255, 255, 0.16);
   --border-focus: #3b82f6;
 
-  /* ── Typography ── */
+  /* ── Typography Scale & Families ── */
   --text-primary: #fafafa;
   --text-secondary: #a1a1aa;
   --text-tertiary: #71717a;
@@ -32,6 +33,7 @@
   --accent: #3b82f6;
   --accent-hover: #2563eb;
   --accent-soft: rgba(59, 130, 246, 0.12);
+  --accent-gradient: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
   --success: #10b981;
   --success-soft: rgba(16, 185, 129, 0.12);
   --danger: #ef4444;
@@ -39,7 +41,26 @@
   --warning: #f59e0b;
   --warning-soft: rgba(245, 158, 11, 0.12);
 
+  /* ── Grammar Syntax Role Tokens (Framer Motion Integration) ── */
+  --role-subject: #38bdf8;
+  --role-subject-soft: rgba(56, 189, 248, 0.12);
+  --role-aux: #a855f7;
+  --role-aux-soft: rgba(168, 85, 247, 0.12);
+  --role-verb: #10b981;
+  --role-verb-soft: rgba(16, 185, 129, 0.12);
+  --role-object: #f59e0b;
+  --role-object-soft: rgba(245, 158, 11, 0.12);
+  --role-particle: #ec4899;
+  --role-particle-soft: rgba(236, 72, 153, 0.12);
+
+  /* ── Elevation Shadows ── */
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.24);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.32);
+  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.48);
+  --shadow-glow: 0 0 28px rgba(59, 130, 246, 0.22);
+
   /* ── Geometry ── */
+  --radius-xs: 4px;
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 14px;

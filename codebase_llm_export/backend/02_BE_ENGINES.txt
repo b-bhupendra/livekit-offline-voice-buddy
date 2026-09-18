@@ -1,7 +1,7 @@
 ================================================================================
 FILE: mvp_talker_offline/backend/simulation_engine.py
 LANGUAGE: python
-LINES: 211
+LINES: 233
 PURPOSE: Pedagogical simulation engine handling error detection, dispute resolution via local RAG & DuckDuckGo, and colloquial recasts
 ================================================================================
 
@@ -150,12 +150,17 @@ class SimulationEngine:
         Triggered when a user asserts: "I think my answer is right / LLM is wrong!"
         Uses DuckDuckGo search + local RAG to fact-check authoritative sources (Cambridge, Oxford, Merriam-Webster).
         """
-        # Step 1: Query local RAG
-        rag_results = self.rag.hybrid_search(user_claim, top_k=2)
-        local_context = [r["text"] for r in rag_results]
+        # Step 1: Query local RAG for authoritative grammar evidence
+        rag_results = self.rag.hybrid_search(user_claim, top_k=3)
+        if not rag_results and original_question:
+            rag_results = self.rag.hybrid_search(original_question, top_k=2)
+        local_context = [f"[{r.get('source_title', 'Grammar Rule')} - {r.get('section_title', '')}]: {r['text']}" for r in rag_results]
 
-        # Step 2: Query DuckDuckGo search
+        # Step 2: Query DuckDuckGo search with robust offline fallback
         web_snippets = []
+        is_offline = False
+        ddgs_error = None
+
         if DDGS is not None:
             try:
                 search_query = f"grammar English {user_claim[:60]}"
@@ -167,15 +172,29 @@ class SimulationEngine:
                         "url": r.get("href", "")
                     })
             except Exception as e:
-                pass
+                is_offline = True
+                ddgs_error = str(e)
+                print(f"[SimulationEngine] Warning: DuckDuckGo search failed ({e}). Activating offline dispute arbitration via local RAG.")
+        else:
+            is_offline = True
 
-        if not web_snippets:
-            # Offline local fallback notification
-            web_snippets.append({
-                "title": "Local Oxford/Arihant Grammar Store (Offline Mode)",
-                "snippet": local_context[0] if local_context else "Evaluated using verified local RAG grammar chunks.",
-                "url": ""
-            })
+        if not web_snippets or is_offline:
+            is_offline = True
+            fallback_snippet = (
+                local_context[0] if local_context else
+                "Prescriptive rule: Standard grammar requires formal concord based on Oxford Guide and Arihant rules."
+            )
+            web_snippets = [{
+                "title": "Local Oxford Guide & Arihant Reference (Offline Mode)",
+                "snippet": fallback_snippet[:220],
+                "url": "offline://local-rag"
+            }]
+
+        offline_system_prompt = (
+            "OPERATING IN 100% OFFLINE MODE: Internet search is currently unavailable. "
+            "Impartial dispute arbitration is performed strictly using verified local textbook chunks "
+            "from the Oxford Guide to English Grammar and Arihant General English."
+        ) if is_offline else "ONLINE MODE: Fact-checked against authoritative linguistic web sources and local reference."
 
         # Step 3: Analyze register and formulation
         verdict = "VERIFIED_ACCURATE"
@@ -212,8 +231,11 @@ class SimulationEngine:
             "user_claim": user_claim,
             "verdict": verdict,
             "analysis": analysis,
-            "local_rag_evidence": local_context[:1],
+            "local_rag_evidence": local_context[:2],
             "web_sources": web_snippets,
+            "web_search_snippets": web_snippets,
+            "offline_mode": is_offline,
+            "system_prompt_instruction": offline_system_prompt,
             "ruling_summary": "Impartial linguistic review completed without hallucination."
         }
 
@@ -221,7 +243,7 @@ class SimulationEngine:
 ================================================================================
 FILE: mvp_talker_offline/backend/quiz_engine.py
 LANGUAGE: python
-LINES: 219
+LINES: 228
 PURPOSE: Quiz state machine managing chapter banks, answer verification, error tracking, and isomorphic repeat questions with SQLite audit logging
 ================================================================================
 
@@ -427,6 +449,15 @@ class QuizEngine:
             }
         else:
             self.tracker.log_failed_question(question["id"])
+            if question.get("is_isomorphic"):
+                self.tracker.log_isomorphic_mutation(
+                    original_q_id=question.get("id", "").split("_iso")[0],
+                    mutated_q_id=question.get("id", ""),
+                    original_text=question.get("question", ""),
+                    mutated_text=question.get("question", ""),
+                    rule_citation=question.get("rule_citation", ""),
+                    student_pass=False
+                )
             # Generate isomorphic question for instant reinforcement
             iso_q = self.mutate_isomorphic(question)
             self.tracker.log_isomorphic_mutation(
@@ -449,7 +480,7 @@ class QuizEngine:
 ================================================================================
 FILE: mvp_talker_offline/backend/syllabus_tracker.py
 LANGUAGE: python
-LINES: 284
+LINES: 359
 PURPOSE: 18-chapter linear progression tracker backed by SQLite database (memory.db) tracking coursework, mastery, and isomorphic audits
 ================================================================================
 
@@ -737,12 +768,87 @@ class SyllabusTracker:
         except Exception as e:
             print(f"[SyllabusTracker] Warning: Failed to log isomorphic audit: {e}")
 
+    def get_isomorphic_audits(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Retrieve logged (original_question, mutated_question, student_pass/fail) triples from SQLite."""
+        try:
+            with self._get_conn() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT id, user_id, original_question_id, mutated_question_id, original_text, mutated_text, rule_citation, student_pass, created_at
+                    FROM isomorphic_mutation_audit
+                    WHERE user_id = ?
+                    ORDER BY id DESC
+                    LIMIT ?
+                """, (self.user_id, limit))
+                rows = cursor.fetchall()
+                return [
+                    {
+                        "id": r["id"],
+                        "user_id": r["user_id"],
+                        "original_question_id": r["original_question_id"],
+                        "mutated_question_id": r["mutated_question_id"],
+                        "original_text": r["original_text"],
+                        "mutated_text": r["mutated_text"],
+                        "rule_citation": r["rule_citation"],
+                        "student_pass": bool(r["student_pass"]),
+                        "created_at": r["created_at"]
+                    }
+                    for r in rows
+                ]
+        except Exception as e:
+            print(f"[SyllabusTracker] Error retrieving isomorphic audits: {e}")
+            return []
+
+    def audit_mutation_drift(self) -> Dict[str, Any]:
+        """Calculate drift and performance metrics across mutated questions."""
+        audits = self.get_isomorphic_audits(limit=500)
+        total = len(audits)
+        if total == 0:
+            return {"total_mutations": 0, "pass_count": 0, "fail_count": 0, "pass_rate": 0.0, "status": "no_audits"}
+        passes = sum(1 for a in audits if a["student_pass"])
+        fails = total - passes
+        return {
+            "total_mutations": total,
+            "pass_count": passes,
+            "fail_count": fails,
+            "pass_rate": round((passes / total) * 100.0, 2),
+            "status": "active_monitoring"
+        }
+
+    def get_learner_summary(self) -> Dict[str, Any]:
+        """Returns complete authoritative state for real-time frontend synchronization."""
+        state = self.get_state()
+        active_info = self.get_active_chapter()
+        drift = self.audit_mutation_drift()
+        return {
+            "user_id": self.user_id,
+            "active_chapter": active_info["chapter_idx"],
+            "active_chapter_title": active_info["title"],
+            "stage": state["current_stage"],
+            "coursework_completed": state["coursework_completed"],
+            "quiz_passed": state["quiz_passed"],
+            "cumulative_accuracy": state["cumulative_accuracy"],
+            "failed_questions_queue": state["failed_questions_queue"],
+            "completed_chapters": state["completed_chapters"],
+            "roadmap": self.get_roadmap(),
+            "learner_state": {
+                "active_chapter": active_info["chapter_idx"],
+                "coursework_completed": state["coursework_completed"],
+                "milestone_quiz_passed": state["quiz_passed"],
+                "chapter_scores": {str(active_info["chapter_idx"]): state["cumulative_accuracy"]},
+                "total_errors": len(state["failed_questions_queue"]),
+                "total_correct": max(0, 10 - len(state["failed_questions_queue"])),
+                "failed_questions_queue": state["failed_questions_queue"]
+            },
+            "drift_audit": drift
+        }
+
 
 
 ================================================================================
 FILE: mvp_talker_offline/backend/rag_store.py
 LANGUAGE: python
-LINES: 276
+LINES: 314
 PURPOSE: Hybrid retrieval store combining BM25 keyword matching and dense embeddings over textbook chunks with distinct outage logging
 ================================================================================
 
@@ -758,10 +864,18 @@ DEFAULT_DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data
 OLLAMA_EMBED_URL = os.getenv("OLLAMA_EMBED_URL", "http://127.0.0.1:11434/api/embeddings")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
 
+class EmbeddingServiceUnavailable(Exception):
+    """Raised when the local Ollama embedding service is unreachable or down."""
+    pass
+
 class RAGStore:
     def __init__(self, db_path: str = DEFAULT_DB_PATH, embed_model: str = EMBEDDING_MODEL):
         self.db_path = db_path
         self.embed_model = embed_model
+        self.embed_url = OLLAMA_EMBED_URL
+        self.is_embedding_available: bool = True
+        self.last_embedding_error: Optional[str] = None
+        self.embedding_status: str = "operational"
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         self._init_db()
 
@@ -797,11 +911,32 @@ class RAGStore:
             """)
             conn.commit()
 
-    def get_embedding(self, text: str) -> Optional[np.ndarray]:
-        """Fetch 768-dim normalized embedding from local Ollama nomic-embed-text."""
-        payload = json.dumps({"model": self.embed_model, "prompt": text.strip()}).encode("utf-8")
+    def get_embedding_status(self) -> Dict[str, Any]:
+        """Provides a distinct diagnostic snapshot of the embedding microservice health."""
+        return {
+            "status": self.embedding_status,
+            "is_available": self.is_embedding_available,
+            "model": self.embed_model,
+            "endpoint": self.embed_url,
+            "last_error": self.last_embedding_error
+        }
+
+    def get_embedding(self, text: str, raise_on_error: bool = False) -> Optional[np.ndarray]:
+        """
+        Fetch 768-dim normalized embedding from local Ollama nomic-embed-text.
+        Provides distinct return paths:
+        - Returns np.ndarray on successful normalization.
+        - Returns None for empty / whitespace input without error.
+        - Sets self.is_embedding_available = False and records self.last_embedding_error on service downtime.
+        - Raises EmbeddingServiceUnavailable if raise_on_error=True.
+        """
+        stripped = text.strip() if text else ""
+        if not stripped:
+            return None
+
+        payload = json.dumps({"model": self.embed_model, "prompt": stripped}).encode("utf-8")
         req = urllib.request.Request(
-            OLLAMA_EMBED_URL,
+            self.embed_url,
             data=payload,
             headers={"Content-Type": "application/json"}
         )
@@ -814,10 +949,19 @@ class RAGStore:
                     norm = np.linalg.norm(arr)
                     if norm > 0:
                         arr = arr / norm
+                    self.is_embedding_available = True
+                    self.last_embedding_error = None
+                    self.embedding_status = "operational"
                     return arr
         except Exception as e:
-            # Fallback to None if Ollama is unreachable, and log distinctly so callers can discern service outage vs empty match
-            print(f"[RAGStore] Warning: Embedding fetch failed ({e}). Dense search unavailable, falling back to BM25/FTS.")
+            self.is_embedding_available = False
+            self.last_embedding_error = str(e)
+            self.embedding_status = "unreachable"
+            print(f"[RAGStore] Warning: Embedding service unreachable ({e}). Dense search degraded, falling back to BM25/FTS.")
+            if raise_on_error:
+                raise EmbeddingServiceUnavailable(
+                    f"Local embedding service at {OLLAMA_EMBED_URL} is down: {e}"
+                ) from e
             return None
         return None
 
