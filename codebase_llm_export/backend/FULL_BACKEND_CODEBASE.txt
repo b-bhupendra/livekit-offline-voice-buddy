@@ -495,7 +495,7 @@ if __name__ == "__main__":
 ================================================================================
 FILE: mvp_talker_offline/backend/audio_server.py
 LANGUAGE: python
-LINES: 341
+LINES: 266
 PURPOSE: FastAPI server running Piper TTS audio synthesis (/v1/audio/speech), Faster-Whisper STT fallback, and curriculum/quiz REST endpoints
 ================================================================================
 
@@ -512,7 +512,7 @@ from typing import Dict, Any, List, Optional
 os.environ["HF_HUB_OFFLINE"] = "1"
 
 from fastapi import FastAPI, UploadFile, File, Form, Response, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
@@ -539,51 +539,6 @@ rag = RAGStore()
 tracker = SyllabusTracker()
 simulation = SimulationEngine(rag_store=rag)
 quizzer = QuizEngine(syllabus_tracker=tracker)
-
-# Global event queue for SSE (Generative UI stream)
-sse_subscribers: List[asyncio.Queue] = []
-
-async def broadcast_genui_event(component: str, props: Dict[str, Any]):
-    """Broadcast a Generative UI render event to all connected clients."""
-    payload = json.dumps({
-        "type": "genui_render",
-        "component": component,
-        "props": props
-    })
-    msg = f"event: genui\ndata: {payload}\n\n"
-    for q in list(sse_subscribers):
-        try:
-            await q.put(msg)
-        except Exception:
-            sse_subscribers.remove(q)
-
-async def broadcast_genui_token(token: str, role: str = "quiz", chapter: int = 0):
-    """Broadcast a single LLM output token to all connected SSE clients."""
-    payload = json.dumps({"token": token, "role": role, "chapter": chapter})
-    msg = f"event: genui_token\ndata: {payload}\n\n"
-    for q in list(sse_subscribers):
-        try:
-            await q.put(msg)
-        except Exception:
-            sse_subscribers.remove(q)
-
-async def broadcast_transcript(speaker: str, text: str):
-    """Broadcast a live transcript entry (user/agent speech) to all SSE clients."""
-    import datetime
-    payload = json.dumps({"speaker": speaker, "text": text, "ts": datetime.datetime.now().isoformat()})
-    msg = f"event: transcript\ndata: {payload}\n\n"
-    for q in list(sse_subscribers):
-        try:
-            await q.put(msg)
-        except Exception:
-            sse_subscribers.remove(q)
-
-# Direct MCP in-process tool references (clean structured calls, no loopback HTTP)
-try:
-    from memory_mcp_server import generate_quiz as _mcp_generate_quiz, generate_revision_notes as _mcp_generate_revision
-except Exception as _mcp_import_err:
-    _mcp_generate_quiz = None
-    _mcp_generate_revision = None
 
 whisper_model = None
 
@@ -663,30 +618,6 @@ async def transcriptions(file: UploadFile = File(...), model: str = Form("whispe
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
 
-# --- Generative UI SSE Stream ---
-@app.get("/api/stream")
-async def sse_stream(request: Request):
-    q = asyncio.Queue()
-    sse_subscribers.append(q)
-
-    async def event_generator():
-        # Send initial connected ping
-        yield "event: connected\ndata: {\"status\": \"ok\"}\n\n"
-        try:
-            while True:
-                if await request.is_disconnected():
-                    break
-                try:
-                    msg = await asyncio.wait_for(q.get(), timeout=15.0)
-                    yield msg
-                except asyncio.TimeoutError:
-                    yield "event: ping\ndata: {}\n\n"
-        finally:
-            if q in sse_subscribers:
-                sse_subscribers.remove(q)
-
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
-
 # --- Linear Syllabus & Progression APIs ---
 @app.get("/api/syllabus")
 async def get_syllabus():
@@ -709,7 +640,6 @@ async def advance_chapter():
         })
     advanced = tracker.advance_to_next_chapter()
     new_ch = tracker.get_active_chapter()
-    await broadcast_genui_event("SyllabusProgressTree", {"new_chapter": new_ch})
     return {"success": True, "active_chapter": new_ch}
 
 # --- Quiz & Practice Evaluation APIs ---
@@ -771,7 +701,6 @@ class DisputeRequest(BaseModel):
 async def dispute_answer_endpoint(req: DisputeRequest):
     """Fact-check user dispute via RAG and DuckDuckGo search without hallucination."""
     ruling = simulation.handle_answer_contention(req.user_claim)
-    await broadcast_genui_event("ContentionResolver", ruling)
     return ruling
 
 @app.get("/api/quiz/{chapter_idx}")
@@ -782,10 +711,6 @@ async def get_quiz(chapter_idx: int, mode: str = "milestone"):
         qs = quizzer.get_on_demand_quiz(chapter_idx, count=5)
     else:
         qs = quizzer.get_milestone_quiz(chapter_idx, count=10)
-    
-    # Broadcast GenUI QuizCard
-    if qs:
-        await broadcast_genui_event("QuizCard", {"questions": qs, "chapter": chapter_idx, "mode": mode})
     return {"chapter": chapter_idx, "mode": mode, "questions": qs}
 
 class QuizAnswerSubmission(BaseModel):
