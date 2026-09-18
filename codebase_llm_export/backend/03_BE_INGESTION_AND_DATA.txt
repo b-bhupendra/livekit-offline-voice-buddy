@@ -407,7 +407,7 @@ if __name__ == "__main__":
 ================================================================================
 FILE: mvp_talker_offline/backend/verify_phase1.py
 LANGUAGE: python
-LINES: 86
+LINES: 102
 PURPOSE: Automated test suite verifying RAG search, syllabus progression, quiz evaluation, and dispute handling
 ================================================================================
 
@@ -415,6 +415,7 @@ import os
 import sys
 import json
 import unittest
+import uuid
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -422,12 +423,12 @@ import rag_store
 import syllabus_tracker
 import quiz_engine
 import simulation_engine
-import memory_mcp_server
+import agent
 
 class TestPhase1Backend(unittest.TestCase):
     def setUp(self):
         self.rag = rag_store.RAGStore()
-        self.tracker = syllabus_tracker.SyllabusTracker(user_id="test_suite_user")
+        self.tracker = syllabus_tracker.SyllabusTracker(user_id=f"test_user_{uuid.uuid4().hex[:6]}")
         self.quizzer = quiz_engine.QuizEngine(syllabus_tracker=self.tracker)
         self.simulation = simulation_engine.SimulationEngine(rag_store=self.rag)
 
@@ -491,9 +492,24 @@ class TestPhase1Backend(unittest.TestCase):
         print(f"[Test 4] Analysis: {ruling['analysis'][:120]}...")
         self.assertIn("VALID_REGISTER_DIFFERENCE", ruling["verdict"], "Should recognize register distinction")
 
-        # MCP tool check
-        mcp_summary = memory_mcp_server.get_learner_summary()
-        self.assertIn("Learner Profile", mcp_summary)
+    def test_05_in_process_agent_tools(self):
+        """Verify that agent.py has all FastMCP tools folded in-process with RunContext."""
+        tool_names = [getattr(t, "name", getattr(t, "__name__", str(t))) for t in agent.in_process_tools]
+        print(f"\n[Test 5] In-process agent tools: {tool_names}")
+        expected = [
+            "query_grammar_rag",
+            "trigger_quiz",
+            "generate_quiz",
+            "dispute_answer",
+            "get_learner_progress",
+            "generate_revision_notes",
+            "advance_chapter",
+            "log_learner_recast",
+            "save_conversation_turn",
+            "search_web_grammar"
+        ]
+        for exp in expected:
+            self.assertIn(exp, tool_names, f"Tool {exp} must be registered in agent in-process tools")
 
 if __name__ == "__main__":
     unittest.main()

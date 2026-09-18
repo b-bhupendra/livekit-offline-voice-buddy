@@ -1,8 +1,8 @@
 ================================================================================
 FILE: mvp_talker_offline/backend/agent.py
 LANGUAGE: python
-LINES: 485
-PURPOSE: LiveKit voice AI agent entrypoint: Faster-Whisper STT, Silero VAD, Piper TTS, Ollama LLM, in-process function tools, and LiveKit text streams
+LINES: 589
+PURPOSE: LiveKit voice AI agent entrypoint: Faster-Whisper STT, Silero VAD, Piper TTS, Ollama LLM, in-process function tools (with RunContext UI streaming), and LiveKit RPC handlers
 ================================================================================
 
 """LiveKit Offline Voice AI Agent — English Grammar Master Coach & Simulator.
@@ -25,6 +25,7 @@ import asyncio
 import datetime
 import subprocess
 import json
+from typing import Optional, List, Dict, Any, Union
 import numpy as np
 from pathlib import Path
 from dotenv import load_dotenv
@@ -181,13 +182,49 @@ def get_faster_whisper_stt(model_size="tiny.en") -> FasterWhisperSTT:
 
 _active_room: Optional[rtc.Room] = None
 
-async def broadcast_livekit_text(topic: str, payload_str: str):
-    global _active_room
-    if _active_room and _active_room.isconnected():
+import sqlite3
+WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
+DATA_DIR = WORKSPACE_ROOT / "data"
+DB_PATH = DATA_DIR / "memory.db"
+
+def get_db_connection():
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.row_factory = sqlite3.Row
+    with conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS conversation_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                user_message TEXT,
+                assistant_response TEXT
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS learner_recasts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                original_utterance TEXT,
+                polished_recast TEXT,
+                grammar_rule TEXT
+            )
+        """)
+    return conn
+
+async def send_room_text(context: Optional[RunContext], topic: str, payload_str: str):
+    """
+    Pushes real-time UI/artifact updates directly to the connected room
+    via ctx.room.local_participant.send_text() with zero loopback overhead.
+    """
+    room = None
+    if context and hasattr(context, "session") and getattr(context.session, "room_io", None):
+        room = getattr(context.session.room_io, "room", None)
+    if not room:
+        room = _active_room
+    if room and room.isconnected():
         try:
-            await _active_room.local_participant.send_text(payload_str, topic=topic)
+            await room.local_participant.send_text(payload_str, topic=topic)
         except Exception as e:
-            print(f"[LiveKit Text Stream] send_text({topic}) failed: {e}")
+            print(f"[send_room_text] send_text({topic}) failed: {e}")
 
 @function_tool()
 async def query_grammar_rag(context: RunContext, query: str) -> str:
@@ -206,10 +243,10 @@ async def query_grammar_rag(context: RunContext, query: str) -> str:
 
 @function_tool()
 async def trigger_quiz(context: RunContext, chapter: int, mode: str = "milestone") -> str:
-    """Generate or retrieve a grammar quiz for the active chapter and render it on the student's interface."""
+    """Generate or retrieve a grammar quiz for the active chapter and push UI updates directly via LiveKit text stream."""
     qs = quizzer.get_milestone_quiz(chapter, count=5) if mode == "milestone" else quizzer.get_checkpoint_quiz(chapter, count=3)
     
-    # Broadcast native LiveKit GenUI artifact to browser timeline
+    # Broadcast native LiveKit GenUI artifact directly to browser timeline
     payload = {
         "type": "genui_render",
         "component": "QuizCard",
@@ -220,7 +257,7 @@ async def trigger_quiz(context: RunContext, chapter: int, mode: str = "milestone
             "source": "llm_generated"
         }
     }
-    await broadcast_livekit_text("genui", json.dumps(payload))
+    await send_room_text(context, "genui", json.dumps(payload))
     
     return json.dumps({
         "status": "quiz_prepared",
@@ -231,17 +268,22 @@ async def trigger_quiz(context: RunContext, chapter: int, mode: str = "milestone
     }, indent=2)
 
 @function_tool()
+async def generate_quiz(context: RunContext, chapter: int, mode: str = "milestone") -> str:
+    """In-process tool to generate or retrieve chapter quiz and render interactive QuizCard directly in the UI."""
+    return await trigger_quiz(context, chapter, mode)
+
+@function_tool()
 async def dispute_answer(context: RunContext, user_claim: str) -> str:
     """Resolve a learner's dispute or contention regarding whether an answer is grammatically correct or acceptable."""
     ruling = simulation.handle_answer_contention(user_claim)
     
-    # Broadcast native LiveKit GenUI artifact to browser timeline
+    # Broadcast native LiveKit GenUI artifact directly to browser timeline
     payload = {
         "type": "genui_render",
         "component": "ContentionResolver",
         "props": ruling
     }
-    await broadcast_livekit_text("genui", json.dumps(payload))
+    await send_room_text(context, "genui", json.dumps(payload))
     
     return json.dumps(ruling, indent=2)
 
@@ -253,7 +295,7 @@ async def get_learner_progress(context: RunContext) -> str:
 
 @function_tool()
 async def generate_revision_notes(context: RunContext, chapter: int) -> str:
-    """Synthesize structured study notes and common pitfalls for the specified chapter."""
+    """Synthesize structured study notes and common pitfalls for the specified chapter and push to the UI."""
     active_ch = tracker.get_active_chapter()
     rag_results = rag.hybrid_search(f"chapter {chapter} rules summary", top_k=4, chapter_filter=chapter)
     context_text = "\n\n".join([r["text"] for r in rag_results]) if rag_results else ""
@@ -278,7 +320,7 @@ async def generate_revision_notes(context: RunContext, chapter: int) -> str:
         "component": "BionicSketchNote",
         "props": {"notes": notes_payload}
     }
-    await broadcast_livekit_text("genui", json.dumps(payload))
+    await send_room_text(context, "genui", json.dumps(payload))
     
     return json.dumps({
         "chapter": chapter,
@@ -286,6 +328,77 @@ async def generate_revision_notes(context: RunContext, chapter: int) -> str:
         "reference_excerpt": context_text[:800],
         "status": "ready"
     }, indent=2)
+
+@function_tool()
+async def advance_chapter(context: RunContext) -> str:
+    """Attempts to advance the learner to the next chapter in the linear syllabus if requirements are met."""
+    if not tracker.can_advance():
+        return "Cannot advance: both coursework and milestone quiz must be completed."
+    new_ch = tracker.advance_to_next_chapter()
+    await send_room_text(context, "genui", json.dumps({
+        "type": "genui_render",
+        "component": "SyllabusProgressTree",
+        "props": {"new_chapter": new_ch}
+    }))
+    return f"Successfully advanced to Chapter {new_ch}."
+
+@function_tool()
+async def log_learner_recast(context: RunContext, original_utterance: str, polished_recast: str, grammar_rule: str) -> str:
+    """Logs a grammatical correction or colloquial refinement for the student's study notes."""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO learner_recasts (original_utterance, polished_recast, grammar_rule) VALUES (?, ?, ?)",
+                (original_utterance, polished_recast, grammar_rule)
+            )
+            conn.commit()
+    except Exception as e:
+        print(f"[log_learner_recast] DB error: {e}")
+    return f"Logged recast: '{original_utterance}' -> '{polished_recast}' ({grammar_rule})"
+
+@function_tool()
+async def save_conversation_turn(context: RunContext, user_message: str, assistant_response: str) -> str:
+    """Saves a conversation turn to SQLite memory store."""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO conversation_history (user_message, assistant_response) VALUES (?, ?)",
+                (user_message, assistant_response)
+            )
+            conn.commit()
+    except Exception as e:
+        print(f"[save_conversation_turn] DB error: {e}")
+    return "Saved turn successfully."
+
+@function_tool()
+async def search_web_grammar(context: RunContext, query: str) -> str:
+    """Free web search fallback using DuckDuckGo for language disputes."""
+    try:
+        from duckduckgo_search import DDGS
+        results = list(DDGS().text(f"grammar rule English {query[:80]}", max_results=3))
+        if not results:
+            return f"No authoritative web results found for: {query}"
+        snippets = [f"- {r.get('title')}: {r.get('body')[:200]} ({r.get('href')})" for r in results]
+        return "\n".join(snippets)
+    except Exception as e:
+        return f"Web search notice: {e}"
+
+# In-process function tools replacing external stdio FastMCP loopback
+IN_PROCESS_TOOLS = [
+    query_grammar_rag,
+    trigger_quiz,
+    generate_quiz,
+    dispute_answer,
+    get_learner_progress,
+    generate_revision_notes,
+    advance_chapter,
+    log_learner_recast,
+    save_conversation_turn,
+    search_web_grammar
+]
+in_process_tools = IN_PROCESS_TOOLS
 
 class BuddyAgent(Agent):
     def __init__(self):
@@ -324,22 +437,13 @@ async def entrypoint(ctx: agents.JobContext):
         vad=vad_provider,
     )
 
-    # In-process function tools replacing external stdio MCP loopback
-    in_process_tools = [
-        query_grammar_rag,
-        trigger_quiz,
-        dispute_answer,
-        get_learner_progress,
-        generate_revision_notes
-    ]
-
     session = AgentSession(
         vad=vad_provider,
         turn_handling=turn_handling,
         llm=llm_provider,
         tts=tts_provider,
         stt=stt_provider,
-        tools=in_process_tools,
+        tools=IN_PROCESS_TOOLS,
     )
 
     @session.on("user_state_changed")
@@ -495,35 +599,23 @@ if __name__ == "__main__":
 ================================================================================
 FILE: mvp_talker_offline/backend/audio_server.py
 LANGUAGE: python
-LINES: 266
-PURPOSE: FastAPI server running Piper TTS audio synthesis (/v1/audio/speech), Faster-Whisper STT fallback, and curriculum/quiz REST endpoints
+LINES: 111
+PURPOSE: Isolated FastAPI microservice serving local Piper neural TTS (/v1/audio/speech) and LiveKit JWT token minting (/api/token)
 ================================================================================
 
 import io
 import os
 import re
 import wave
-import json
-import asyncio
-import tempfile
 from pathlib import Path
-from typing import Dict, Any, List, Optional
 
 os.environ["HF_HUB_OFFLINE"] = "1"
 
-from fastapi import FastAPI, UploadFile, File, Form, Response, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 import uvicorn
-from faster_whisper import WhisperModel
 
-from rag_store import RAGStore
-from syllabus_tracker import SyllabusTracker
-from simulation_engine import SimulationEngine
-from quiz_engine import QuizEngine
-
-app = FastAPI(title="Buddy Offline Audio & Grammar Engine API")
+app = FastAPI(title="Buddy Offline Piper TTS & Audio Server")
 
 # Enable CORS for local dashboards
 app.add_middleware(
@@ -533,22 +625,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Subsystem instances
-rag = RAGStore()
-tracker = SyllabusTracker()
-simulation = SimulationEngine(rag_store=rag)
-quizzer = QuizEngine(syllabus_tracker=tracker)
-
-whisper_model = None
-
-def get_whisper_model():
-    global whisper_model
-    if whisper_model is None:
-        print("Initializing Faster-Whisper (tiny.en) [offline]...")
-        whisper_model = WhisperModel("tiny.en", device="cpu", compute_type="int8", local_files_only=True)
-        print("Faster-Whisper ready!")
-    return whisper_model
 
 # --- Piper TTS setup ---
 MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
@@ -561,13 +637,11 @@ PIPER_NOISE_SCALE = float(os.getenv("PIPER_NOISE_SCALE", "0.5"))
 PIPER_NOISE_W_SCALE = float(os.getenv("PIPER_NOISE_W_SCALE", "0.8"))
 
 piper_voice = None
-TTS_ENGINE = None
 
 try:
     from piper import PiperVoice
     if os.path.exists(PIPER_VOICE_PATH):
         piper_voice = PiperVoice.load(PIPER_VOICE_PATH)
-        TTS_ENGINE = "piper"
         print(f"Piper TTS ready (voice: {PIPER_VOICE_PATH}, length_scale: {PIPER_LENGTH_SCALE}).")
 except ImportError:
     pass
@@ -593,9 +667,11 @@ def synthesize_wav_piper(text: str) -> bytes:
             piper_voice.synthesize_wav(text, wav_file, syn_config=config)
         return wav_io.getvalue()
 
+# --- Focused Piper TTS Endpoint ---
 @app.post("/v1/audio/speech")
 @app.post("/synthesize")
 async def speech(request: Request):
+    """OpenAI-compatible audio speech synthesis endpoint powered by local Piper TTS."""
     data = await request.json()
     input_text = data.get("input", "") or data.get("text", "")
     if not input_text:
@@ -603,132 +679,7 @@ async def speech(request: Request):
     wav_bytes = synthesize_wav_piper(input_text)
     return Response(content=wav_bytes, media_type="audio/wav")
 
-@app.post("/v1/audio/transcriptions")
-async def transcriptions(file: UploadFile = File(...), model: str = Form("whisper-1")):
-    model_instance = get_whisper_model()
-    contents = await file.read()
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-        tmp.write(contents)
-        tmp_path = tmp.name
-    try:
-        segments, info = model_instance.transcribe(tmp_path, beam_size=1)
-        text = " ".join([segment.text for segment in segments]).strip()
-        return JSONResponse(content={"text": text})
-    finally:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
-
-# --- Linear Syllabus & Progression APIs ---
-@app.get("/api/syllabus")
-async def get_syllabus():
-    state = tracker.get_state()
-    active_ch = tracker.get_active_chapter()
-    roadmap = tracker.get_roadmap()
-    return {
-        "active_chapter": active_ch,
-        "learner_state": state,
-        "roadmap": roadmap
-    }
-
-@app.post("/api/advance-chapter")
-async def advance_chapter():
-    can = tracker.can_advance()
-    if not can:
-        return JSONResponse(status_code=400, content={
-            "success": False,
-            "message": "Cannot advance: both coursework and milestone quiz must be completed."
-        })
-    advanced = tracker.advance_to_next_chapter()
-    new_ch = tracker.get_active_chapter()
-    return {"success": True, "active_chapter": new_ch}
-
-# --- Quiz & Practice Evaluation APIs ---
-class PracticeSubmission(BaseModel):
-    chapter: int
-    answers: List[Dict[str, Any]] # [{"id": "q1", "user_answer": "...", "expected": "...", "rule": "..."}]
-
-@app.post("/api/check-practice")
-async def check_practice(submission: PracticeSubmission):
-    """
-    Evaluates submitted fill-in-the-blank practice worksheets using ground truth and local RAG.
-    Operates with strict anti-hallucination guarantees (temperature=0.1).
-    """
-    results = []
-    all_correct = True
-
-    for ans in submission.answers:
-        user_val = str(ans.get("user_answer", "")).strip().lower()
-        expected = str(ans.get("expected", "")).strip().lower()
-        rule = ans.get("rule", "English Grammar Rule")
-
-        is_correct = (user_val == expected) or (user_val in expected and len(user_val) > 2)
-        if is_correct:
-            results.append({
-                "id": ans.get("id"),
-                "is_correct": True,
-                "feedback": "Correct!",
-                "explanation": f"Accurate application of: {rule}."
-            })
-        else:
-            all_correct = False
-            # Generate isomorphic practice blank
-            iso_stem = f"Isomorphic retry: She did not ______ ({ans.get('verb', 'write')}) the response."
-            results.append({
-                "id": ans.get("id"),
-                "is_correct": False,
-                "feedback": f"Incorrect. Expected: '{expected}'.",
-                "explanation": f"Rule: {rule} (Oxford Guide / Arihant Grammar).",
-                "isomorphic_blank": {
-                    "stem": iso_stem,
-                    "expected": expected
-                }
-            })
-
-    if all_correct:
-        tracker.mark_coursework_completed()
-
-    return {
-        "all_correct": all_correct,
-        "results": results,
-        "coursework_completed": tracker.get_state()["coursework_completed"]
-    }
-
-class DisputeRequest(BaseModel):
-    user_claim: str
-    question_id: Optional[str] = None
-
-@app.post("/api/dispute-answer")
-async def dispute_answer_endpoint(req: DisputeRequest):
-    """Fact-check user dispute via RAG and DuckDuckGo search without hallucination."""
-    ruling = simulation.handle_answer_contention(req.user_claim)
-    return ruling
-
-@app.get("/api/quiz/{chapter_idx}")
-async def get_quiz(chapter_idx: int, mode: str = "milestone"):
-    if mode == "checkpoint":
-        qs = quizzer.get_checkpoint_quiz(chapter_idx, count=3)
-    elif mode == "on_demand":
-        qs = quizzer.get_on_demand_quiz(chapter_idx, count=5)
-    else:
-        qs = quizzer.get_milestone_quiz(chapter_idx, count=10)
-    return {"chapter": chapter_idx, "mode": mode, "questions": qs}
-
-class QuizAnswerSubmission(BaseModel):
-    question_id: str
-    chapter_idx: int
-    user_answer: str
-
-@app.post("/api/quiz/submit")
-async def submit_quiz_answer(submission: QuizAnswerSubmission):
-    bank = quizzer.load_quiz_bank(submission.chapter_idx)
-    target_q = next((q for q in bank if q["id"] == submission.question_id), None)
-    if not target_q:
-        return JSONResponse(status_code=404, content={"error": "Question not found in bank"})
-
-    eval_result = quizzer.evaluate_answer(target_q, submission.user_answer)
-    return eval_result
-
-# --- LiveKit Token Minting (Browser WebRTC Participant) ---
+# --- LiveKit Token Minting Endpoint ---
 @app.get("/api/token")
 async def get_livekit_token(identity: str = "web-user", room_name: str = "buddy-room"):
     """
@@ -763,8 +714,6 @@ async def get_livekit_token(identity: str = "web-user", room_name: str = "buddy-
 
 if __name__ == "__main__":
     uvicorn.run("audio_server:app", host="0.0.0.0", port=8880, reload=False)
-
-
 
 
 ================================================================================
@@ -2600,7 +2549,7 @@ if __name__ == "__main__":
 ================================================================================
 FILE: mvp_talker_offline/backend/verify_phase1.py
 LANGUAGE: python
-LINES: 86
+LINES: 102
 PURPOSE: Automated test suite verifying RAG search, syllabus progression, quiz evaluation, and dispute handling
 ================================================================================
 
@@ -2608,6 +2557,7 @@ import os
 import sys
 import json
 import unittest
+import uuid
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -2615,12 +2565,12 @@ import rag_store
 import syllabus_tracker
 import quiz_engine
 import simulation_engine
-import memory_mcp_server
+import agent
 
 class TestPhase1Backend(unittest.TestCase):
     def setUp(self):
         self.rag = rag_store.RAGStore()
-        self.tracker = syllabus_tracker.SyllabusTracker(user_id="test_suite_user")
+        self.tracker = syllabus_tracker.SyllabusTracker(user_id=f"test_user_{uuid.uuid4().hex[:6]}")
         self.quizzer = quiz_engine.QuizEngine(syllabus_tracker=self.tracker)
         self.simulation = simulation_engine.SimulationEngine(rag_store=self.rag)
 
@@ -2684,9 +2634,24 @@ class TestPhase1Backend(unittest.TestCase):
         print(f"[Test 4] Analysis: {ruling['analysis'][:120]}...")
         self.assertIn("VALID_REGISTER_DIFFERENCE", ruling["verdict"], "Should recognize register distinction")
 
-        # MCP tool check
-        mcp_summary = memory_mcp_server.get_learner_summary()
-        self.assertIn("Learner Profile", mcp_summary)
+    def test_05_in_process_agent_tools(self):
+        """Verify that agent.py has all FastMCP tools folded in-process with RunContext."""
+        tool_names = [getattr(t, "name", getattr(t, "__name__", str(t))) for t in agent.in_process_tools]
+        print(f"\n[Test 5] In-process agent tools: {tool_names}")
+        expected = [
+            "query_grammar_rag",
+            "trigger_quiz",
+            "generate_quiz",
+            "dispute_answer",
+            "get_learner_progress",
+            "generate_revision_notes",
+            "advance_chapter",
+            "log_learner_recast",
+            "save_conversation_turn",
+            "search_web_grammar"
+        ]
+        for exp in expected:
+            self.assertIn(exp, tool_names, f"Tool {exp} must be registered in agent in-process tools")
 
 if __name__ == "__main__":
     unittest.main()

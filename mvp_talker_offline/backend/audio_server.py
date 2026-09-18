@@ -2,27 +2,15 @@ import io
 import os
 import re
 import wave
-import json
-import asyncio
-import tempfile
 from pathlib import Path
-from typing import Dict, Any, List, Optional
 
 os.environ["HF_HUB_OFFLINE"] = "1"
 
-from fastapi import FastAPI, UploadFile, File, Form, Response, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 import uvicorn
-from faster_whisper import WhisperModel
 
-from rag_store import RAGStore
-from syllabus_tracker import SyllabusTracker
-from simulation_engine import SimulationEngine
-from quiz_engine import QuizEngine
-
-app = FastAPI(title="Buddy Offline Audio & Grammar Engine API")
+app = FastAPI(title="Buddy Offline Piper TTS & Audio Server")
 
 # Enable CORS for local dashboards
 app.add_middleware(
@@ -32,22 +20,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Subsystem instances
-rag = RAGStore()
-tracker = SyllabusTracker()
-simulation = SimulationEngine(rag_store=rag)
-quizzer = QuizEngine(syllabus_tracker=tracker)
-
-whisper_model = None
-
-def get_whisper_model():
-    global whisper_model
-    if whisper_model is None:
-        print("Initializing Faster-Whisper (tiny.en) [offline]...")
-        whisper_model = WhisperModel("tiny.en", device="cpu", compute_type="int8", local_files_only=True)
-        print("Faster-Whisper ready!")
-    return whisper_model
 
 # --- Piper TTS setup ---
 MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
@@ -60,13 +32,11 @@ PIPER_NOISE_SCALE = float(os.getenv("PIPER_NOISE_SCALE", "0.5"))
 PIPER_NOISE_W_SCALE = float(os.getenv("PIPER_NOISE_W_SCALE", "0.8"))
 
 piper_voice = None
-TTS_ENGINE = None
 
 try:
     from piper import PiperVoice
     if os.path.exists(PIPER_VOICE_PATH):
         piper_voice = PiperVoice.load(PIPER_VOICE_PATH)
-        TTS_ENGINE = "piper"
         print(f"Piper TTS ready (voice: {PIPER_VOICE_PATH}, length_scale: {PIPER_LENGTH_SCALE}).")
 except ImportError:
     pass
@@ -92,9 +62,11 @@ def synthesize_wav_piper(text: str) -> bytes:
             piper_voice.synthesize_wav(text, wav_file, syn_config=config)
         return wav_io.getvalue()
 
+# --- Focused Piper TTS Endpoint ---
 @app.post("/v1/audio/speech")
 @app.post("/synthesize")
 async def speech(request: Request):
+    """OpenAI-compatible audio speech synthesis endpoint powered by local Piper TTS."""
     data = await request.json()
     input_text = data.get("input", "") or data.get("text", "")
     if not input_text:
@@ -102,132 +74,7 @@ async def speech(request: Request):
     wav_bytes = synthesize_wav_piper(input_text)
     return Response(content=wav_bytes, media_type="audio/wav")
 
-@app.post("/v1/audio/transcriptions")
-async def transcriptions(file: UploadFile = File(...), model: str = Form("whisper-1")):
-    model_instance = get_whisper_model()
-    contents = await file.read()
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-        tmp.write(contents)
-        tmp_path = tmp.name
-    try:
-        segments, info = model_instance.transcribe(tmp_path, beam_size=1)
-        text = " ".join([segment.text for segment in segments]).strip()
-        return JSONResponse(content={"text": text})
-    finally:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
-
-# --- Linear Syllabus & Progression APIs ---
-@app.get("/api/syllabus")
-async def get_syllabus():
-    state = tracker.get_state()
-    active_ch = tracker.get_active_chapter()
-    roadmap = tracker.get_roadmap()
-    return {
-        "active_chapter": active_ch,
-        "learner_state": state,
-        "roadmap": roadmap
-    }
-
-@app.post("/api/advance-chapter")
-async def advance_chapter():
-    can = tracker.can_advance()
-    if not can:
-        return JSONResponse(status_code=400, content={
-            "success": False,
-            "message": "Cannot advance: both coursework and milestone quiz must be completed."
-        })
-    advanced = tracker.advance_to_next_chapter()
-    new_ch = tracker.get_active_chapter()
-    return {"success": True, "active_chapter": new_ch}
-
-# --- Quiz & Practice Evaluation APIs ---
-class PracticeSubmission(BaseModel):
-    chapter: int
-    answers: List[Dict[str, Any]] # [{"id": "q1", "user_answer": "...", "expected": "...", "rule": "..."}]
-
-@app.post("/api/check-practice")
-async def check_practice(submission: PracticeSubmission):
-    """
-    Evaluates submitted fill-in-the-blank practice worksheets using ground truth and local RAG.
-    Operates with strict anti-hallucination guarantees (temperature=0.1).
-    """
-    results = []
-    all_correct = True
-
-    for ans in submission.answers:
-        user_val = str(ans.get("user_answer", "")).strip().lower()
-        expected = str(ans.get("expected", "")).strip().lower()
-        rule = ans.get("rule", "English Grammar Rule")
-
-        is_correct = (user_val == expected) or (user_val in expected and len(user_val) > 2)
-        if is_correct:
-            results.append({
-                "id": ans.get("id"),
-                "is_correct": True,
-                "feedback": "Correct!",
-                "explanation": f"Accurate application of: {rule}."
-            })
-        else:
-            all_correct = False
-            # Generate isomorphic practice blank
-            iso_stem = f"Isomorphic retry: She did not ______ ({ans.get('verb', 'write')}) the response."
-            results.append({
-                "id": ans.get("id"),
-                "is_correct": False,
-                "feedback": f"Incorrect. Expected: '{expected}'.",
-                "explanation": f"Rule: {rule} (Oxford Guide / Arihant Grammar).",
-                "isomorphic_blank": {
-                    "stem": iso_stem,
-                    "expected": expected
-                }
-            })
-
-    if all_correct:
-        tracker.mark_coursework_completed()
-
-    return {
-        "all_correct": all_correct,
-        "results": results,
-        "coursework_completed": tracker.get_state()["coursework_completed"]
-    }
-
-class DisputeRequest(BaseModel):
-    user_claim: str
-    question_id: Optional[str] = None
-
-@app.post("/api/dispute-answer")
-async def dispute_answer_endpoint(req: DisputeRequest):
-    """Fact-check user dispute via RAG and DuckDuckGo search without hallucination."""
-    ruling = simulation.handle_answer_contention(req.user_claim)
-    return ruling
-
-@app.get("/api/quiz/{chapter_idx}")
-async def get_quiz(chapter_idx: int, mode: str = "milestone"):
-    if mode == "checkpoint":
-        qs = quizzer.get_checkpoint_quiz(chapter_idx, count=3)
-    elif mode == "on_demand":
-        qs = quizzer.get_on_demand_quiz(chapter_idx, count=5)
-    else:
-        qs = quizzer.get_milestone_quiz(chapter_idx, count=10)
-    return {"chapter": chapter_idx, "mode": mode, "questions": qs}
-
-class QuizAnswerSubmission(BaseModel):
-    question_id: str
-    chapter_idx: int
-    user_answer: str
-
-@app.post("/api/quiz/submit")
-async def submit_quiz_answer(submission: QuizAnswerSubmission):
-    bank = quizzer.load_quiz_bank(submission.chapter_idx)
-    target_q = next((q for q in bank if q["id"] == submission.question_id), None)
-    if not target_q:
-        return JSONResponse(status_code=404, content={"error": "Question not found in bank"})
-
-    eval_result = quizzer.evaluate_answer(target_q, submission.user_answer)
-    return eval_result
-
-# --- LiveKit Token Minting (Browser WebRTC Participant) ---
+# --- LiveKit Token Minting Endpoint ---
 @app.get("/api/token")
 async def get_livekit_token(identity: str = "web-user", room_name: str = "buddy-room"):
     """
@@ -262,5 +109,3 @@ async def get_livekit_token(identity: str = "web-user", room_name: str = "buddy-
 
 if __name__ == "__main__":
     uvicorn.run("audio_server:app", host="0.0.0.0", port=8880, reload=False)
-
-

@@ -18,6 +18,7 @@ import asyncio
 import datetime
 import subprocess
 import json
+from typing import Optional, List, Dict, Any, Union
 import numpy as np
 from pathlib import Path
 from dotenv import load_dotenv
@@ -174,13 +175,49 @@ def get_faster_whisper_stt(model_size="tiny.en") -> FasterWhisperSTT:
 
 _active_room: Optional[rtc.Room] = None
 
-async def broadcast_livekit_text(topic: str, payload_str: str):
-    global _active_room
-    if _active_room and _active_room.isconnected():
+import sqlite3
+WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
+DATA_DIR = WORKSPACE_ROOT / "data"
+DB_PATH = DATA_DIR / "memory.db"
+
+def get_db_connection():
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.row_factory = sqlite3.Row
+    with conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS conversation_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                user_message TEXT,
+                assistant_response TEXT
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS learner_recasts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                original_utterance TEXT,
+                polished_recast TEXT,
+                grammar_rule TEXT
+            )
+        """)
+    return conn
+
+async def send_room_text(context: Optional[RunContext], topic: str, payload_str: str):
+    """
+    Pushes real-time UI/artifact updates directly to the connected room
+    via ctx.room.local_participant.send_text() with zero loopback overhead.
+    """
+    room = None
+    if context and hasattr(context, "session") and getattr(context.session, "room_io", None):
+        room = getattr(context.session.room_io, "room", None)
+    if not room:
+        room = _active_room
+    if room and room.isconnected():
         try:
-            await _active_room.local_participant.send_text(payload_str, topic=topic)
+            await room.local_participant.send_text(payload_str, topic=topic)
         except Exception as e:
-            print(f"[LiveKit Text Stream] send_text({topic}) failed: {e}")
+            print(f"[send_room_text] send_text({topic}) failed: {e}")
 
 @function_tool()
 async def query_grammar_rag(context: RunContext, query: str) -> str:
@@ -199,10 +236,10 @@ async def query_grammar_rag(context: RunContext, query: str) -> str:
 
 @function_tool()
 async def trigger_quiz(context: RunContext, chapter: int, mode: str = "milestone") -> str:
-    """Generate or retrieve a grammar quiz for the active chapter and render it on the student's interface."""
+    """Generate or retrieve a grammar quiz for the active chapter and push UI updates directly via LiveKit text stream."""
     qs = quizzer.get_milestone_quiz(chapter, count=5) if mode == "milestone" else quizzer.get_checkpoint_quiz(chapter, count=3)
     
-    # Broadcast native LiveKit GenUI artifact to browser timeline
+    # Broadcast native LiveKit GenUI artifact directly to browser timeline
     payload = {
         "type": "genui_render",
         "component": "QuizCard",
@@ -213,7 +250,7 @@ async def trigger_quiz(context: RunContext, chapter: int, mode: str = "milestone
             "source": "llm_generated"
         }
     }
-    await broadcast_livekit_text("genui", json.dumps(payload))
+    await send_room_text(context, "genui", json.dumps(payload))
     
     return json.dumps({
         "status": "quiz_prepared",
@@ -224,17 +261,22 @@ async def trigger_quiz(context: RunContext, chapter: int, mode: str = "milestone
     }, indent=2)
 
 @function_tool()
+async def generate_quiz(context: RunContext, chapter: int, mode: str = "milestone") -> str:
+    """In-process tool to generate or retrieve chapter quiz and render interactive QuizCard directly in the UI."""
+    return await trigger_quiz(context, chapter, mode)
+
+@function_tool()
 async def dispute_answer(context: RunContext, user_claim: str) -> str:
     """Resolve a learner's dispute or contention regarding whether an answer is grammatically correct or acceptable."""
     ruling = simulation.handle_answer_contention(user_claim)
     
-    # Broadcast native LiveKit GenUI artifact to browser timeline
+    # Broadcast native LiveKit GenUI artifact directly to browser timeline
     payload = {
         "type": "genui_render",
         "component": "ContentionResolver",
         "props": ruling
     }
-    await broadcast_livekit_text("genui", json.dumps(payload))
+    await send_room_text(context, "genui", json.dumps(payload))
     
     return json.dumps(ruling, indent=2)
 
@@ -246,7 +288,7 @@ async def get_learner_progress(context: RunContext) -> str:
 
 @function_tool()
 async def generate_revision_notes(context: RunContext, chapter: int) -> str:
-    """Synthesize structured study notes and common pitfalls for the specified chapter."""
+    """Synthesize structured study notes and common pitfalls for the specified chapter and push to the UI."""
     active_ch = tracker.get_active_chapter()
     rag_results = rag.hybrid_search(f"chapter {chapter} rules summary", top_k=4, chapter_filter=chapter)
     context_text = "\n\n".join([r["text"] for r in rag_results]) if rag_results else ""
@@ -271,7 +313,7 @@ async def generate_revision_notes(context: RunContext, chapter: int) -> str:
         "component": "BionicSketchNote",
         "props": {"notes": notes_payload}
     }
-    await broadcast_livekit_text("genui", json.dumps(payload))
+    await send_room_text(context, "genui", json.dumps(payload))
     
     return json.dumps({
         "chapter": chapter,
@@ -279,6 +321,77 @@ async def generate_revision_notes(context: RunContext, chapter: int) -> str:
         "reference_excerpt": context_text[:800],
         "status": "ready"
     }, indent=2)
+
+@function_tool()
+async def advance_chapter(context: RunContext) -> str:
+    """Attempts to advance the learner to the next chapter in the linear syllabus if requirements are met."""
+    if not tracker.can_advance():
+        return "Cannot advance: both coursework and milestone quiz must be completed."
+    new_ch = tracker.advance_to_next_chapter()
+    await send_room_text(context, "genui", json.dumps({
+        "type": "genui_render",
+        "component": "SyllabusProgressTree",
+        "props": {"new_chapter": new_ch}
+    }))
+    return f"Successfully advanced to Chapter {new_ch}."
+
+@function_tool()
+async def log_learner_recast(context: RunContext, original_utterance: str, polished_recast: str, grammar_rule: str) -> str:
+    """Logs a grammatical correction or colloquial refinement for the student's study notes."""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO learner_recasts (original_utterance, polished_recast, grammar_rule) VALUES (?, ?, ?)",
+                (original_utterance, polished_recast, grammar_rule)
+            )
+            conn.commit()
+    except Exception as e:
+        print(f"[log_learner_recast] DB error: {e}")
+    return f"Logged recast: '{original_utterance}' -> '{polished_recast}' ({grammar_rule})"
+
+@function_tool()
+async def save_conversation_turn(context: RunContext, user_message: str, assistant_response: str) -> str:
+    """Saves a conversation turn to SQLite memory store."""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO conversation_history (user_message, assistant_response) VALUES (?, ?)",
+                (user_message, assistant_response)
+            )
+            conn.commit()
+    except Exception as e:
+        print(f"[save_conversation_turn] DB error: {e}")
+    return "Saved turn successfully."
+
+@function_tool()
+async def search_web_grammar(context: RunContext, query: str) -> str:
+    """Free web search fallback using DuckDuckGo for language disputes."""
+    try:
+        from duckduckgo_search import DDGS
+        results = list(DDGS().text(f"grammar rule English {query[:80]}", max_results=3))
+        if not results:
+            return f"No authoritative web results found for: {query}"
+        snippets = [f"- {r.get('title')}: {r.get('body')[:200]} ({r.get('href')})" for r in results]
+        return "\n".join(snippets)
+    except Exception as e:
+        return f"Web search notice: {e}"
+
+# In-process function tools replacing external stdio FastMCP loopback
+IN_PROCESS_TOOLS = [
+    query_grammar_rag,
+    trigger_quiz,
+    generate_quiz,
+    dispute_answer,
+    get_learner_progress,
+    generate_revision_notes,
+    advance_chapter,
+    log_learner_recast,
+    save_conversation_turn,
+    search_web_grammar
+]
+in_process_tools = IN_PROCESS_TOOLS
 
 class BuddyAgent(Agent):
     def __init__(self):
@@ -317,22 +430,13 @@ async def entrypoint(ctx: agents.JobContext):
         vad=vad_provider,
     )
 
-    # In-process function tools replacing external stdio MCP loopback
-    in_process_tools = [
-        query_grammar_rag,
-        trigger_quiz,
-        dispute_answer,
-        get_learner_progress,
-        generate_revision_notes
-    ]
-
     session = AgentSession(
         vad=vad_provider,
         turn_handling=turn_handling,
         llm=llm_provider,
         tts=tts_provider,
         stt=stt_provider,
-        tools=in_process_tools,
+        tools=IN_PROCESS_TOOLS,
     )
 
     @session.on("user_state_changed")

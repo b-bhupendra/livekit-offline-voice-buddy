@@ -135,8 +135,8 @@ VisualsFrontend/
 
 BE_CHUNKS = {
     "01_BE_CORE_PIPELINE.txt": [
-        ("mvp_talker_offline/backend/agent.py", "LiveKit voice AI agent entrypoint: Faster-Whisper STT, Silero VAD, Piper TTS, Ollama LLM, in-process function tools, and LiveKit text streams", "python"),
-        ("mvp_talker_offline/backend/audio_server.py", "FastAPI server running Piper TTS audio synthesis (/v1/audio/speech), Faster-Whisper STT fallback, and curriculum/quiz REST endpoints", "python"),
+        ("mvp_talker_offline/backend/agent.py", "LiveKit voice AI agent entrypoint: Faster-Whisper STT, Silero VAD, Piper TTS, Ollama LLM, in-process function tools (with RunContext UI streaming), and LiveKit RPC handlers", "python"),
+        ("mvp_talker_offline/backend/audio_server.py", "Isolated FastAPI microservice serving local Piper neural TTS (/v1/audio/speech) and LiveKit JWT token minting (/api/token)", "python"),
         ("mvp_talker_offline/Modelfile", "Custom Ollama Modelfile configuring qwen2.5:3b with pedagogical teacher persona and grammar guidelines", "dockerfile"),
         ("mvp_talker_offline/requirements.txt", "Python backend requirements (livekit, faster-whisper, mcp, fastapi, uvicorn, rank-bm25, duckduckgo-search)", "text"),
         ("mvp_talker_offline/.env.example", "Environment variable documentation (LiveKit keys, Ollama URL, Piper voice model path)", "ini"),
