@@ -5,7 +5,11 @@ import wave
 from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+env_path = Path(__file__).resolve().parent.parent / ".env"
+if env_path.exists():
+    load_dotenv(dotenv_path=env_path)
+else:
+    load_dotenv()
 
 os.environ["HF_HUB_OFFLINE"] = "1"
 
@@ -101,6 +105,11 @@ async def get_livekit_token(identity: str = "web-user", room_name: str = "buddy-
                 can_publish=True,
                 can_subscribe=True,
                 can_publish_data=True,
+            )
+        )
+        .with_room_config(
+            api.RoomConfiguration(
+                agents=[api.RoomAgentDispatch(agent_name="offline-buddy")]
             )
         )
     )

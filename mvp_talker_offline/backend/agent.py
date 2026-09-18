@@ -36,7 +36,11 @@ lib_dir = str(Path.home() / ".local/usr/lib/x86_64-linux-gnu")
 if os.path.exists(lib_dir) and lib_dir not in os.environ.get("LD_LIBRARY_PATH", ""):
     os.environ["LD_LIBRARY_PATH"] = f"{lib_dir}:{os.environ.get('LD_LIBRARY_PATH', '')}"
 
-load_dotenv()
+env_path = Path(__file__).resolve().parent.parent / ".env"
+if env_path.exists():
+    load_dotenv(dotenv_path=env_path)
+else:
+    load_dotenv()
 
 from faster_whisper import WhisperModel
 from livekit import rtc
@@ -743,7 +747,7 @@ async def entrypoint(ctx: agents.JobContext):
     global _active_room
     await ensure_audio_server_async()
 
-    def cleanup_audio_server():
+    async def cleanup_audio_server():
         global _audio_server_proc
         if _audio_server_proc and _audio_server_proc.poll() is None:
             tts_logger.info("Stopping spawned background audio server...")
@@ -768,7 +772,6 @@ async def entrypoint(ctx: agents.JobContext):
     turn_handling = TurnHandlingOptions(
         turn_detection=inference.TurnDetector(version="v1-mini"),
         interruption={"mode": "vad"},
-        preemptive_generation=True,
     )
 
     tts_provider = openai.TTS(
@@ -791,7 +794,6 @@ async def entrypoint(ctx: agents.JobContext):
         tts=tts_provider,
         stt=stt_provider,
         tools=IN_PROCESS_TOOLS,
-        preemptive_generation=True,
     )
 
     set_session_id(ctx.room.name if ctx.room else f"session_{int(time.time())}")
@@ -813,47 +815,51 @@ async def entrypoint(ctx: agents.JobContext):
         llm_logger.info(f"Agent state changed to: {ev.new_state}")
 
     @session.on("user_input_transcribed")
-    async def on_user_input(ev):
-        is_final = getattr(ev, "is_final", ev.type == stt.SpeechEventType.FINAL_TRANSCRIPT)
-        transcript = ev.alternatives[0].text if ev.alternatives else getattr(ev, "transcript", "")
-        
-        if transcript:
-            if is_final:
-                turn = next_turn()
-                stt_logger.info(f"Final user transcript: \"{transcript}\" (turn={turn})")
-            else:
-                stt_logger.debug(f"Interim user transcript: \"{transcript}\"")
-                
-            if ctx.room and ctx.room.isconnected():
-                try:
-                    await ctx.room.local_participant.send_text(
-                        json.dumps({
-                            "speaker": "user", 
-                            "text": transcript,
-                            "is_final": is_final
-                        }),
-                        topic="transcript"
-                    )
-                except Exception as e:
-                    stt_logger.error(f"Failed to send transcript to room: {e}")
+    def on_user_input(ev):
+        async def _send_transcript():
+            is_final = getattr(ev, "is_final", getattr(ev, "type", None) == stt.SpeechEventType.FINAL_TRANSCRIPT)
+            transcript = ev.alternatives[0].text if ev.alternatives else getattr(ev, "transcript", "")
+            
+            if transcript:
+                if is_final:
+                    turn = next_turn()
+                    stt_logger.info(f"Final user transcript: \"{transcript}\" (turn={turn})")
+                else:
+                    stt_logger.debug(f"Interim user transcript: \"{transcript}\"")
+                    
+                if ctx.room and ctx.room.isconnected():
+                    try:
+                        await ctx.room.local_participant.send_text(
+                            json.dumps({
+                                "speaker": "user", 
+                                "text": transcript,
+                                "is_final": is_final
+                            }),
+                            topic="transcript"
+                        )
+                    except Exception as e:
+                        stt_logger.error(f"Failed to send transcript to room: {e}")
+        asyncio.create_task(_send_transcript())
 
     @session.on("agent_speech_committed")
-    async def on_agent_speech(ev):
-        text = getattr(ev, "text", None) or getattr(ev, "transcript", None) or ""
-        if text:
-            tts_logger.info(f"Agent speech committed: \"{text[:100]}...\"")
-            if ctx.room and ctx.room.isconnected():
-                try:
-                    await ctx.room.local_participant.send_text(
-                        json.dumps({
-                            "speaker": "agent", 
-                            "text": text,
-                            "is_final": True
-                        }),
-                        topic="transcript"
-                    )
-                except Exception as e:
-                    tts_logger.error(f"Failed to send agent speech to room: {e}")
+    def on_agent_speech(ev):
+        async def _send_speech():
+            text = getattr(ev, "text", None) or getattr(ev, "transcript", None) or ""
+            if text:
+                tts_logger.info(f"Agent speech committed: \"{text[:100]}...\"")
+                if ctx.room and ctx.room.isconnected():
+                    try:
+                        await ctx.room.local_participant.send_text(
+                            json.dumps({
+                                "speaker": "agent", 
+                                "text": text,
+                                "is_final": True
+                            }),
+                            topic="transcript"
+                        )
+                    except Exception as e:
+                        tts_logger.error(f"Failed to send agent speech to room: {e}")
+        asyncio.create_task(_send_speech())
 
     @session.on("error")
     def on_session_error(ev):
