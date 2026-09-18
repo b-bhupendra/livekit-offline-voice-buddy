@@ -13,11 +13,12 @@ import { InlineDisputeCard } from './components/InlineDisputeCard';
 import { InlineNotesCard } from './components/InlineNotesCard';
 import { InlineGrammarMovementCard } from './components/InlineGrammarMovementCard';
 import { InlineSheetErrorCard } from './components/InlineSheetErrorCard';
+import { InlineCanvasLectureCard } from './components/InlineCanvasLectureCard';
 import { StreamingCard } from './components/StreamingCard';
 
 export default function App() {
   useLiveKit();
-  const { feed, fetchSyllabus } = useBuddyStore();
+  const { feed, fetchSyllabus, activeMode, tutorState } = useBuddyStore();
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -63,6 +64,64 @@ export default function App() {
             flexDirection: 'column'
           }}
         >
+          {/* ── Active Tutor Mode Live Banner ── */}
+          {activeMode === 'tutor' && (
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              style={{
+                marginBottom: '20px',
+                padding: '12px 18px',
+                background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.12) 0%, rgba(139, 92, 246, 0.08) 100%)',
+                border: '1px solid rgba(99, 102, 241, 0.35)',
+                borderRadius: 'var(--radius-lg)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '12px',
+                boxShadow: '0 4px 20px rgba(99, 102, 241, 0.12)',
+                backdropFilter: 'blur(8px)'
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div
+                  style={{
+                    width: '32px',
+                    height: '32px',
+                    borderRadius: '50%',
+                    background: 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '16px',
+                    boxShadow: '0 2px 8px rgba(99, 102, 241, 0.4)'
+                  }}
+                >
+                  🎓
+                </div>
+                <div>
+                  <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span>Tutor Mode: {tutorState?.current_topic || 'Nouns & Structure'}</span>
+                    <span style={{ fontSize: '10px', background: 'rgba(99, 102, 241, 0.25)', color: '#818cf8', padding: '1px 7px', borderRadius: '10px', letterSpacing: '0.04em', fontWeight: 600 }}>
+                      LIVE VOICE MASTERY
+                    </span>
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                    {tutorState?.pending_homework
+                      ? `Pending Homework: "${tutorState.pending_homework}" (${tutorState.homework_status || 'assigned'})`
+                      : 'Voice Lecture & Mastery Quiz Loop Active • 100% Conversational'}
+                  </div>
+                </div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--accent)' }}>
+                  {tutorState?.mastered_patterns?.length || 0} Patterns
+                </div>
+                <div style={{ fontSize: '10.5px', color: 'var(--text-tertiary)' }}>Mastered</div>
+              </div>
+            </motion.div>
+          )}
+
           {feed.length === 0 ? (
             <div
               style={{
@@ -98,15 +157,16 @@ export default function App() {
               </div>
             </div>
           ) : (
-            feed.map((item) => {
+            feed.map((item, idx) => {
               // ── Transcript Message (User or Assistant) ──
               if (item.type === 'transcript') {
                 const isUser = item.speaker === 'user';
+                const isLatest = idx === feed.length - 1;
                 return (
                   <motion.div
                     key={item.id}
                     initial={{ opacity: 0, y: 6 }}
-                    animate={{ opacity: item.is_interim ? 0.75 : 1, y: 0 }}
+                    animate={{ opacity: item.is_interim ? 0.85 : 1, y: 0 }}
                     transition={{ duration: 0.2 }}
                     style={{
                       display: 'flex',
@@ -132,7 +192,10 @@ export default function App() {
                         <>
                           <span>You</span>
                           {item.is_interim ? (
-                            <span style={{ color: 'var(--accent)', fontWeight: 500 }}>· speaking...</span>
+                            <span style={{ color: 'var(--accent)', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--accent)', display: 'inline-block', animation: 'pulse 1.2s infinite' }} />
+                              speaking...
+                            </span>
                           ) : (
                             <>
                               <span>·</span>
@@ -144,14 +207,15 @@ export default function App() {
                         <>
                           <div
                             style={{
-                              width: '14px',
-                              height: '14px',
+                              width: '15px',
+                              height: '15px',
                               borderRadius: '50%',
                               background: 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)',
                               display: 'flex',
                               alignItems: 'center',
                               justifyContent: 'center',
-                              color: '#ffffff'
+                              color: '#ffffff',
+                              boxShadow: isLatest ? '0 0 8px rgba(59, 130, 246, 0.5)' : 'none'
                             }}
                           >
                             <Sparkles size={9} />
@@ -163,14 +227,15 @@ export default function App() {
                       )}
                     </div>
 
-                    {/* Bubble */}
+                    {/* Bubble - Gemini Live / ChatGPT Live styling */}
                     <div
                       style={{
                         padding: isUser ? '12px 18px' : '6px 0',
                         borderRadius: isUser ? '16px 16px 4px 16px' : '0px',
-                        background: isUser ? (item.is_interim ? 'rgba(99, 102, 241, 0.08)' : 'var(--surface-2)') : 'transparent',
-                        border: isUser ? (item.is_interim ? '1px dashed var(--accent)' : '1px solid var(--border-subtle)') : 'none',
-                        color: item.is_interim ? 'var(--text-secondary)' : 'var(--text-primary)',
+                        background: isUser ? (item.is_interim ? 'rgba(99, 102, 241, 0.12)' : 'var(--surface-2)') : 'transparent',
+                        border: isUser ? (item.is_interim ? '1px solid var(--accent)' : '1px solid var(--border-subtle)') : 'none',
+                        boxShadow: isUser && item.is_interim ? '0 0 16px rgba(99, 102, 241, 0.25)' : 'none',
+                        color: item.is_interim ? 'var(--text-primary)' : 'var(--text-primary)',
                         fontSize: '14.5px',
                         lineHeight: 1.65,
                         maxWidth: isUser ? '85%' : '100%',
@@ -234,6 +299,11 @@ export default function App() {
               // ── Inline Syntactic Grammar Movement Card ──
               if (item.type === 'movement') {
                 return <InlineGrammarMovementCard key={item.id} data={item.data} />;
+              }
+
+              // ── Inline Canvas Visual Lecture Card ──
+              if (item.type === 'canvas_lecture') {
+                return <InlineCanvasLectureCard key={item.id} data={item.data} />;
               }
 
               // ── Inline Sheet Error Card ──

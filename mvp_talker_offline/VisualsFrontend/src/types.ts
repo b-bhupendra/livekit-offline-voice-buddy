@@ -74,11 +74,30 @@ export interface DriftAuditData {
   status: string;
 }
 
+export interface TutorState {
+  active_mode: 'buddy' | 'tutor';
+  current_topic: string;
+  pending_homework?: string | null;
+  homework_status: 'none' | 'pending' | 'completed';
+  mastered_patterns: string[];
+  current_chapter_idx: number;
+  current_chapter_title?: string;
+  stage: string;
+}
+
 export interface LearnerSummary {
   user_id: string;
   active_chapter: number;
   active_chapter_title: string;
   stage: string;
+  active_mode?: 'buddy' | 'tutor';
+  current_topic?: string;
+  pending_homework?: string | null;
+  homework_status?: 'none' | 'pending' | 'completed';
+  mastered_patterns?: string[];
+  tutor_state?: TutorState;
+  learner_preferences?: Record<string, unknown>;
+  recent_lectures?: CanvasLectureProps[];
   coursework_completed: boolean;
   quiz_passed: boolean;
   cumulative_accuracy: number;
@@ -94,7 +113,11 @@ export interface LearnerSummary {
     coursework_done?: boolean;
     quiz_passed?: boolean;
   }>;
-  learner_state?: LearnerState;
+  learner_state?: LearnerState & {
+    active_mode?: 'buddy' | 'tutor';
+    current_topic?: string;
+    pending_homework?: string | null;
+  };
   drift_audit?: DriftAuditData;
 }
 
@@ -102,6 +125,28 @@ export interface SyllabusData {
   active_chapter: number;
   learner_state: LearnerState;
   roadmap: ChapterInfo[];
+}
+
+export interface CanvasLectureProps {
+  id: string;
+  req_id?: string;
+  topic: string;
+  submodule: string;
+  phase_index: number;
+  session_type?: 'grammar_mastery' | 'sentence_repetition' | 'workplace_office' | 'conversational_banter' | string;
+  spoken_summary: string;
+  paragraphs: string[];
+  key_takeaways?: string[];
+  canvas_type: 'particle_classifier' | 'concord_balance' | 'noun_hierarchy' | 'compound_builder' | 'repetition_flow' | 'workplace_matrix' | string;
+  canvas_config?: Record<string, unknown>;
+  repetition_items?: Array<{
+    prompt?: string;
+    target: string;
+    drill_type?: string;
+    audio_cue?: string;
+    notes?: string;
+  }>;
+  timestamp: string;
 }
 
 // SSE GenUI events
@@ -112,6 +157,7 @@ export type GenUIComponent =
   | 'BionicSketchNote'
   | 'SyllabusProgressTree'
   | 'GrammarMovement'
+  | 'CanvasLectureCard'
   | 'sheet_error';
 
 export interface SheetErrorProps {
@@ -186,7 +232,8 @@ export type FeedItem =
   | { id: string; type: 'dispute'; data: ContentionProps; req_id?: string }
   | { id: string; type: 'notes'; notes: Record<string, unknown>; req_id?: string }
   | { id: string; type: 'movement'; data: GrammarMovementProps; req_id?: string }
+  | { id: string; type: 'canvas_lecture'; data: CanvasLectureProps }
   | { id: string; type: 'sheet_error'; data: SheetErrorProps };
 
-export type DrawerTab = 'syllabus' | 'analytics' | 'remediation';
+export type DrawerTab = 'syllabus' | 'analytics' | 'remediation' | 'lectures';
 

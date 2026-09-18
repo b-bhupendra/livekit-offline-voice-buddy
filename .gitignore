@@ -47,3 +47,12 @@ mvp_talker_offline/data/
 .vscode/
 *.swp
 *.swo
+
+# Reference books — stored externally at ~/buddy_reference_books/
+data/reference_books/
+
+# ChromaDB vector index — rebuild locally with: python backend/knowledge_ingestor.py
+mvp_talker_offline/data/chroma_db/
+
+# Obsolete pre-indexed JSON (replaced by ChromaDB persistence)
+mvp_talker_offline/data/preindexed_reference_corpus.json

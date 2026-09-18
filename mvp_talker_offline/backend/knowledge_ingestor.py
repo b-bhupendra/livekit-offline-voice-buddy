@@ -3,17 +3,30 @@ import re
 import glob
 import json
 import sqlite3
-import pypdf
+try:
+    import pypdf
+except ImportError:
+    pypdf = None
 from typing import List, Dict, Any, Optional
-from rag_store import RAGStore
+from rag_store import RAGStore, COLLECTION_NAME
 from structured_logger import rag_logger, system_logger
 
 WORKSPACE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(WORKSPACE_ROOT, "data")
-BOOKS_DIR = os.path.join(DATA_DIR, "reference_books")
+
+# PDFs live OUTSIDE the repo — set BOOKS_DIR env var or they default to ~/buddy_reference_books/
+# This keeps raw PDFs out of git while ChromaDB (data/chroma_db/) stores all indexed vectors.
+BOOKS_DIR = os.getenv(
+    "BOOKS_DIR",
+    os.path.expanduser("~/buddy_reference_books")
+)
+
 STORIES_DIR = os.path.join(DATA_DIR, "stories")
 BANKS_DIR = os.path.join(DATA_DIR, "quiz_banks")
-UDEMY_DIR = "/home/bhupendra/Videos/eng_len/UDEMY - English Grammar Complete - All English Sentence Patterns  [Hacksnation.com]"
+UDEMY_DIR = os.getenv(
+    "UDEMY_DIR",
+    os.path.join(DATA_DIR, "udemy_course") if os.path.exists(os.path.join(DATA_DIR, "udemy_course")) else "/home/bhupendra/Videos/eng_len/UDEMY - English Grammar Complete - All English Sentence Patterns  [Hacksnation.com]"
+)
 
 os.makedirs(BANKS_DIR, exist_ok=True)
 os.makedirs(STORIES_DIR, exist_ok=True)
@@ -125,6 +138,9 @@ class KnowledgeIngestor:
                 continue
 
             rag_logger.info(f"Ingesting reference book: {title}...")
+            if pypdf is None:
+                rag_logger.warning(f"pypdf not available; skipping PDF extraction for {title}.")
+                continue
             try:
                 reader = pypdf.PdfReader(fpath)
                 total_pages = len(reader.pages)
@@ -361,6 +377,10 @@ class KnowledgeIngestor:
             })
         return questions
 
+    # export_corpus_to_json / import_corpus_from_json removed:
+    # ChromaDB persists vectors natively to data/chroma_db/ on disk.
+    # No JSON snapshot needed — cold starts are instant from Chroma's HNSW index.
+
     def run_full_ingestion(self):
         """Execute complete ingestion pipeline."""
         rag_logger.info("=== Step 1: Ingesting Udemy Curriculum ===")
@@ -375,10 +395,12 @@ class KnowledgeIngestor:
         rag_logger.info("=== Step 4: Generating Pre-Verified 40-50 Question Quiz Banks ===")
         self.generate_verified_quiz_banks()
 
-        counts = self.rag.count_chunks()
+        counts = self.rag.count_by_source()
         rag_logger.info("=== Ingestion Complete! Summary of RAG Chunks ===")
         for stype, cnt in counts.items():
             rag_logger.info(f"  - {stype}: {cnt} chunks")
+        total = self.rag.count_chunks().get("total", 0)
+        rag_logger.info(f"ChromaDB collection '{COLLECTION_NAME}' total: {total} chunks — persisted to data/chroma_db/")
 
 if __name__ == "__main__":
     import argparse

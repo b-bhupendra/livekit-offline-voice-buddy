@@ -1,7 +1,7 @@
 ================================================================================
 FILE: mvp_talker_offline/VisualsFrontend/src/App.tsx
 LANGUAGE: typescript
-LINES: 258
+LINES: 328
 PURPOSE: Conversational Live Stage: Timeline feed, top status bar, bottom audio dock, and slide-over drawer
 ================================================================================
 
@@ -20,11 +20,12 @@ import { InlineDisputeCard } from './components/InlineDisputeCard';
 import { InlineNotesCard } from './components/InlineNotesCard';
 import { InlineGrammarMovementCard } from './components/InlineGrammarMovementCard';
 import { InlineSheetErrorCard } from './components/InlineSheetErrorCard';
+import { InlineCanvasLectureCard } from './components/InlineCanvasLectureCard';
 import { StreamingCard } from './components/StreamingCard';
 
 export default function App() {
   useLiveKit();
-  const { feed, fetchSyllabus } = useBuddyStore();
+  const { feed, fetchSyllabus, activeMode, tutorState } = useBuddyStore();
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -70,6 +71,64 @@ export default function App() {
             flexDirection: 'column'
           }}
         >
+          {/* ── Active Tutor Mode Live Banner ── */}
+          {activeMode === 'tutor' && (
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              style={{
+                marginBottom: '20px',
+                padding: '12px 18px',
+                background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.12) 0%, rgba(139, 92, 246, 0.08) 100%)',
+                border: '1px solid rgba(99, 102, 241, 0.35)',
+                borderRadius: 'var(--radius-lg)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '12px',
+                boxShadow: '0 4px 20px rgba(99, 102, 241, 0.12)',
+                backdropFilter: 'blur(8px)'
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div
+                  style={{
+                    width: '32px',
+                    height: '32px',
+                    borderRadius: '50%',
+                    background: 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '16px',
+                    boxShadow: '0 2px 8px rgba(99, 102, 241, 0.4)'
+                  }}
+                >
+                  🎓
+                </div>
+                <div>
+                  <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span>Tutor Mode: {tutorState?.current_topic || 'Nouns & Structure'}</span>
+                    <span style={{ fontSize: '10px', background: 'rgba(99, 102, 241, 0.25)', color: '#818cf8', padding: '1px 7px', borderRadius: '10px', letterSpacing: '0.04em', fontWeight: 600 }}>
+                      LIVE VOICE MASTERY
+                    </span>
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                    {tutorState?.pending_homework
+                      ? `Pending Homework: "${tutorState.pending_homework}" (${tutorState.homework_status || 'assigned'})`
+                      : 'Voice Lecture & Mastery Quiz Loop Active • 100% Conversational'}
+                  </div>
+                </div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--accent)' }}>
+                  {tutorState?.mastered_patterns?.length || 0} Patterns
+                </div>
+                <div style={{ fontSize: '10.5px', color: 'var(--text-tertiary)' }}>Mastered</div>
+              </div>
+            </motion.div>
+          )}
+
           {feed.length === 0 ? (
             <div
               style={{
@@ -105,15 +164,16 @@ export default function App() {
               </div>
             </div>
           ) : (
-            feed.map((item) => {
+            feed.map((item, idx) => {
               // ── Transcript Message (User or Assistant) ──
               if (item.type === 'transcript') {
                 const isUser = item.speaker === 'user';
+                const isLatest = idx === feed.length - 1;
                 return (
                   <motion.div
                     key={item.id}
                     initial={{ opacity: 0, y: 6 }}
-                    animate={{ opacity: item.is_interim ? 0.75 : 1, y: 0 }}
+                    animate={{ opacity: item.is_interim ? 0.85 : 1, y: 0 }}
                     transition={{ duration: 0.2 }}
                     style={{
                       display: 'flex',
@@ -139,7 +199,10 @@ export default function App() {
                         <>
                           <span>You</span>
                           {item.is_interim ? (
-                            <span style={{ color: 'var(--accent)', fontWeight: 500 }}>· speaking...</span>
+                            <span style={{ color: 'var(--accent)', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--accent)', display: 'inline-block', animation: 'pulse 1.2s infinite' }} />
+                              speaking...
+                            </span>
                           ) : (
                             <>
                               <span>·</span>
@@ -151,14 +214,15 @@ export default function App() {
                         <>
                           <div
                             style={{
-                              width: '14px',
-                              height: '14px',
+                              width: '15px',
+                              height: '15px',
                               borderRadius: '50%',
                               background: 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)',
                               display: 'flex',
                               alignItems: 'center',
                               justifyContent: 'center',
-                              color: '#ffffff'
+                              color: '#ffffff',
+                              boxShadow: isLatest ? '0 0 8px rgba(59, 130, 246, 0.5)' : 'none'
                             }}
                           >
                             <Sparkles size={9} />
@@ -170,14 +234,15 @@ export default function App() {
                       )}
                     </div>
 
-                    {/* Bubble */}
+                    {/* Bubble - Gemini Live / ChatGPT Live styling */}
                     <div
                       style={{
                         padding: isUser ? '12px 18px' : '6px 0',
                         borderRadius: isUser ? '16px 16px 4px 16px' : '0px',
-                        background: isUser ? (item.is_interim ? 'rgba(99, 102, 241, 0.08)' : 'var(--surface-2)') : 'transparent',
-                        border: isUser ? (item.is_interim ? '1px dashed var(--accent)' : '1px solid var(--border-subtle)') : 'none',
-                        color: item.is_interim ? 'var(--text-secondary)' : 'var(--text-primary)',
+                        background: isUser ? (item.is_interim ? 'rgba(99, 102, 241, 0.12)' : 'var(--surface-2)') : 'transparent',
+                        border: isUser ? (item.is_interim ? '1px solid var(--accent)' : '1px solid var(--border-subtle)') : 'none',
+                        boxShadow: isUser && item.is_interim ? '0 0 16px rgba(99, 102, 241, 0.25)' : 'none',
+                        color: item.is_interim ? 'var(--text-primary)' : 'var(--text-primary)',
                         fontSize: '14.5px',
                         lineHeight: 1.65,
                         maxWidth: isUser ? '85%' : '100%',
@@ -243,6 +308,11 @@ export default function App() {
                 return <InlineGrammarMovementCard key={item.id} data={item.data} />;
               }
 
+              // ── Inline Canvas Visual Lecture Card ──
+              if (item.type === 'canvas_lecture') {
+                return <InlineCanvasLectureCard key={item.id} data={item.data} />;
+              }
+
               // ── Inline Sheet Error Card ──
               if (item.type === 'sheet_error') {
                 return <InlineSheetErrorCard key={item.id} data={item.data} />;
@@ -268,7 +338,7 @@ export default function App() {
 ================================================================================
 FILE: mvp_talker_offline/VisualsFrontend/src/components/Header.tsx
 LANGUAGE: typescript
-LINES: 179
+LINES: 216
 PURPOSE: Top navigation bar with engine status indicator, active chapter pill, and quick triggers
 ================================================================================
 
@@ -279,7 +349,11 @@ import { useBuddyStore, DEFAULT_ROADMAP } from '../store';
 export const Header: React.FC = () => {
   const {
     sseConnected,
+    livekitConnected,
     activeChapter,
+    activeMode,
+    tutorState,
+    toggleTutorMode,
     triggerLLMQuiz,
     triggerRevision,
     toggleDrawer,
@@ -332,7 +406,7 @@ export const Header: React.FC = () => {
             alignItems: 'center',
             gap: '6px',
             fontSize: '12px',
-            color: sseConnected ? 'var(--text-secondary)' : 'var(--warning)',
+            color: (sseConnected || livekitConnected) ? 'var(--text-secondary)' : 'var(--warning)',
             background: 'var(--surface-1)',
             padding: '3px 10px',
             borderRadius: 'var(--radius-full)',
@@ -344,16 +418,39 @@ export const Header: React.FC = () => {
               width: '7px',
               height: '7px',
               borderRadius: '50%',
-              background: sseConnected ? 'var(--success)' : 'var(--warning)',
-              boxShadow: sseConnected ? '0 0 8px rgba(16, 185, 129, 0.6)' : 'none'
+              background: (sseConnected || livekitConnected) ? 'var(--success)' : 'var(--warning)',
+              boxShadow: (sseConnected || livekitConnected) ? '0 0 8px rgba(16, 185, 129, 0.6)' : 'none'
             }}
-            className={sseConnected ? 'pulse-beacon' : ''}
+            className={(sseConnected || livekitConnected) ? 'pulse-beacon' : ''}
           />
-          <span>{sseConnected ? 'Live Audio Connected' : 'Engine Ready (Demo Mode)'}</span>
+          <span>{(sseConnected || livekitConnected) ? 'Live WebRTC Voice' : 'Engine Ready'}</span>
         </div>
+
+        {/* Mode Selector Pill: Buddy Mode vs Tutor Mode */}
+        <button
+          onClick={() => toggleTutorMode()}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            fontSize: '12px',
+            fontWeight: 500,
+            cursor: 'pointer',
+            padding: '4px 12px',
+            borderRadius: 'var(--radius-full)',
+            background: activeMode === 'tutor' ? 'rgba(99, 102, 241, 0.15)' : 'var(--surface-1)',
+            border: activeMode === 'tutor' ? '1px solid var(--accent)' : '1px solid var(--border-subtle)',
+            color: activeMode === 'tutor' ? 'var(--accent)' : 'var(--text-secondary)',
+            transition: 'all 0.15s ease'
+          }}
+          title={activeMode === 'tutor' ? 'Click to switch to casual Buddy Mode' : 'Click to activate grammar Tutor Mode'}
+        >
+          <Sparkles size={12} color={activeMode === 'tutor' ? 'var(--accent)' : 'var(--text-tertiary)'} />
+          <span>{activeMode === 'tutor' ? '🎓 Tutor Mode (Active)' : '💬 Buddy Mode (Chat)'}</span>
+        </button>
       </div>
 
-      {/* ── Center Active Chapter Pill ── */}
+      {/* ── Center Active Chapter / Tutor Topic Pill ── */}
       <div
         style={{
           display: 'flex',
@@ -363,7 +460,7 @@ export const Header: React.FC = () => {
           border: '1px solid var(--border-subtle)',
           padding: '4px 14px',
           borderRadius: 'var(--radius-full)',
-          maxWidth: '380px'
+          maxWidth: '420px'
         }}
       >
         <BookOpen size={13} color="var(--accent)" />
@@ -376,10 +473,20 @@ export const Header: React.FC = () => {
             textOverflow: 'ellipsis'
           }}
         >
-          <strong style={{ color: 'var(--text-primary)', fontWeight: 600 }}>
-            Ch. {activeChapter}:
-          </strong>{' '}
-          {currentChapterInfo.title}
+          {activeMode === 'tutor' ? (
+            <>
+              <strong style={{ color: 'var(--accent)', fontWeight: 600 }}>Tutor Track:</strong>{' '}
+              {tutorState?.current_topic || 'Nouns & Sentence Foundations'}
+              {tutorState?.pending_homework && (
+                <span style={{ marginLeft: '6px', color: 'var(--warning)', fontWeight: 500 }}>· 📝 HW Pending</span>
+              )}
+            </>
+          ) : (
+            <>
+              <strong style={{ color: 'var(--text-primary)', fontWeight: 600 }}>Ch. {activeChapter}:</strong>{' '}
+              {currentChapterInfo.title}
+            </>
+          )}
         </span>
       </div>
 
@@ -456,14 +563,14 @@ export const Header: React.FC = () => {
 ================================================================================
 FILE: mvp_talker_offline/VisualsFrontend/src/components/AudioDock.tsx
 LANGUAGE: typescript
-LINES: 259
+LINES: 314
 PURPOSE: Floating voice visualizer dock with active waveform, composer textarea, and action chips
 ================================================================================
 
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import TextareaAutosize from 'react-textarea-autosize';
-import { Mic, MicOff, Send, Sparkles, BookOpen, Scale } from 'lucide-react';
+import { Mic, MicOff, Send, Sparkles, BookOpen, Scale, GraduationCap } from 'lucide-react';
 import { useBuddyStore } from '../store';
 
 export const AudioDock: React.FC = () => {
@@ -472,7 +579,11 @@ export const AudioDock: React.FC = () => {
     isVoiceActive,
     setIsVoiceActive,
     sseConnected,
+    livekitConnected,
     activeChapter,
+    activeMode,
+    toggleTutorMode,
+    deliverLecturePhase,
     triggerLLMQuiz,
     triggerRevision,
     disputeAnswer,
@@ -518,6 +629,57 @@ export const AudioDock: React.FC = () => {
           paddingBottom: '2px'
         }}
       >
+        <button
+          onClick={() => toggleTutorMode()}
+          style={{
+            background: activeMode === 'tutor' ? 'rgba(99, 102, 241, 0.2)' : 'var(--surface-1)',
+            border: activeMode === 'tutor' ? '1px solid var(--accent)' : '1px solid var(--border-subtle)',
+            borderRadius: 'var(--radius-full)',
+            padding: '5px 14px',
+            fontSize: '12px',
+            fontWeight: 500,
+            color: activeMode === 'tutor' ? 'var(--accent)' : 'var(--text-primary)',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            whiteSpace: 'nowrap',
+            transition: 'all 0.15s ease'
+          }}
+        >
+          <Sparkles size={12} color="var(--accent)" />
+          <span>{activeMode === 'tutor' ? '🎓 Exit Tutor Mode (Chat)' : '🎓 Start Tutor Mode: Nouns'}</span>
+        </button>
+
+        <button
+          onClick={() => deliverLecturePhase(2)}
+          style={{
+            background: 'var(--surface-1)',
+            border: '1px solid var(--border-subtle)',
+            borderRadius: 'var(--radius-full)',
+            padding: '5px 12px',
+            fontSize: '12px',
+            color: 'var(--text-secondary)',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '5px',
+            whiteSpace: 'nowrap',
+            transition: 'all 0.15s ease'
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.borderColor = 'var(--accent)';
+            e.currentTarget.style.color = 'var(--text-primary)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.borderColor = 'var(--border-subtle)';
+            e.currentTarget.style.color = 'var(--text-secondary)';
+          }}
+        >
+          <GraduationCap size={12} color="var(--accent)" />
+          <span>Canvas Lecture: Nouns</span>
+        </button>
+
         <button
           onClick={() => triggerLLMQuiz(activeChapter)}
           style={{
@@ -635,7 +797,7 @@ export const AudioDock: React.FC = () => {
             <motion.span
               key={i}
               animate={{
-                height: isVoiceActive && sseConnected ? [height, height * 0.35, height] : 4
+                height: isVoiceActive && (sseConnected || livekitConnected) ? [height, height * 0.35, height] : 4
               }}
               transition={{
                 repeat: Infinity,
@@ -645,7 +807,7 @@ export const AudioDock: React.FC = () => {
               }}
               style={{
                 width: '3px',
-                background: isVoiceActive && sseConnected ? 'var(--accent)' : 'var(--surface-3)',
+                background: isVoiceActive && (sseConnected || livekitConnected) ? 'var(--accent)' : 'var(--surface-3)',
                 borderRadius: '2px',
                 height: isVoiceActive ? `${height}px` : '4px'
               }}
@@ -724,11 +886,11 @@ export const AudioDock: React.FC = () => {
 ================================================================================
 FILE: mvp_talker_offline/VisualsFrontend/src/components/SlideOverDrawer.tsx
 LANGUAGE: typescript
-LINES: 332
+LINES: 547
 PURPOSE: Collapsible slide-over drawer with 18-chapter roadmap, analytics, and remediation queue
 ================================================================================
 
-import React from 'react';
+import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   X,
@@ -736,13 +898,21 @@ import {
   BarChart3,
   RefreshCw,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  GraduationCap,
+  Play,
+  Sparkles,
+  Clock,
+  Repeat,
+  Briefcase,
+  MessageSquare
 } from 'lucide-react';
 import { useBuddyStore } from '../store';
 import type { DrawerTab } from '../types';
 import { SyllabusSection } from './SyllabusSection';
 
 export const SlideOverDrawer: React.FC = () => {
+  const [lectureFilter, setLectureFilter] = useState<string>('all');
   const {
     drawerOpen,
     toggleDrawer,
@@ -750,6 +920,9 @@ export const SlideOverDrawer: React.FC = () => {
     setActiveDrawerTab,
     activeChapter,
     learnerState,
+    lectureHistory,
+    pushInlineCanvasLecture,
+    deliverLecturePhase,
     triggerLLMQuiz
   } = useBuddyStore();
 
@@ -845,8 +1018,9 @@ export const SlideOverDrawer: React.FC = () => {
             >
               {[
                 { id: 'syllabus', label: 'Roadmap', icon: BookOpen },
+                { id: 'lectures', label: `Lectures (${lectureHistory.length})`, icon: GraduationCap },
                 { id: 'analytics', label: 'Analytics', icon: BarChart3 },
-                { id: 'remediation', label: `Remediation (${failedQueue.length})`, icon: RefreshCw }
+                { id: 'remediation', label: `Errors (${failedQueue.length})`, icon: RefreshCw }
               ].map((tab) => {
                 const isActive = activeDrawerTab === tab.id;
                 const Icon = tab.icon;
@@ -1051,6 +1225,209 @@ export const SlideOverDrawer: React.FC = () => {
                       ))}
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* ── TAB 4: LECTURES & REVISION SESSIONS ── */}
+              {activeDrawerTab === 'lectures' && (
+                <div>
+                  {/* Practice Category Selection Filter Pills */}
+                  <div style={{ marginBottom: '16px' }}>
+                    <div style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-tertiary)', fontWeight: 600, letterSpacing: '0.06em', marginBottom: '8px' }}>
+                      Practice Session Categories
+                    </div>
+                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                      {[
+                        { id: 'all', label: 'All Sessions', icon: Sparkles },
+                        { id: 'grammar_mastery', label: 'Grammar', icon: GraduationCap },
+                        { id: 'sentence_repetition', label: 'Repetition', icon: Repeat },
+                        { id: 'workplace_office', label: 'Workplace', icon: Briefcase },
+                        { id: 'conversational_banter', label: 'Banter', icon: MessageSquare }
+                      ].map((tab) => {
+                        const Icon = tab.icon;
+                        const isSel = lectureFilter === tab.id;
+                        return (
+                          <button
+                            key={tab.id}
+                            onClick={() => setLectureFilter(tab.id)}
+                            style={{
+                              padding: '5px 10px',
+                              borderRadius: 'var(--radius-full)',
+                              fontSize: '11px',
+                              fontWeight: 500,
+                              background: isSel ? 'var(--accent)' : 'var(--surface-2)',
+                              color: isSel ? '#ffffff' : 'var(--text-secondary)',
+                              border: `1px solid ${isSel ? 'var(--accent)' : 'var(--border-subtle)'}`,
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '5px',
+                              transition: 'all 0.15s ease'
+                            }}
+                          >
+                            <Icon size={12} />
+                            <span>{tab.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Practice Launchers */}
+                  <div style={{ marginBottom: '20px' }}>
+                    <div style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-tertiary)', fontWeight: 600, letterSpacing: '0.06em', marginBottom: '8px' }}>
+                      Interactive Practice Launchers
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      {[
+                        { phase: 1, topic: 'Nouns', session_type: 'grammar_mastery', title: 'Nouns 1: Concrete vs Abstract', desc: 'Sensory perception vs Cognitive concepts' },
+                        { phase: 2, topic: 'Nouns', session_type: 'grammar_mastery', title: 'Nouns 2: Countable vs Uncountable', desc: 'Mass nouns (much/many, fewer/less)' },
+                        { phase: 3, topic: 'Nouns', session_type: 'grammar_mastery', title: 'Nouns 3: Collective Concord', desc: 'Unitary whole vs Individual members' },
+                        { phase: 4, topic: 'Nouns', session_type: 'grammar_mastery', title: 'Nouns 4: Compound Head Nouns', desc: 'Head noun pluralization (mothers-in-law)' },
+                        { phase: 5, topic: 'Nouns', session_type: 'grammar_mastery', title: 'Nouns 5: Possessive Genitives', desc: "Tom and Mary's vs Tom's and Mary's" },
+                        { phase: 1, topic: 'Conversational Fluency', session_type: 'sentence_repetition', title: '🗣️ Daily Repetition: Spoken Contractions', desc: 'Cadence & rhythm of gonna, wanna, could\'ve' },
+                        { phase: 1, topic: 'Workplace Communication', session_type: 'workplace_office', title: '💼 Workplace: Polite Softening & Requests', desc: 'Transforming blunt commands into diplomatic requests' }
+                      ].filter(item => lectureFilter === 'all' || item.session_type === lectureFilter).map((item, idx) => (
+                        <button
+                          key={idx}
+                          onClick={() => {
+                            deliverLecturePhase(item.phase, item.topic, item.session_type);
+                            toggleDrawer();
+                          }}
+                          style={{
+                            padding: '10px 12px',
+                            background: 'var(--surface-2)',
+                            border: '1px solid var(--border-subtle)',
+                            borderRadius: 'var(--radius-md)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            cursor: 'pointer',
+                            textAlign: 'left',
+                            transition: 'all 0.15s ease'
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.borderColor = 'var(--accent)';
+                            e.currentTarget.style.background = 'var(--surface-3)';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.borderColor = 'var(--border-subtle)';
+                            e.currentTarget.style.background = 'var(--surface-2)';
+                          }}
+                        >
+                          <div>
+                            <div style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                              {item.title}
+                            </div>
+                            <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                              {item.desc}
+                            </div>
+                          </div>
+                          <Play size={13} color="var(--accent)" />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Previous Generated Lectures List */}
+                  <div>
+                    <div style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-tertiary)', fontWeight: 600, letterSpacing: '0.06em', marginBottom: '8px' }}>
+                      Previous Saved Sessions ({lectureHistory.filter(l => lectureFilter === 'all' || (l.session_type || 'grammar_mastery') === lectureFilter).length})
+                    </div>
+                    {lectureHistory.filter(l => lectureFilter === 'all' || (l.session_type || 'grammar_mastery') === lectureFilter).length === 0 ? (
+                      <div
+                        style={{
+                          padding: '24px 16px',
+                          textAlign: 'center',
+                          background: 'var(--surface-0)',
+                          borderRadius: 'var(--radius-md)',
+                          border: '1px dashed var(--border-subtle)',
+                          color: 'var(--text-tertiary)'
+                        }}
+                      >
+                        <Sparkles size={20} color="var(--accent)" style={{ margin: '0 auto 8px', display: 'block' }} />
+                        <div style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-secondary)' }}>
+                          No Saved Sessions in This Category
+                        </div>
+                        <div style={{ fontSize: '11.5px', marginTop: '4px' }}>
+                          Launch a practice session above or ask Buddy in voice: "Teach me about nouns" or "Let's do sentence repetition"!
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                        {lectureHistory
+                          .filter(l => lectureFilter === 'all' || (l.session_type || 'grammar_mastery') === lectureFilter)
+                          .map((lec) => (
+                          <div
+                            key={lec.id}
+                            style={{
+                              padding: '12px 14px',
+                              background: 'var(--surface-2)',
+                              borderRadius: 'var(--radius-md)',
+                              border: '1px solid var(--border-subtle)',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '6px'
+                            }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <span style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                                  {lec.submodule}
+                                </span>
+                                <span
+                                  style={{
+                                    fontSize: '9.5px',
+                                    padding: '1px 6px',
+                                    borderRadius: '8px',
+                                    background: 'rgba(99, 102, 241, 0.15)',
+                                    color: '#818cf8',
+                                    fontWeight: 600,
+                                    textTransform: 'uppercase'
+                                  }}
+                                >
+                                  {lec.session_type || 'grammar'}
+                                </span>
+                              </div>
+                              <span style={{ fontSize: '10px', color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                <Clock size={10} />
+                                {lec.timestamp ? lec.timestamp.slice(11, 16) : 'Recent'}
+                              </span>
+                            </div>
+
+                            <div style={{ fontSize: '12px', color: 'var(--text-secondary)', fontStyle: 'italic', lineHeight: 1.4 }}>
+                              "{lec.spoken_summary ? lec.spoken_summary.slice(0, 110) + '...' : 'Interactive visual lecture'}"
+                            </div>
+
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '4px' }}>
+                              <button
+                                onClick={() => {
+                                  pushInlineCanvasLecture(lec);
+                                  toggleDrawer();
+                                }}
+                                style={{
+                                  background: 'rgba(99, 102, 241, 0.15)',
+                                  border: '1px solid var(--accent)',
+                                  color: 'var(--accent)',
+                                  fontSize: '11px',
+                                  fontWeight: 500,
+                                  padding: '4px 10px',
+                                  borderRadius: 'var(--radius-sm)',
+                                  cursor: 'pointer',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '4px'
+                                }}
+                              >
+                                <Sparkles size={11} />
+                                <span>Re-open / Revise</span>
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>

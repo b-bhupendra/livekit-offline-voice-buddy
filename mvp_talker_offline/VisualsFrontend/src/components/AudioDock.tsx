@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import TextareaAutosize from 'react-textarea-autosize';
-import { Mic, MicOff, Send, Sparkles, BookOpen, Scale } from 'lucide-react';
+import { Mic, MicOff, Send, Sparkles, BookOpen, Scale, GraduationCap } from 'lucide-react';
 import { useBuddyStore } from '../store';
 
 export const AudioDock: React.FC = () => {
@@ -10,7 +10,11 @@ export const AudioDock: React.FC = () => {
     isVoiceActive,
     setIsVoiceActive,
     sseConnected,
+    livekitConnected,
     activeChapter,
+    activeMode,
+    toggleTutorMode,
+    deliverLecturePhase,
     triggerLLMQuiz,
     triggerRevision,
     disputeAnswer,
@@ -56,6 +60,57 @@ export const AudioDock: React.FC = () => {
           paddingBottom: '2px'
         }}
       >
+        <button
+          onClick={() => toggleTutorMode()}
+          style={{
+            background: activeMode === 'tutor' ? 'rgba(99, 102, 241, 0.2)' : 'var(--surface-1)',
+            border: activeMode === 'tutor' ? '1px solid var(--accent)' : '1px solid var(--border-subtle)',
+            borderRadius: 'var(--radius-full)',
+            padding: '5px 14px',
+            fontSize: '12px',
+            fontWeight: 500,
+            color: activeMode === 'tutor' ? 'var(--accent)' : 'var(--text-primary)',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            whiteSpace: 'nowrap',
+            transition: 'all 0.15s ease'
+          }}
+        >
+          <Sparkles size={12} color="var(--accent)" />
+          <span>{activeMode === 'tutor' ? '🎓 Exit Tutor Mode (Chat)' : '🎓 Start Tutor Mode: Nouns'}</span>
+        </button>
+
+        <button
+          onClick={() => deliverLecturePhase(2)}
+          style={{
+            background: 'var(--surface-1)',
+            border: '1px solid var(--border-subtle)',
+            borderRadius: 'var(--radius-full)',
+            padding: '5px 12px',
+            fontSize: '12px',
+            color: 'var(--text-secondary)',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '5px',
+            whiteSpace: 'nowrap',
+            transition: 'all 0.15s ease'
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.borderColor = 'var(--accent)';
+            e.currentTarget.style.color = 'var(--text-primary)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.borderColor = 'var(--border-subtle)';
+            e.currentTarget.style.color = 'var(--text-secondary)';
+          }}
+        >
+          <GraduationCap size={12} color="var(--accent)" />
+          <span>Canvas Lecture: Nouns</span>
+        </button>
+
         <button
           onClick={() => triggerLLMQuiz(activeChapter)}
           style={{
@@ -173,7 +228,7 @@ export const AudioDock: React.FC = () => {
             <motion.span
               key={i}
               animate={{
-                height: isVoiceActive && sseConnected ? [height, height * 0.35, height] : 4
+                height: isVoiceActive && (sseConnected || livekitConnected) ? [height, height * 0.35, height] : 4
               }}
               transition={{
                 repeat: Infinity,
@@ -183,7 +238,7 @@ export const AudioDock: React.FC = () => {
               }}
               style={{
                 width: '3px',
-                background: isVoiceActive && sseConnected ? 'var(--accent)' : 'var(--surface-3)',
+                background: isVoiceActive && (sseConnected || livekitConnected) ? 'var(--accent)' : 'var(--surface-3)',
                 borderRadius: '2px',
                 height: isVoiceActive ? `${height}px` : '4px'
               }}

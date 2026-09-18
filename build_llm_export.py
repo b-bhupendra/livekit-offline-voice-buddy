@@ -3,12 +3,21 @@
 Generates high-fidelity, LLM-optimized codebase exports for both Frontend and Backend.
 Provides:
 - All 3 full codebase bundles at root level:
-    1. FULL_PROJECT_CODEBASE.txt (Combined BE + FE, 32 files)
-    2. FULL_FRONTEND_CODEBASE.txt (All FE, 18 files)
-    3. FULL_BACKEND_CODEBASE.txt (All BE, 14 files)
-- Single consolidated 'chunks/' directory containing all 6 logical chunks (< 20K tokens each)
+    1. FULL_PROJECT_CODEBASE.txt (Combined BE + FE)
+    2. FULL_FRONTEND_CODEBASE.txt (All FE files)
+    3. FULL_BACKEND_CODEBASE.txt (All BE files)
+- Single consolidated 'chunks/' directory containing all logical chunks (< 20K tokens each)
 - Separated 'frontend/' and 'backend/' directories with architectural overviews and dedicated chunks
 - Delimiters and metadata headers formatted for zero-ambiguity parsing by any LLM
+
+Data Storage Note:
+  Raw PDF reference books live in data/reference_books/ as the source-of-truth archive.
+  At ingest time, knowledge_ingestor.py chunks + vectorises every book into memory.db (SQLite)
+  using an FTS5 full-text index and a dense embedding table (rag_chunks).  On every cold start
+  the agent hot-loads data/preindexed_reference_corpus.json — a portable snapshot of all 833
+  pre-vectorised chunks — so PDF re-parsing never blocks startup.  PDFs are therefore kept
+  only as the authoritative source for future re-ingestion or curriculum audits, not for
+  runtime retrieval.
 """
 
 import os
@@ -155,9 +164,14 @@ BE_CHUNKS = {
         ("mvp_talker_offline/backend/simulation_engine.py", "Pedagogical simulation engine handling error detection, dispute resolution via local RAG & DuckDuckGo, and colloquial recasts", "python"),
         ("mvp_talker_offline/backend/quiz_engine.py", "Quiz state machine managing chapter banks, answer verification, error tracking, and isomorphic repeat questions with SQLite audit logging", "python"),
         ("mvp_talker_offline/backend/syllabus_tracker.py", "18-chapter linear progression tracker backed by SQLite database (memory.db) tracking coursework, mastery, and isomorphic audits", "python"),
-        ("mvp_talker_offline/backend/rag_store.py", "Hybrid retrieval store combining BM25 keyword matching and dense embeddings over textbook chunks with distinct outage logging", "python"),
+        ("mvp_talker_offline/backend/rag_store.py", "ChromaDB-backed hybrid RAG store: ANN vector search (HNSW) + BM25 keyword search with Reciprocal Rank Fusion; vectors persisted to data/chroma_db/ — no re-indexing on restart", "python"),
     ],
-    "03_BE_INGESTION_AND_DATA.txt": [
+    "03_BE_LANGGRAPH_AND_TUTOR.txt": [
+        ("mvp_talker_offline/backend/langgraph_tutor_graph.py", "LangGraph StateGraph driving tutor mode: lecture phase sequencing, homework check, quiz flow, preference tracking, and session memory via SQLite checkpoints", "python"),
+        ("mvp_talker_offline/backend/curriculum_banks_generator.py", "Offline curriculum generator: builds and exports all 18 chapter quiz banks from ESL syllabus research", "python"),
+        ("mvp_talker_offline/backend/verify_langgraph_livekit.py", "Integration test suite verifying LangGraph tutor graph <-> LiveKit agent handshake: state transitions, checkpoint persistence, and voice-first turn-taking", "python"),
+    ],
+    "04_BE_INGESTION_AND_DATA.txt": [
         ("mvp_talker_offline/backend/knowledge_ingestor.py", "Textbook & PDF ingestion pipeline indexing Oxford Guide, Arihant Grammar, Espresso English, and narrative stories into SQLite & RAG", "python"),
         ("mvp_talker_offline/backend/verify_phase1.py", "Automated test suite verifying RAG search, syllabus progression, quiz evaluation, and dispute handling", "python"),
         ("mvp_talker_offline/backend/verify_phase2.py", "Automated test suite verifying embedding outage fallback, offline dispute, SQLite isomorphic audits, and learner state sync", "python"),
@@ -167,7 +181,6 @@ BE_CHUNKS = {
         ("mvp_talker_offline/backend/headless_console_test.py", "Headless CLI runner scripting milestone execution via LiveKit Agents fake_job_context with GenUI ANSI event cards and assertions", "python"),
         ("mvp_talker_offline/data/curriculum.json", "Official 18-chapter English grammar curriculum definition with title, topics, rules, and coursework requirements", "json"),
         ("mvp_talker_offline/data/quiz_banks/chapter_01_bank.json", "Pre-verified milestone quiz bank schema for Chapter 1 (Present Simple & Continuous) with citations and explanations", "json"),
-        ("mvp_talker_offline/data/stories/aesop_dilemmas.txt", "Sample narrative conversation scenario used by agent for conversational grammar practice", "text"),
     ]
 }
 
@@ -366,14 +379,15 @@ def generate_exports():
     (EXPORT_DIR / "FULL_PROJECT_CODEBASE.txt").write_text(combined_project_content, encoding="utf-8")
     print(f"  [Combined Project Bundle] Wrote FULL_PROJECT_CODEBASE.txt ({len(full_be_content) + len(full_fe_content)} files total)")
 
-    # Consolidated Single 'chunks/' Directory with all 6 chunks sequentially ordered
+    # Consolidated Single 'chunks/' Directory — 7 chunks: 4 BE + 3 FE
     all_chunks_map = {
-        "01_BE_CORE_PIPELINE.txt": be_chunk_contents["01_BE_CORE_PIPELINE.txt"],
-        "02_BE_ENGINES.txt": be_chunk_contents["02_BE_ENGINES.txt"],
-        "03_BE_INGESTION_AND_DATA.txt": be_chunk_contents["03_BE_INGESTION_AND_DATA.txt"],
-        "04_FE_CORE_AND_CONFIG.txt": fe_chunk_contents["01_FE_CORE_AND_CONFIG.txt"],
-        "05_FE_STATE_AND_SERVICES.txt": fe_chunk_contents["02_FE_STATE_AND_SERVICES.txt"],
-        "06_FE_CONVERSATIONAL_STAGE.txt": fe_chunk_contents["03_FE_CONVERSATIONAL_STAGE.txt"],
+        "01_BE_CORE_PIPELINE.txt":        be_chunk_contents["01_BE_CORE_PIPELINE.txt"],
+        "02_BE_ENGINES.txt":              be_chunk_contents["02_BE_ENGINES.txt"],
+        "03_BE_LANGGRAPH_AND_TUTOR.txt":  be_chunk_contents["03_BE_LANGGRAPH_AND_TUTOR.txt"],
+        "04_BE_INGESTION_AND_DATA.txt":   be_chunk_contents["04_BE_INGESTION_AND_DATA.txt"],
+        "05_FE_CORE_AND_CONFIG.txt":      fe_chunk_contents["01_FE_CORE_AND_CONFIG.txt"],
+        "06_FE_STATE_AND_SERVICES.txt":   fe_chunk_contents["02_FE_STATE_AND_SERVICES.txt"],
+        "07_FE_CONVERSATIONAL_STAGE.txt": fe_chunk_contents["03_FE_CONVERSATIONAL_STAGE.txt"],
     }
     for chunk_name, chunk_text in all_chunks_map.items():
         (CHUNKS_DIR / chunk_name).write_text(chunk_text, encoding="utf-8")

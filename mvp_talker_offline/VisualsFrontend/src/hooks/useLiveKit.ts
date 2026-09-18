@@ -119,6 +119,8 @@ export function useLiveKit() {
                   store.pushInlineDispute(evt.props as unknown as ContentionProps);
                 } else if (evt.component === 'GrammarMovement') {
                   store.pushInlineMovement(evt.props as unknown as GrammarMovementProps);
+                } else if (evt.component === 'CanvasLectureCard') {
+                  store.pushInlineCanvasLecture(evt.props as any);
                 } else if (evt.component === 'sheet_error') {
                   store.pushInlineSheetError(evt.props as any);
                 } else if (evt.component === 'SyllabusProgressTree') {
@@ -179,6 +181,8 @@ export function useLiveKit() {
                 store.pushInlineDispute(data.props);
               } else if (data.component === 'GrammarMovement') {
                 store.pushInlineMovement(data.props);
+              } else if (data.component === 'CanvasLectureCard') {
+                store.pushInlineCanvasLecture(data.props || data);
               } else if (data.component === 'sheet_error') {
                 store.pushInlineSheetError(data.props || data);
               }
@@ -203,6 +207,8 @@ export function useLiveKit() {
               store.pushInlineDispute(evt.props);
             } else if (evt.component === 'GrammarMovement') {
               store.pushInlineMovement(evt.props);
+            } else if (evt.component === 'CanvasLectureCard') {
+              store.pushInlineCanvasLecture(evt.props);
             } else if (evt.component === 'sheet_error') {
               store.pushInlineSheetError(evt.props || evt);
             }
@@ -222,12 +228,15 @@ export function useLiveKit() {
           store.setLivekitConnected(true);
           store.setLivekitRoom(room);
           store.setSseConnected(true); // Signal online status to UI
-          // Hydrate syllabus and in-flight last sheet immediately via LiveKit RPC
+          // Hydrate syllabus, in-flight last sheet, and lecture history immediately via LiveKit RPC
           store.fetchSyllabus().catch((err) => {
             console.warn('[LiveKit] Initial syllabus hydration notice:', err);
           });
           store.fetchLastSheet().catch((err) => {
             console.warn('[LiveKit] Initial last sheet hydration notice:', err);
+          });
+          store.fetchLectureHistory().catch((err) => {
+            console.warn('[LiveKit] Initial lecture history hydration notice:', err);
           });
         });
 

@@ -9,7 +9,7 @@ WORKSPACE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(WORKSPACE_ROOT, "data")
 BANKS_DIR = os.path.join(DATA_DIR, "quiz_banks")
 
-# Isomorphic sentence generation templates
+# Isomorphic sentence generation templates across all curriculum chapters
 ISOMORPHIC_MUTATIONS = {
     "subject_verb_agreement_indefinite": [
         {
@@ -82,6 +82,154 @@ ISOMORPHIC_MUTATIONS = {
             "correct_answer": "is possessing -> possesses",
             "explanation": "'Possess' is a stative verb of ownership; use simple present 'possesses'."
         }
+    ],
+    "affirmative_to_negative_inversion": [
+        {
+            "stem": "Never ______ such breathtaking natural scenery in my entire life.",
+            "options": ["have I witnessed", "I have witnessed", "did I witnessed", "had I witness"],
+            "correct_answer": "have I witnessed",
+            "explanation": "'Never' at clause front requires subject-auxiliary inversion: 'have I witnessed'."
+        },
+        {
+            "stem": "Rarely ______ the company announce sudden leadership restructuring.",
+            "options": ["does", "is", "has", "do"],
+            "correct_answer": "does",
+            "explanation": "'Rarely' with singular company triggers present tense inversion with 'does'."
+        }
+    ],
+    "softening_commands_and_polite_requests": [
+        {
+            "stem": "Would you mind ______ the quarterly report before the executive briefing?",
+            "options": ["reviewing", "to review", "review", "reviewed"],
+            "correct_answer": "reviewing",
+            "explanation": "'Would you mind' requires a gerund (-ing form)."
+        },
+        {
+            "stem": "Could you possibly ______ me access to the project database?",
+            "options": ["grant", "granting", "to grant", "granted"],
+            "correct_answer": "grant",
+            "explanation": "Modal 'Could you' requires bare infinitive 'grant'."
+        }
+    ],
+    "auxiliary_inversion_questions": [
+        {
+            "stem": "______ either of your colleagues planning to attend the conference?",
+            "options": ["Is", "Are", "Were", "Have"],
+            "correct_answer": "Is",
+            "explanation": "'Either' is grammatically singular and takes singular verb 'Is'."
+        }
+    ],
+    "wh_word_syntax_and_preposition_stranding": [
+        {
+            "stem": "______ of these three frameworks would be best suited for our microservices?",
+            "options": ["Which", "What", "Who", "Whose"],
+            "correct_answer": "Which",
+            "explanation": "'Which' is used for selective choice among a defined set."
+        }
+    ],
+    "tag_polarity_and_embedded_clauses": [
+        {
+            "stem": "Do you know what time ______?",
+            "options": ["the meeting starts", "does the meeting start", "is the meeting start", "starts the meeting"],
+            "correct_answer": "the meeting starts",
+            "explanation": "Indirect questions follow standard affirmative clause order (Subject + Verb)."
+        }
+    ],
+    "there_is_are_stative_descriptions": [
+        {
+            "stem": "There ______ several critical bugs reported in the latest software build.",
+            "options": ["are", "is", "was", "has been"],
+            "correct_answer": "are",
+            "explanation": "Existential 'there' agrees with the post-verbal plural subject 'several critical bugs'."
+        }
+    ],
+    "verbs_of_perception_adjectives_vs_adverbs": [
+        {
+            "stem": "The freshly baked sourdough bread smells ______.",
+            "options": ["wonderful", "wonderfully", "in wonder", "most wonderfully"],
+            "correct_answer": "wonderful",
+            "explanation": "Sensory copular verbs take predicate adjectives, not manner adverbs."
+        }
+    ],
+    "spatial_and_temporal_prepositions": [
+        {
+            "stem": "The code review must be fully completed ______ Friday at 5 PM.",
+            "options": ["by", "until", "for", "since"],
+            "correct_answer": "by",
+            "explanation": "'By' denotes a completion deadline; 'until' denotes continuous duration."
+        }
+    ],
+    "verb_complementation_ing_vs_to": [
+        {
+            "stem": "Please remember ______ the server backup before logging off.",
+            "options": ["to trigger", "triggering", "triggered", "trigger"],
+            "correct_answer": "to trigger",
+            "explanation": "'Remember to do' refers to executing a future duty or task."
+        }
+    ],
+    "fanboys_compound_clauses": [
+        {
+            "stem": "The server crashed unexpectedly, ______ the backup system restored operations instantly.",
+            "options": ["yet", "so", "for", "nor"],
+            "correct_answer": "yet",
+            "explanation": "'Yet' expresses a coordinating adversative contrast."
+        }
+    ],
+    "adverbial_clauses_of_condition_and_time": [
+        {
+            "stem": "______ the deployment was delayed, the end user experience remained seamless.",
+            "options": ["Although", "In spite of", "Despite of", "Because"],
+            "correct_answer": "Although",
+            "explanation": "'Although' introduces a finite subordinate clause with subject and verb."
+        }
+    ],
+    "transitive_passive_and_agentless": [
+        {
+            "stem": "The vulnerability was ______ by the independent security auditor.",
+            "options": ["discovered", "discovering", "discover", "discovers"],
+            "correct_answer": "discovered",
+            "explanation": "Passive voice with auxiliary 'was' takes past participle 'discovered'."
+        }
+    ],
+    "zero_first_second_third_mixed_conditionals": [
+        {
+            "stem": "If we ______ automated unit testing earlier, we would have prevented these bugs.",
+            "options": ["had implemented", "would have implemented", "implemented", "have implemented"],
+            "correct_answer": "had implemented",
+            "explanation": "Third conditional if-clause requires past perfect ('had implemented')."
+        }
+    ],
+    "participial_phrases_and_clauses": [
+        {
+            "stem": "______ the system logs carefully, the engineer identified the root cause.",
+            "options": ["Having examined", "Examined", "Being examined", "Having being examined"],
+            "correct_answer": "Having examined",
+            "explanation": "Perfect participle 'Having examined' denotes an action completed prior to the identification."
+        }
+    ],
+    "fronted_adverbials_and_inversion": [
+        {
+            "stem": "Only after the thorough audit ______ the discrepancies resolved.",
+            "options": ["were", "was", "did", "have"],
+            "correct_answer": "were",
+            "explanation": "Fronted 'Only after...' triggers auxiliary inversion with plural 'discrepancies': 'were'."
+        }
+    ],
+    "it_clefts_and_wh_clefts": [
+        {
+            "stem": "It was the senior architect ______ redesigned the core database schema.",
+            "options": ["who", "which", "whom", "what"],
+            "correct_answer": "who",
+            "explanation": "It-cleft focusing on a human subject ('the senior architect') takes relative pronoun 'who'."
+        }
+    ],
+    "discourse_markers_and_cohesion": [
+        {
+            "stem": "The new architecture is scalable; ______, it significantly reduces cloud hosting expenditure.",
+            "options": ["moreover", "otherwise", "nonetheless", "on the contrary"],
+            "correct_answer": "moreover",
+            "explanation": "'Moreover' acts as an additive formal discourse marker introducing corroborating positive value."
+        }
     ]
 }
 
@@ -147,10 +295,27 @@ class QuizEngine:
             mutated["is_isomorphic"] = True
             return mutated
 
-        # Fallback mutation: mutate the subject/objects of the original question
+        # Fallback mutation: mutate the subject/objects of the original question using lexical slot substitution
+        import re
         mutated = dict(question)
-        mutated["id"] = f"{question['id']}_iso"
-        mutated["question"] = f"[Isomorphic Practice] {question['question']}"
+        mutated["id"] = f"{question['id']}_iso_{random.randint(100, 999)}"
+        orig_q = question.get("question", "")
+        replacements = [
+            ("the manager", "the director"), ("the engineer", "the architect"),
+            ("the candidates", "the applicants"), ("the team", "the committee"),
+            ("the software", "the system"), ("yesterday", "last week"),
+            ("the report", "the proposal"), ("the book", "the manuscript"),
+            ("the client", "the stakeholder"), ("the students", "the researchers")
+        ]
+        new_q = orig_q
+        for old_w, new_w in replacements:
+            if old_w in new_q.lower():
+                new_q = re.sub(re.escape(old_w), new_w, new_q, flags=re.IGNORECASE)
+                break
+        if new_q == orig_q:
+            new_q = f"Fresh practice variant: {orig_q}"
+        mutated["question"] = f"[Isomorphic Practice] {new_q}"
+        mutated["sentence"] = new_q
         mutated["is_isomorphic"] = True
         return mutated
 

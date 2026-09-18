@@ -12,7 +12,9 @@ import type {
   GenUIEvent,
   LearnerSummary,
   GrammarMovementProps,
-  SheetErrorProps
+  SheetErrorProps,
+  TutorState,
+  CanvasLectureProps
 } from './types';
 
 // ── Default 18-Chapter Curriculum Roadmap ─────────────────────────────────────
@@ -23,21 +25,21 @@ export const DEFAULT_ROADMAP: ChapterInfo[] = [
   { index: 4, title: 'Closed Questions & Auxiliary Verb Inversion', topic: 'Yes/No Aux Inversions, Tags & Modals', status: 'locked', coursework_done: false, quiz_passed: false },
   { index: 5, title: 'Open Questions (Wh- Clauses & Inquiry)', topic: 'Why, How, Who, Where, When, What', status: 'locked', coursework_done: false, quiz_passed: false },
   { index: 6, title: 'Special & Indirect Questions (Embedded Clauses)', topic: 'Embedded Inquiries & Tag Questions', status: 'locked', coursework_done: false, quiz_passed: false },
-  { index: 7, title: 'Existential Sentences (There is/are & Statives)', topic: 'Existential Inversion & Stative Action', status: 'locked', coursework_done: false, quiz_passed: false },
-  { index: 8, title: 'Sensory Descriptions & Reference Points', topic: 'Look, Sound, Feel, Taste, Smell', status: 'locked', coursework_done: false, quiz_passed: false },
-  { index: 9, title: 'Descriptions of Objects, People & Places', topic: 'Compound Adjectives & Spatial Modification', status: 'locked', coursework_done: false, quiz_passed: false },
-  { index: 10, title: 'Gerunds vs Infinitives', topic: 'Verbs taking -ing vs to-Infinitive', status: 'locked', coursework_done: false, quiz_passed: false },
-  { index: 11, title: 'Coordinating Conjunctions (FANBOYS)', topic: 'Compound Clauses & Semicolon Joins', status: 'locked', coursework_done: false, quiz_passed: false },
-  { index: 12, title: 'Subordinating Conjunctions & Adverbials', topic: 'Complex Sentence Synthesis & Time Clauses', status: 'locked', coursework_done: false, quiz_passed: false },
-  { index: 13, title: 'Active vs Passive Voice & Agentless Forms', topic: 'Focus Shifts & Objective Register', status: 'locked', coursework_done: false, quiz_passed: false },
-  { index: 14, title: 'Conditionals & Hypotheticals', topic: 'Zero, 1st, 2nd, 3rd, and Mixed Conditionals', status: 'locked', coursework_done: false, quiz_passed: false },
-  { index: 15, title: 'Sentence Building & Clause Synthesis', topic: 'Relative, Noun & Participle Clauses', status: 'locked', coursework_done: false, quiz_passed: false },
-  { index: 16, title: 'Sentence Beginnings & Fronting for Emphasis', topic: 'Topicalization & Stylistic Inversion', status: 'locked', coursework_done: false, quiz_passed: false },
-  { index: 17, title: 'Cleft Sentences & Inversions', topic: 'It-clefts, Wh-clefts, Negative Inversion', status: 'locked', coursework_done: false, quiz_passed: false },
-  { index: 18, title: 'Advanced Discourse Fluency & Synthesis', topic: 'Nuance, Rhetoric & Spoken Precision', status: 'locked', coursework_done: false, quiz_passed: false },
+  { index: 7, title: 'Existential Sentences (There is/are & Stative Action)', topic: 'Existential Grammar & Agreement', status: 'locked', coursework_done: false, quiz_passed: false },
+  { index: 8, title: 'Sensory Descriptions & Sensory Reference Points', topic: 'Look, Sound, Feel, Smell, Taste', status: 'locked', coursework_done: false, quiz_passed: false },
+  { index: 9, title: 'Descriptions of Objects, People & Places', topic: 'Adjective Stacking, Order & Relative Clauses', status: 'locked', coursework_done: false, quiz_passed: false },
+  { index: 10, title: 'Gerunds vs Infinitives', topic: 'Verbs + -ing vs to-Infinitive Concord', status: 'locked', coursework_done: false, quiz_passed: false },
+  { index: 11, title: 'Coordinating Conjunctions (FANBOYS)', topic: 'Compound Sentence Construction', status: 'locked', coursework_done: false, quiz_passed: false },
+  { index: 12, title: 'Subordinating Conjunctions & Clauses', topic: 'Complex Sentence Synthesis', status: 'locked', coursework_done: false, quiz_passed: false },
+  { index: 13, title: 'Active vs Passive Voice & Agentless Forms', topic: 'Register Appropriateness & Agent Inversion', status: 'locked', coursework_done: false, quiz_passed: false },
+  { index: 14, title: 'Conditionals & Hypotheticals', topic: 'Zero, 1st, 2nd, 3rd & Mixed Conditionals', status: 'locked', coursework_done: false, quiz_passed: false },
+  { index: 15, title: 'Sentence Building & Clause Synthesis', topic: 'Multi-Clause Coordination', status: 'locked', coursework_done: false, quiz_passed: false },
+  { index: 16, title: 'Sentence Beginnings & Fronting for Emphasis', topic: 'Adverbials, Prepositional & Participial Fronting', status: 'locked', coursework_done: false, quiz_passed: false },
+  { index: 17, title: 'Cleft Sentences & Syntactic Inversion', topic: 'It-clefts, Wh-clefts & Negative Inversion', status: 'locked', coursework_done: false, quiz_passed: false },
+  { index: 18, title: 'Advanced Discourse Fluency & Synthesis', topic: 'Cohesion, Ellipsis & Capstone Defense', status: 'locked', coursework_done: false, quiz_passed: false },
 ];
 
-export const INITIAL_QUIZ_SAMPLE: QuizQuestion[] = [
+export const INITIAL_PRE_VERIFIED_QUESTIONS: QuizQuestion[] = [
   {
     id: 'ch01_q01',
     chapter: 1,
@@ -80,6 +82,9 @@ export interface BuddyStore {
   learnerState: LearnerState;
   learnerSummary: LearnerSummary | null;
   activeChapter: number;
+  activeMode: 'buddy' | 'tutor';
+  tutorState: TutorState | null;
+  lectureHistory: CanvasLectureProps[];
   drawerOpen: boolean;
   activeDrawerTab: DrawerTab;
   isVoiceActive: boolean;
@@ -87,6 +92,7 @@ export interface BuddyStore {
   // ── Actions ──────────────────────────────────────────────
   setLivekitRoom: (room: Room | null) => void;
   setLivekitConnected: (connected: boolean) => void;
+  toggleTutorMode: (topic?: string) => Promise<void>;
   toggleDrawer: (tab?: DrawerTab) => void;
   setDrawerOpen: (open: boolean) => void;
   setActiveDrawerTab: (tab: DrawerTab) => void;
@@ -102,12 +108,15 @@ export interface BuddyStore {
   pushInlineDispute: (data: ContentionProps) => void;
   pushInlineNotes: (notes: Record<string, unknown>) => void;
   pushInlineMovement: (data: GrammarMovementProps) => void;
+  pushInlineCanvasLecture: (lecture: CanvasLectureProps) => void;
   pushInlineSheetError: (data: SheetErrorProps) => void;
   pushGenUI: (evt: GenUIEvent) => void;
 
   submitAnswer: (questionId: string, optionId: string, chapter: number, rawText?: string) => Promise<QuizSubmitResult>;
   triggerLLMQuiz: (chapter: number, mode?: string) => Promise<void>;
   triggerRevision: (chapter: number) => Promise<void>;
+  fetchLectureHistory: () => Promise<void>;
+  deliverLecturePhase: (phase_index: number, topic?: string, session_type?: string, submodule?: string) => Promise<void>;
   fetchSyllabus: () => Promise<void>;
   fetchQuiz: (chapter: number, mode?: string) => Promise<void>;
   fetchLastSheet: () => Promise<void>;
@@ -143,7 +152,7 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
     {
       id: 'initial_quiz',
       type: 'quiz',
-      questions: INITIAL_QUIZ_SAMPLE,
+      questions: INITIAL_PRE_VERIFIED_QUESTIONS,
       source: 'bank',
       chapter: 1,
     }
@@ -175,60 +184,75 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
   },
   learnerSummary: null,
   activeChapter: 1,
+  activeMode: 'buddy',
+  tutorState: null,
+  lectureHistory: [],
   drawerOpen: false,
   activeDrawerTab: 'syllabus',
   isVoiceActive: true,
 
   setLivekitRoom: (room) => set({ livekitRoom: room }),
   setLivekitConnected: (connected) => set({ livekitConnected: connected }),
+  toggleTutorMode: async (topic?: string) => {
+    const room = get().livekitRoom;
+    const agentId = getAgentParticipantIdentity(room);
+    const newMode = get().activeMode === 'tutor' ? 'buddy' : 'tutor';
+    if (room && room.state === 'connected' && agentId) {
+      try {
+        const res = await room.localParticipant.performRpc({
+          destinationIdentity: agentId,
+          method: 'toggleTutorMode',
+          payload: JSON.stringify({ mode: newMode, topic }),
+          responseTimeout: 4000
+        });
+        const st = JSON.parse(res);
+        set({ activeMode: st.active_mode || newMode, tutorState: st });
+        return;
+      } catch (err) {
+        console.warn('[LiveKit RPC] toggleTutorMode notice:', err);
+      }
+    }
+    set({ activeMode: newMode });
+  },
   toggleDrawer: (tab) => set((s) => ({
     drawerOpen: tab ? true : !s.drawerOpen,
     activeDrawerTab: tab || s.activeDrawerTab,
   })),
 
   setDrawerOpen: (open) => set({ drawerOpen: open }),
-  setActiveDrawerTab: (tab) => set({ activeDrawerTab: tab, drawerOpen: true }),
+  setActiveDrawerTab: (tab) => set({ activeDrawerTab: tab }),
   setActiveChapter: (chapter) => set({ activeChapter: chapter }),
   setIsVoiceActive: (active) => set({ isVoiceActive: active }),
 
   syncProgress: (data) => {
-    if (!data) return;
-    const currentSyllabus = get().syllabus;
+    const currentRoadmap = get().syllabus?.roadmap || DEFAULT_ROADMAP;
     const currentLearner = get().learnerState;
 
-    const activeCh = Number(data.active_chapter || data.learner_state?.active_chapter || get().activeChapter || 1);
-
-    // Normalize roadmap if provided
-    let updatedRoadmap = currentSyllabus?.roadmap || DEFAULT_ROADMAP;
-    if (Array.isArray(data.roadmap) && data.roadmap.length > 0) {
-      updatedRoadmap = data.roadmap.map((item: any, idx: number) => {
-        const chIdx = Number(item.chapter_idx || item.index || idx + 1);
-        const defaultMatch = DEFAULT_ROADMAP.find((d) => d.index === chIdx);
-        const isCurrent = chIdx === activeCh;
-        const isCompleted = item.status === 'completed' || chIdx < activeCh;
-        return {
-          index: chIdx,
-          title: item.title || defaultMatch?.title || `Chapter ${chIdx}`,
-          topic: item.topic || defaultMatch?.topic || 'Grammar Mastery & Applied Fluency',
-          status: (item.status as 'locked' | 'active' | 'completed') || (isCurrent ? 'active' : isCompleted ? 'completed' : 'locked'),
-          coursework_done: item.coursework_done ?? (isCompleted || (isCurrent && Boolean(data.coursework_completed))),
-          quiz_passed: item.quiz_passed ?? (isCompleted || (isCurrent && Boolean(data.quiz_passed)))
-        };
-      });
-    }
+    const activeCh = data.active_chapter ?? currentLearner.active_chapter;
+    const updatedRoadmap = (data.roadmap as ChapterInfo[]) || currentRoadmap;
 
     const updatedLearnerState: LearnerState = {
       active_chapter: activeCh,
       coursework_completed: Boolean(data.coursework_completed ?? data.learner_state?.coursework_completed ?? currentLearner.coursework_completed),
       milestone_quiz_passed: Boolean(data.quiz_passed ?? data.learner_state?.milestone_quiz_passed ?? currentLearner.milestone_quiz_passed),
-      chapter_scores: data.learner_state?.chapter_scores || currentLearner.chapter_scores || { [String(activeCh)]: data.cumulative_accuracy || 85 },
+      chapter_scores: data.learner_state?.chapter_scores || currentLearner.chapter_scores,
       total_errors: (data.failed_questions_queue?.length) ?? data.learner_state?.total_errors ?? currentLearner.total_errors,
       total_correct: data.learner_state?.total_correct ?? currentLearner.total_correct,
       failed_questions_queue: data.failed_questions_queue || data.learner_state?.failed_questions_queue || currentLearner.failed_questions_queue || []
     };
 
+    const activeM = (data.active_mode || data.tutor_state?.active_mode || get().activeMode);
+    const tutorSt = (data.tutor_state || get().tutorState);
+    const newLecs = (data.recent_lectures as CanvasLectureProps[]) || [];
+    const mergedLecs = newLecs.length > 0
+      ? [...newLecs, ...get().lectureHistory.filter(h => !newLecs.some(r => r.id === h.id))]
+      : get().lectureHistory;
+
     set({
       activeChapter: activeCh,
+      activeMode: activeM,
+      tutorState: tutorSt,
+      lectureHistory: mergedLecs,
       learnerState: updatedLearnerState,
       syllabus: {
         active_chapter: activeCh,
@@ -337,6 +361,14 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
     ]
   })),
 
+  pushInlineCanvasLecture: (lecture) => set((s) => ({
+    feed: [
+      ...s.feed.filter((i) => i.type !== 'streaming_card'),
+      { id: lecture.id || Math.random().toString(36).slice(2, 9), type: 'canvas_lecture', data: lecture }
+    ],
+    lectureHistory: [lecture, ...s.lectureHistory.filter((l) => l.id !== lecture.id)]
+  })),
+
   pushInlineSheetError: (data) => set((s) => ({
     feed: [
       ...s.feed.filter((i) => i.type !== 'streaming_card'),
@@ -357,6 +389,8 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
       get().pushInlineDispute(evt.props as unknown as ContentionProps);
     } else if (evt.component === 'GrammarMovement') {
       get().pushInlineMovement(evt.props as unknown as GrammarMovementProps);
+    } else if (evt.component === 'CanvasLectureCard') {
+      get().pushInlineCanvasLecture(evt.props as unknown as CanvasLectureProps);
     } else if (evt.component === 'sheet_error') {
       get().pushInlineSheetError(evt.props as unknown as SheetErrorProps);
     }
@@ -617,6 +651,50 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
       recommended_recast: "For formal exams & professional writing: 'Neither of the candidates was chosen.' In relaxed conversation: 'Neither of them was (or were) chosen.'",
       question_id: questionId
     });
+  },
+
+  fetchLectureHistory: async () => {
+    const room = get().livekitRoom;
+    const agentId = getAgentParticipantIdentity(room);
+    if (room && room.state === 'connected' && agentId) {
+      try {
+        console.log(`[LiveKit RPC] Invoking getLectureHistory on ${agentId}...`);
+        const rpcRes = await room.localParticipant.performRpc({
+          destinationIdentity: agentId,
+          method: 'getLectureHistory',
+          payload: JSON.stringify({ limit: 25 }),
+          responseTimeout: 4000
+        });
+        const list = JSON.parse(rpcRes);
+        if (Array.isArray(list) && list.length > 0) {
+          set({ lectureHistory: list });
+        }
+      } catch (rpcErr) {
+        console.warn('[LiveKit RPC] getLectureHistory failed:', rpcErr);
+      }
+    }
+  },
+
+  deliverLecturePhase: async (phase_index: number, topic = 'Nouns', session_type = 'grammar_mastery', submodule?: string) => {
+    const room = get().livekitRoom;
+    const agentId = getAgentParticipantIdentity(room);
+    if (room && room.state === 'connected' && agentId) {
+      try {
+        console.log(`[LiveKit RPC] Invoking deliverCanvasLecture for ${topic} (${session_type}) phase ${phase_index}...`);
+        const rpcRes = await room.localParticipant.performRpc({
+          destinationIdentity: agentId,
+          method: 'deliverCanvasLecture',
+          payload: JSON.stringify({ phase_index, topic, session_type, submodule }),
+          responseTimeout: 8000
+        });
+        const lecture = JSON.parse(rpcRes);
+        if (lecture && lecture.id) {
+          get().pushInlineCanvasLecture(lecture);
+        }
+      } catch (rpcErr) {
+        console.warn('[LiveKit RPC] deliverCanvasLecture failed:', rpcErr);
+      }
+    }
   },
 
   fetchSyllabus: async () => {

@@ -5,7 +5,11 @@ import { useBuddyStore, DEFAULT_ROADMAP } from '../store';
 export const Header: React.FC = () => {
   const {
     sseConnected,
+    livekitConnected,
     activeChapter,
+    activeMode,
+    tutorState,
+    toggleTutorMode,
     triggerLLMQuiz,
     triggerRevision,
     toggleDrawer,
@@ -58,7 +62,7 @@ export const Header: React.FC = () => {
             alignItems: 'center',
             gap: '6px',
             fontSize: '12px',
-            color: sseConnected ? 'var(--text-secondary)' : 'var(--warning)',
+            color: (sseConnected || livekitConnected) ? 'var(--text-secondary)' : 'var(--warning)',
             background: 'var(--surface-1)',
             padding: '3px 10px',
             borderRadius: 'var(--radius-full)',
@@ -70,16 +74,39 @@ export const Header: React.FC = () => {
               width: '7px',
               height: '7px',
               borderRadius: '50%',
-              background: sseConnected ? 'var(--success)' : 'var(--warning)',
-              boxShadow: sseConnected ? '0 0 8px rgba(16, 185, 129, 0.6)' : 'none'
+              background: (sseConnected || livekitConnected) ? 'var(--success)' : 'var(--warning)',
+              boxShadow: (sseConnected || livekitConnected) ? '0 0 8px rgba(16, 185, 129, 0.6)' : 'none'
             }}
-            className={sseConnected ? 'pulse-beacon' : ''}
+            className={(sseConnected || livekitConnected) ? 'pulse-beacon' : ''}
           />
-          <span>{sseConnected ? 'Live Audio Connected' : 'Engine Ready (Demo Mode)'}</span>
+          <span>{(sseConnected || livekitConnected) ? 'Live WebRTC Voice' : 'Engine Ready'}</span>
         </div>
+
+        {/* Mode Selector Pill: Buddy Mode vs Tutor Mode */}
+        <button
+          onClick={() => toggleTutorMode()}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            fontSize: '12px',
+            fontWeight: 500,
+            cursor: 'pointer',
+            padding: '4px 12px',
+            borderRadius: 'var(--radius-full)',
+            background: activeMode === 'tutor' ? 'rgba(99, 102, 241, 0.15)' : 'var(--surface-1)',
+            border: activeMode === 'tutor' ? '1px solid var(--accent)' : '1px solid var(--border-subtle)',
+            color: activeMode === 'tutor' ? 'var(--accent)' : 'var(--text-secondary)',
+            transition: 'all 0.15s ease'
+          }}
+          title={activeMode === 'tutor' ? 'Click to switch to casual Buddy Mode' : 'Click to activate grammar Tutor Mode'}
+        >
+          <Sparkles size={12} color={activeMode === 'tutor' ? 'var(--accent)' : 'var(--text-tertiary)'} />
+          <span>{activeMode === 'tutor' ? '🎓 Tutor Mode (Active)' : '💬 Buddy Mode (Chat)'}</span>
+        </button>
       </div>
 
-      {/* ── Center Active Chapter Pill ── */}
+      {/* ── Center Active Chapter / Tutor Topic Pill ── */}
       <div
         style={{
           display: 'flex',
@@ -89,7 +116,7 @@ export const Header: React.FC = () => {
           border: '1px solid var(--border-subtle)',
           padding: '4px 14px',
           borderRadius: 'var(--radius-full)',
-          maxWidth: '380px'
+          maxWidth: '420px'
         }}
       >
         <BookOpen size={13} color="var(--accent)" />
@@ -102,10 +129,20 @@ export const Header: React.FC = () => {
             textOverflow: 'ellipsis'
           }}
         >
-          <strong style={{ color: 'var(--text-primary)', fontWeight: 600 }}>
-            Ch. {activeChapter}:
-          </strong>{' '}
-          {currentChapterInfo.title}
+          {activeMode === 'tutor' ? (
+            <>
+              <strong style={{ color: 'var(--accent)', fontWeight: 600 }}>Tutor Track:</strong>{' '}
+              {tutorState?.current_topic || 'Nouns & Sentence Foundations'}
+              {tutorState?.pending_homework && (
+                <span style={{ marginLeft: '6px', color: 'var(--warning)', fontWeight: 500 }}>· 📝 HW Pending</span>
+              )}
+            </>
+          ) : (
+            <>
+              <strong style={{ color: 'var(--text-primary)', fontWeight: 600 }}>Ch. {activeChapter}:</strong>{' '}
+              {currentChapterInfo.title}
+            </>
+          )}
         </span>
       </div>
 

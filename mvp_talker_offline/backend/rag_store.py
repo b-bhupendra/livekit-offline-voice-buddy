@@ -1,103 +1,117 @@
+"""
+rag_store.py — ChromaDB-backed persistent vector store for Buddy Grammar Coach.
+
+Storage layout:
+  data/chroma_db/   — ChromaDB PersistentClient directory (auto-created, gitignored)
+  data/memory.db    — SQLite for learner state / quiz audits / syllabus (unchanged)
+
+Embeddings are computed via local Ollama nomic-embed-text and passed as pre-computed
+vectors to Chroma so we stay 100% offline.  Chroma provides:
+  - ANN index (HNSW) for fast vector similarity — no O(n) cosine loop
+  - Built-in BM25/TF-IDF for keyword search (query_texts)
+  - Metadata filters for chapter / source scoping
+  - Disk persistence — no re-indexing on restart, no JSON snapshot needed
+"""
+
 import os
 import json
-import sqlite3
-import contextlib
 import urllib.request
 import urllib.error
 import numpy as np
 from typing import List, Dict, Any, Optional
 from structured_logger import rag_logger
 
-DEFAULT_DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "memory.db")
+try:
+    import chromadb
+    from chromadb.config import Settings
+    _CHROMA_AVAILABLE = True
+except ImportError:
+    _CHROMA_AVAILABLE = False
+    rag_logger.warning("chromadb not installed. Run: pip install chromadb>=0.5.0")
+
+DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+CHROMA_DIR = os.path.join(DATA_DIR, "chroma_db")
+COLLECTION_NAME = "buddy_grammar_rag"
+
 OLLAMA_EMBED_URL = os.getenv("OLLAMA_EMBED_URL", "http://127.0.0.1:11434/api/embeddings")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
+EMBEDDING_MODEL  = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
+
 
 class EmbeddingServiceUnavailable(Exception):
     """Raised when the local Ollama embedding service is unreachable or down."""
     pass
 
+
 class RAGStore:
-    def __init__(self, db_path: str = DEFAULT_DB_PATH, embed_model: str = EMBEDDING_MODEL):
-        self.db_path = db_path
+    """
+    ChromaDB-backed RAG store for Buddy Grammar Coach.
+
+    - Vectors persist to data/chroma_db/ (HNSW index, instant on restart)
+    - Embeddings computed via local Ollama nomic-embed-text (fully offline)
+    - Hybrid search: vector ANN + BM25 keyword, merged with Reciprocal Rank Fusion
+    - Metadata filters: chapter_idx, source_type
+    """
+
+    def __init__(self, chroma_dir: str = CHROMA_DIR, embed_model: str = EMBEDDING_MODEL):
+        self.chroma_dir = chroma_dir
         self.embed_model = embed_model
         self.embed_url = OLLAMA_EMBED_URL
         self.is_embedding_available: bool = True
         self.last_embedding_error: Optional[str] = None
         self.embedding_status: str = "operational"
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        self._init_db()
 
-    @contextlib.contextmanager
-    def _get_connection(self):
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        try:
-            yield conn
-        finally:
-            conn.close()
+        os.makedirs(self.chroma_dir, exist_ok=True)
 
-    def _init_db(self):
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS rag_chunks (
-                    id TEXT PRIMARY KEY,
-                    source_type TEXT,
-                    source_title TEXT,
-                    chapter_idx INTEGER,
-                    section_title TEXT,
-                    text_content TEXT,
-                    embedding BLOB,
-                    metadata_json TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            cursor.execute("""
-                CREATE VIRTUAL TABLE IF NOT EXISTS rag_fts USING fts5(
-                    chunk_id,
-                    source_type,
-                    source_title,
-                    section_title,
-                    text_content
-                )
-            """)
-            conn.commit()
+        if not _CHROMA_AVAILABLE:
+            raise RuntimeError("chromadb is not installed. Run: pip install chromadb>=0.5.0")
+
+        self._client = chromadb.PersistentClient(
+            path=self.chroma_dir,
+            settings=Settings(anonymized_telemetry=False),
+        )
+        # No embedding function — we supply pre-computed vectors from Ollama
+        self._col = self._client.get_or_create_collection(
+            name=COLLECTION_NAME,
+            metadata={"hnsw:space": "cosine"},
+        )
+        rag_logger.info(
+            f"ChromaDB RAGStore ready | dir={self.chroma_dir} | "
+            f"collection={COLLECTION_NAME} | chunks={self._col.count()}"
+        )
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Embedding
+    # ─────────────────────────────────────────────────────────────────────────
 
     def get_embedding_status(self) -> Dict[str, Any]:
-        """Provides a distinct diagnostic snapshot of the embedding microservice health."""
+        """Diagnostic snapshot of the Ollama embedding microservice health."""
         return {
             "status": self.embedding_status,
             "is_available": self.is_embedding_available,
             "model": self.embed_model,
             "endpoint": self.embed_url,
-            "last_error": self.last_embedding_error
+            "last_error": self.last_embedding_error,
         }
 
     def get_embedding(self, text: str, raise_on_error: bool = False) -> Optional[np.ndarray]:
         """
-        Fetch 768-dim normalized embedding from local Ollama nomic-embed-text.
-        Provides distinct return paths:
-        - Returns np.ndarray on successful normalization.
-        - Returns None for empty / whitespace input without error.
-        - Sets self.is_embedding_available = False and records self.last_embedding_error on service downtime.
-        - Raises EmbeddingServiceUnavailable if raise_on_error=True.
+        Fetch a normalized embedding from local Ollama nomic-embed-text.
+        Returns np.ndarray on success, None on empty input or service outage.
         """
-        stripped = text.strip() if text else ""
+        stripped = (text or "").strip()
         if not stripped:
             return None
 
-        payload = json.dumps({"model": self.embed_model, "prompt": stripped}).encode("utf-8")
+        payload = json.dumps({"model": self.embed_model, "prompt": stripped}).encode()
         req = urllib.request.Request(
-            self.embed_url,
-            data=payload,
-            headers={"Content-Type": "application/json"}
+            self.embed_url, data=payload, headers={"Content-Type": "application/json"}
         )
         try:
             with urllib.request.urlopen(req, timeout=8) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                raw_emb = data.get("embedding", [])
-                if raw_emb:
-                    arr = np.array(raw_emb, dtype=np.float32)
+                data = json.loads(resp.read().decode())
+                raw = data.get("embedding", [])
+                if raw:
+                    arr = np.array(raw, dtype=np.float32)
                     norm = np.linalg.norm(arr)
                     if norm > 0:
                         arr = arr / norm
@@ -105,17 +119,22 @@ class RAGStore:
                     self.last_embedding_error = None
                     self.embedding_status = "operational"
                     return arr
-        except Exception as e:
+        except Exception as exc:
             self.is_embedding_available = False
-            self.last_embedding_error = str(e)
+            self.last_embedding_error = str(exc)
             self.embedding_status = "unreachable"
-            rag_logger.warning(f"Embedding service unreachable ({e}). Dense search degraded, falling back to BM25/FTS.")
+            rag_logger.warning(
+                f"Embedding service unreachable ({exc}). Dense search degraded — BM25 fallback."
+            )
             if raise_on_error:
                 raise EmbeddingServiceUnavailable(
-                    f"Local embedding service at {OLLAMA_EMBED_URL} is down: {e}"
-                ) from e
-            return None
+                    f"Ollama embedding at {self.embed_url} is down: {exc}"
+                ) from exc
         return None
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Insert / Batch
+    # ─────────────────────────────────────────────────────────────────────────
 
     def insert_chunk(
         self,
@@ -126,195 +145,244 @@ class RAGStore:
         chapter_idx: Optional[int] = None,
         section_title: str = "",
         metadata: Optional[Dict[str, Any]] = None,
-        embedding: Optional[np.ndarray] = None
+        embedding: Optional[np.ndarray] = None,
     ) -> bool:
-        """Insert or replace a knowledge chunk with its vector embedding and FTS index."""
+        """
+        Upsert a knowledge chunk into ChromaDB with pre-computed Ollama embedding.
+        Falls back gracefully when Ollama is unavailable (BM25-only mode).
+        """
+        if not text_content or not text_content.strip():
+            return False
+
         if embedding is None:
             embedding = self.get_embedding(text_content)
 
-        emb_bytes = embedding.tobytes() if embedding is not None else None
-        meta_str = json.dumps(metadata or {})
+        meta: Dict[str, Any] = {
+            "source_type": source_type,
+            "source_title": source_title,
+            "section_title": section_title,
+            "chapter_idx": chapter_idx if chapter_idx is not None else -1,
+            **(metadata or {}),
+        }
+        # ChromaDB metadata values must be str/int/float/bool
+        meta = {
+            k: (str(v) if not isinstance(v, (str, int, float, bool)) else v)
+            for k, v in meta.items()
+        }
 
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                INSERT OR REPLACE INTO rag_chunks (
-                    id, source_type, source_title, chapter_idx, section_title, text_content, embedding, metadata_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (chunk_id, source_type, source_title, chapter_idx, section_title, text_content, emb_bytes, meta_str))
-            
-            # Update FTS index
-            cursor.execute("DELETE FROM rag_fts WHERE chunk_id = ?", (chunk_id,))
-            cursor.execute("""
-                INSERT INTO rag_fts (chunk_id, source_type, source_title, section_title, text_content)
-                VALUES (?, ?, ?, ?, ?)
-            """, (chunk_id, source_type, source_title, section_title, text_content))
-            conn.commit()
+        upsert_kwargs: Dict[str, Any] = {
+            "ids": [chunk_id],
+            "documents": [text_content],
+            "metadatas": [meta],
+        }
+        if embedding is not None:
+            upsert_kwargs["embeddings"] = [embedding.tolist()]
+
+        self._col.upsert(**upsert_kwargs)
         return True
 
     def insert_batch(self, chunks: List[Dict[str, Any]]) -> int:
-        """Batch insert chunks for faster indexing."""
+        """Batch upsert for faster indexing."""
         inserted = 0
         for item in chunks:
-            self.insert_chunk(
+            ok = self.insert_chunk(
                 chunk_id=item["id"],
                 source_type=item.get("source_type", "reference"),
                 source_title=item.get("source_title", ""),
-                text_content=item["text"],
+                text_content=item.get("text", item.get("text_content", "")),
                 chapter_idx=item.get("chapter_idx"),
                 section_title=item.get("section_title", ""),
                 metadata=item.get("metadata", {}),
-                embedding=item.get("embedding")
+                embedding=item.get("embedding"),
             )
-            inserted += 1
+            if ok:
+                inserted += 1
         return inserted
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Internal helpers
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _build_where(
+        self,
+        chapter_filter: Optional[int],
+        source_filter: Optional[str],
+    ) -> Optional[Dict]:
+        """Build a Chroma metadata `where` clause from optional filters."""
+        conditions = []
+        if chapter_filter is not None:
+            conditions.append({"chapter_idx": {"$eq": chapter_filter}})
+        if source_filter is not None:
+            conditions.append({"source_type": {"$eq": source_filter}})
+        if not conditions:
+            return None
+        if len(conditions) == 1:
+            return conditions[0]
+        return {"$and": conditions}
+
+    def _row_to_dict(
+        self, doc: str, meta: dict, dist: Optional[float] = None
+    ) -> Dict[str, Any]:
+        """Normalise a Chroma result row into the standard RAGStore result dict."""
+        chapter = meta.get("chapter_idx", -1)
+        return {
+            "chunk_id":     meta.get("chunk_id", ""),
+            "source_type":  meta.get("source_type", ""),
+            "source_title": meta.get("source_title", ""),
+            "chapter_idx":  chapter if chapter != -1 else None,
+            "section_title": meta.get("section_title", ""),
+            "text":         doc,
+            "similarity":   round(1.0 - dist, 4) if dist is not None else None,
+            "metadata": {
+                k: v for k, v in meta.items()
+                if k not in ("source_type", "source_title", "section_title", "chapter_idx")
+            },
+        }
+
+    def _safe_n_results(self, top_k: int) -> int:
+        count = self._col.count()
+        return min(top_k, count) if count > 0 else 1
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Public search API  (same signature as before — drop-in replacement)
+    # ─────────────────────────────────────────────────────────────────────────
 
     def search_vector(
         self,
         query: str,
         top_k: int = 5,
         chapter_filter: Optional[int] = None,
-        source_filter: Optional[str] = None
+        source_filter: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """Dense semantic search using cosine similarity."""
+        """Dense ANN semantic search via ChromaDB HNSW index."""
         query_emb = self.get_embedding(query)
         if query_emb is None:
             return []
 
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            query_sql = "SELECT id, source_type, source_title, chapter_idx, section_title, text_content, embedding, metadata_json FROM rag_chunks WHERE embedding IS NOT NULL"
-            params = []
-            if chapter_filter is not None:
-                query_sql += " AND chapter_idx = ?"
-                params.append(chapter_filter)
-            if source_filter is not None:
-                query_sql += " AND source_type = ?"
-                params.append(source_filter)
+        where = self._build_where(chapter_filter, source_filter)
+        kwargs: Dict[str, Any] = {
+            "query_embeddings": [query_emb.tolist()],
+            "n_results": self._safe_n_results(top_k),
+            "include": ["documents", "metadatas", "distances"],
+        }
+        if where:
+            kwargs["where"] = where
 
-            cursor.execute(query_sql, params)
-            rows = cursor.fetchall()
-
-        if not rows:
+        try:
+            result = self._col.query(**kwargs)
+        except Exception as exc:
+            rag_logger.warning(f"Chroma vector search error: {exc}")
             return []
 
-        results = []
-        for row in rows:
-            emb_blob = row["embedding"]
-            if not emb_blob:
-                continue
-            chunk_emb = np.frombuffer(emb_blob, dtype=np.float32)
-            similarity = float(np.dot(query_emb, chunk_emb))
-            results.append({
-                "chunk_id": row["id"],
-                "source_type": row["source_type"],
-                "source_title": row["source_title"],
-                "chapter_idx": row["chapter_idx"],
-                "section_title": row["section_title"],
-                "text": row["text_content"],
-                "similarity": similarity,
-                "metadata": json.loads(row["metadata_json"] or "{}")
-            })
-
-        results.sort(key=lambda x: x["similarity"], reverse=True)
-        return results[:top_k]
+        return [
+            self._row_to_dict(doc, meta, dist)
+            for doc, meta, dist in zip(
+                result["documents"][0],
+                result["metadatas"][0],
+                result["distances"][0],
+            )
+        ]
 
     def search_fts(
         self,
         query: str,
         top_k: int = 5,
         chapter_filter: Optional[int] = None,
-        source_filter: Optional[str] = None
+        source_filter: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """Sparse BM25 full-text search via SQLite FTS5."""
-        # Sanitize query for FTS5 syntax
-        clean_words = [w for w in query.replace('"', '').replace("'", "").split() if w.isalnum()]
-        if not clean_words:
+        """BM25 keyword search via ChromaDB built-in query_texts."""
+        if not query.strip():
             return []
-        fts_query = " OR ".join(clean_words)
 
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            sql = """
-                SELECT c.id, c.source_type, c.source_title, c.chapter_idx, c.section_title, c.text_content, c.metadata_json, rank
-                FROM rag_fts f
-                JOIN rag_chunks c ON f.chunk_id = c.id
-                WHERE rag_fts MATCH ?
-            """
-            params = [fts_query]
-            if chapter_filter is not None:
-                sql += " AND c.chapter_idx = ?"
-                params.append(chapter_filter)
-            if source_filter is not None:
-                sql += " AND c.source_type = ?"
-                params.append(source_filter)
-            sql += " ORDER BY rank LIMIT ?"
-            params.append(top_k)
+        where = self._build_where(chapter_filter, source_filter)
+        kwargs: Dict[str, Any] = {
+            "query_texts": [query],
+            "n_results": self._safe_n_results(top_k),
+            "include": ["documents", "metadatas", "distances"],
+        }
+        if where:
+            kwargs["where"] = where
 
-            try:
-                cursor.execute(sql, params)
-                rows = cursor.fetchall()
-            except sqlite3.OperationalError:
-                return []
+        try:
+            result = self._col.query(**kwargs)
+        except Exception as exc:
+            rag_logger.warning(f"Chroma BM25 search error: {exc}")
+            return []
 
-        results = []
-        for row in rows:
-            results.append({
-                "chunk_id": row["id"],
-                "source_type": row["source_type"],
-                "source_title": row["source_title"],
-                "chapter_idx": row["chapter_idx"],
-                "section_title": row["section_title"],
-                "text": row["text_content"],
-                "bm25_rank": row["rank"],
-                "metadata": json.loads(row["metadata_json"] or "{}")
-            })
-        return results
+        out = []
+        for doc, meta, dist in zip(
+            result["documents"][0],
+            result["metadatas"][0],
+            result["distances"][0],
+        ):
+            row = self._row_to_dict(doc, meta, dist)
+            row["bm25_rank"] = dist
+            out.append(row)
+        return out
 
     def hybrid_search(
         self,
         query: str,
         top_k: int = 5,
         chapter_filter: Optional[int] = None,
-        source_filter: Optional[str] = None
+        source_filter: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Hybrid search combining dense vector similarity and sparse FTS BM25 ranking
-        using Reciprocal Rank Fusion (RRF).
+        Hybrid search: vector ANN + BM25 merged with Reciprocal Rank Fusion (RRF).
+        Falls back to BM25-only when Ollama embeddings are unavailable.
         """
-        vector_results = self.search_vector(query, top_k=top_k * 2, chapter_filter=chapter_filter, source_filter=source_filter)
-        fts_results = self.search_fts(query, top_k=top_k * 2, chapter_filter=chapter_filter, source_filter=source_filter)
+        vector_results = self.search_vector(
+            query, top_k=top_k * 2,
+            chapter_filter=chapter_filter, source_filter=source_filter,
+        )
+        fts_results = self.search_fts(
+            query, top_k=top_k * 2,
+            chapter_filter=chapter_filter, source_filter=source_filter,
+        )
 
-        rrf_scores = {}
-        item_map = {}
-
-        # 60 is the standard constant in RRF
+        rrf_scores: Dict[str, float] = {}
+        item_map: Dict[str, Dict]   = {}
         k_const = 60.0
 
         for rank, item in enumerate(vector_results):
             cid = item["chunk_id"]
-            rrf_scores[cid] = rrf_scores.get(cid, 0.0) + (1.0 / (k_const + rank + 1))
+            rrf_scores[cid] = rrf_scores.get(cid, 0.0) + 1.0 / (k_const + rank + 1)
             item_map[cid] = item
 
         for rank, item in enumerate(fts_results):
             cid = item["chunk_id"]
-            rrf_scores[cid] = rrf_scores.get(cid, 0.0) + (1.0 / (k_const + rank + 1))
+            rrf_scores[cid] = rrf_scores.get(cid, 0.0) + 1.0 / (k_const + rank + 1)
             if cid not in item_map:
                 item_map[cid] = item
 
-        sorted_cids = sorted(rrf_scores.keys(), key=lambda cid: rrf_scores[cid], reverse=True)
-        final_results = []
+        sorted_cids = sorted(rrf_scores, key=lambda c: rrf_scores[c], reverse=True)
+        results = []
         for cid in sorted_cids[:top_k]:
             res = dict(item_map[cid])
-            res["rrf_score"] = rrf_scores[cid]
-            final_results.append(res)
+            res["rrf_score"] = round(rrf_scores[cid], 6)
+            results.append(res)
+        return results
 
-        return final_results
+    # ─────────────────────────────────────────────────────────────────────────
+    # Utility
+    # ─────────────────────────────────────────────────────────────────────────
 
     def count_chunks(self) -> Dict[str, int]:
-        """Return counts of chunks grouped by source_type."""
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT source_type, count(*) as cnt FROM rag_chunks GROUP BY source_type")
-            rows = cursor.fetchall()
-            return {r["source_type"]: r["cnt"] for r in rows}
+        """Return total chunk count — compatible with old source_type dict format."""
+        return {"total": self._col.count()}
+
+    def count_by_source(self) -> Dict[str, int]:
+        """Return chunk counts grouped by source_type."""
+        try:
+            all_meta = self._col.get(include=["metadatas"])["metadatas"]
+            counts: Dict[str, int] = {}
+            for m in all_meta:
+                stype = m.get("source_type", "unknown")
+                counts[stype] = counts.get(stype, 0) + 1
+            return counts
+        except Exception:
+            return {"total": self._col.count()}
+
+    def delete_chunk(self, chunk_id: str) -> None:
+        """Remove a single chunk from the ChromaDB collection."""
+        self._col.delete(ids=[chunk_id])

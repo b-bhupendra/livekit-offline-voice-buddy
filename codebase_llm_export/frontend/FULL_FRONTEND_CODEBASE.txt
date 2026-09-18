@@ -329,7 +329,7 @@ button {
 ================================================================================
 FILE: mvp_talker_offline/VisualsFrontend/src/types.ts
 LANGUAGE: typescript
-LINES: 192
+LINES: 239
 PURPOSE: Central TypeScript interfaces (FeedItem, QuizQuestion, ContentionProps, SyllabusData)
 ================================================================================
 
@@ -409,11 +409,30 @@ export interface DriftAuditData {
   status: string;
 }
 
+export interface TutorState {
+  active_mode: 'buddy' | 'tutor';
+  current_topic: string;
+  pending_homework?: string | null;
+  homework_status: 'none' | 'pending' | 'completed';
+  mastered_patterns: string[];
+  current_chapter_idx: number;
+  current_chapter_title?: string;
+  stage: string;
+}
+
 export interface LearnerSummary {
   user_id: string;
   active_chapter: number;
   active_chapter_title: string;
   stage: string;
+  active_mode?: 'buddy' | 'tutor';
+  current_topic?: string;
+  pending_homework?: string | null;
+  homework_status?: 'none' | 'pending' | 'completed';
+  mastered_patterns?: string[];
+  tutor_state?: TutorState;
+  learner_preferences?: Record<string, unknown>;
+  recent_lectures?: CanvasLectureProps[];
   coursework_completed: boolean;
   quiz_passed: boolean;
   cumulative_accuracy: number;
@@ -429,7 +448,11 @@ export interface LearnerSummary {
     coursework_done?: boolean;
     quiz_passed?: boolean;
   }>;
-  learner_state?: LearnerState;
+  learner_state?: LearnerState & {
+    active_mode?: 'buddy' | 'tutor';
+    current_topic?: string;
+    pending_homework?: string | null;
+  };
   drift_audit?: DriftAuditData;
 }
 
@@ -437,6 +460,28 @@ export interface SyllabusData {
   active_chapter: number;
   learner_state: LearnerState;
   roadmap: ChapterInfo[];
+}
+
+export interface CanvasLectureProps {
+  id: string;
+  req_id?: string;
+  topic: string;
+  submodule: string;
+  phase_index: number;
+  session_type?: 'grammar_mastery' | 'sentence_repetition' | 'workplace_office' | 'conversational_banter' | string;
+  spoken_summary: string;
+  paragraphs: string[];
+  key_takeaways?: string[];
+  canvas_type: 'particle_classifier' | 'concord_balance' | 'noun_hierarchy' | 'compound_builder' | 'repetition_flow' | 'workplace_matrix' | string;
+  canvas_config?: Record<string, unknown>;
+  repetition_items?: Array<{
+    prompt?: string;
+    target: string;
+    drill_type?: string;
+    audio_cue?: string;
+    notes?: string;
+  }>;
+  timestamp: string;
 }
 
 // SSE GenUI events
@@ -447,6 +492,7 @@ export type GenUIComponent =
   | 'BionicSketchNote'
   | 'SyllabusProgressTree'
   | 'GrammarMovement'
+  | 'CanvasLectureCard'
   | 'sheet_error';
 
 export interface SheetErrorProps {
@@ -521,9 +567,10 @@ export type FeedItem =
   | { id: string; type: 'dispute'; data: ContentionProps; req_id?: string }
   | { id: string; type: 'notes'; notes: Record<string, unknown>; req_id?: string }
   | { id: string; type: 'movement'; data: GrammarMovementProps; req_id?: string }
+  | { id: string; type: 'canvas_lecture'; data: CanvasLectureProps }
   | { id: string; type: 'sheet_error'; data: SheetErrorProps };
 
-export type DrawerTab = 'syllabus' | 'analytics' | 'remediation';
+export type DrawerTab = 'syllabus' | 'analytics' | 'remediation' | 'lectures';
 
 
 
@@ -582,7 +629,7 @@ export function getActiveTransportInfo(): string {
 ================================================================================
 FILE: mvp_talker_offline/VisualsFrontend/src/store.ts
 LANGUAGE: typescript
-LINES: 795
+LINES: 873
 PURPOSE: Zustand state store managing sequential feed array, LiveKit room instance, drawer state, and LiveKit RPC actions
 ================================================================================
 
@@ -600,7 +647,9 @@ import type {
   GenUIEvent,
   LearnerSummary,
   GrammarMovementProps,
-  SheetErrorProps
+  SheetErrorProps,
+  TutorState,
+  CanvasLectureProps
 } from './types';
 
 // ── Default 18-Chapter Curriculum Roadmap ─────────────────────────────────────
@@ -611,21 +660,21 @@ export const DEFAULT_ROADMAP: ChapterInfo[] = [
   { index: 4, title: 'Closed Questions & Auxiliary Verb Inversion', topic: 'Yes/No Aux Inversions, Tags & Modals', status: 'locked', coursework_done: false, quiz_passed: false },
   { index: 5, title: 'Open Questions (Wh- Clauses & Inquiry)', topic: 'Why, How, Who, Where, When, What', status: 'locked', coursework_done: false, quiz_passed: false },
   { index: 6, title: 'Special & Indirect Questions (Embedded Clauses)', topic: 'Embedded Inquiries & Tag Questions', status: 'locked', coursework_done: false, quiz_passed: false },
-  { index: 7, title: 'Existential Sentences (There is/are & Statives)', topic: 'Existential Inversion & Stative Action', status: 'locked', coursework_done: false, quiz_passed: false },
-  { index: 8, title: 'Sensory Descriptions & Reference Points', topic: 'Look, Sound, Feel, Taste, Smell', status: 'locked', coursework_done: false, quiz_passed: false },
-  { index: 9, title: 'Descriptions of Objects, People & Places', topic: 'Compound Adjectives & Spatial Modification', status: 'locked', coursework_done: false, quiz_passed: false },
-  { index: 10, title: 'Gerunds vs Infinitives', topic: 'Verbs taking -ing vs to-Infinitive', status: 'locked', coursework_done: false, quiz_passed: false },
-  { index: 11, title: 'Coordinating Conjunctions (FANBOYS)', topic: 'Compound Clauses & Semicolon Joins', status: 'locked', coursework_done: false, quiz_passed: false },
-  { index: 12, title: 'Subordinating Conjunctions & Adverbials', topic: 'Complex Sentence Synthesis & Time Clauses', status: 'locked', coursework_done: false, quiz_passed: false },
-  { index: 13, title: 'Active vs Passive Voice & Agentless Forms', topic: 'Focus Shifts & Objective Register', status: 'locked', coursework_done: false, quiz_passed: false },
-  { index: 14, title: 'Conditionals & Hypotheticals', topic: 'Zero, 1st, 2nd, 3rd, and Mixed Conditionals', status: 'locked', coursework_done: false, quiz_passed: false },
-  { index: 15, title: 'Sentence Building & Clause Synthesis', topic: 'Relative, Noun & Participle Clauses', status: 'locked', coursework_done: false, quiz_passed: false },
-  { index: 16, title: 'Sentence Beginnings & Fronting for Emphasis', topic: 'Topicalization & Stylistic Inversion', status: 'locked', coursework_done: false, quiz_passed: false },
-  { index: 17, title: 'Cleft Sentences & Inversions', topic: 'It-clefts, Wh-clefts, Negative Inversion', status: 'locked', coursework_done: false, quiz_passed: false },
-  { index: 18, title: 'Advanced Discourse Fluency & Synthesis', topic: 'Nuance, Rhetoric & Spoken Precision', status: 'locked', coursework_done: false, quiz_passed: false },
+  { index: 7, title: 'Existential Sentences (There is/are & Stative Action)', topic: 'Existential Grammar & Agreement', status: 'locked', coursework_done: false, quiz_passed: false },
+  { index: 8, title: 'Sensory Descriptions & Sensory Reference Points', topic: 'Look, Sound, Feel, Smell, Taste', status: 'locked', coursework_done: false, quiz_passed: false },
+  { index: 9, title: 'Descriptions of Objects, People & Places', topic: 'Adjective Stacking, Order & Relative Clauses', status: 'locked', coursework_done: false, quiz_passed: false },
+  { index: 10, title: 'Gerunds vs Infinitives', topic: 'Verbs + -ing vs to-Infinitive Concord', status: 'locked', coursework_done: false, quiz_passed: false },
+  { index: 11, title: 'Coordinating Conjunctions (FANBOYS)', topic: 'Compound Sentence Construction', status: 'locked', coursework_done: false, quiz_passed: false },
+  { index: 12, title: 'Subordinating Conjunctions & Clauses', topic: 'Complex Sentence Synthesis', status: 'locked', coursework_done: false, quiz_passed: false },
+  { index: 13, title: 'Active vs Passive Voice & Agentless Forms', topic: 'Register Appropriateness & Agent Inversion', status: 'locked', coursework_done: false, quiz_passed: false },
+  { index: 14, title: 'Conditionals & Hypotheticals', topic: 'Zero, 1st, 2nd, 3rd & Mixed Conditionals', status: 'locked', coursework_done: false, quiz_passed: false },
+  { index: 15, title: 'Sentence Building & Clause Synthesis', topic: 'Multi-Clause Coordination', status: 'locked', coursework_done: false, quiz_passed: false },
+  { index: 16, title: 'Sentence Beginnings & Fronting for Emphasis', topic: 'Adverbials, Prepositional & Participial Fronting', status: 'locked', coursework_done: false, quiz_passed: false },
+  { index: 17, title: 'Cleft Sentences & Syntactic Inversion', topic: 'It-clefts, Wh-clefts & Negative Inversion', status: 'locked', coursework_done: false, quiz_passed: false },
+  { index: 18, title: 'Advanced Discourse Fluency & Synthesis', topic: 'Cohesion, Ellipsis & Capstone Defense', status: 'locked', coursework_done: false, quiz_passed: false },
 ];
 
-export const INITIAL_QUIZ_SAMPLE: QuizQuestion[] = [
+export const INITIAL_PRE_VERIFIED_QUESTIONS: QuizQuestion[] = [
   {
     id: 'ch01_q01',
     chapter: 1,
@@ -668,6 +717,9 @@ export interface BuddyStore {
   learnerState: LearnerState;
   learnerSummary: LearnerSummary | null;
   activeChapter: number;
+  activeMode: 'buddy' | 'tutor';
+  tutorState: TutorState | null;
+  lectureHistory: CanvasLectureProps[];
   drawerOpen: boolean;
   activeDrawerTab: DrawerTab;
   isVoiceActive: boolean;
@@ -675,6 +727,7 @@ export interface BuddyStore {
   // ── Actions ──────────────────────────────────────────────
   setLivekitRoom: (room: Room | null) => void;
   setLivekitConnected: (connected: boolean) => void;
+  toggleTutorMode: (topic?: string) => Promise<void>;
   toggleDrawer: (tab?: DrawerTab) => void;
   setDrawerOpen: (open: boolean) => void;
   setActiveDrawerTab: (tab: DrawerTab) => void;
@@ -690,12 +743,15 @@ export interface BuddyStore {
   pushInlineDispute: (data: ContentionProps) => void;
   pushInlineNotes: (notes: Record<string, unknown>) => void;
   pushInlineMovement: (data: GrammarMovementProps) => void;
+  pushInlineCanvasLecture: (lecture: CanvasLectureProps) => void;
   pushInlineSheetError: (data: SheetErrorProps) => void;
   pushGenUI: (evt: GenUIEvent) => void;
 
   submitAnswer: (questionId: string, optionId: string, chapter: number, rawText?: string) => Promise<QuizSubmitResult>;
   triggerLLMQuiz: (chapter: number, mode?: string) => Promise<void>;
   triggerRevision: (chapter: number) => Promise<void>;
+  fetchLectureHistory: () => Promise<void>;
+  deliverLecturePhase: (phase_index: number, topic?: string, session_type?: string, submodule?: string) => Promise<void>;
   fetchSyllabus: () => Promise<void>;
   fetchQuiz: (chapter: number, mode?: string) => Promise<void>;
   fetchLastSheet: () => Promise<void>;
@@ -731,7 +787,7 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
     {
       id: 'initial_quiz',
       type: 'quiz',
-      questions: INITIAL_QUIZ_SAMPLE,
+      questions: INITIAL_PRE_VERIFIED_QUESTIONS,
       source: 'bank',
       chapter: 1,
     }
@@ -763,60 +819,75 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
   },
   learnerSummary: null,
   activeChapter: 1,
+  activeMode: 'buddy',
+  tutorState: null,
+  lectureHistory: [],
   drawerOpen: false,
   activeDrawerTab: 'syllabus',
   isVoiceActive: true,
 
   setLivekitRoom: (room) => set({ livekitRoom: room }),
   setLivekitConnected: (connected) => set({ livekitConnected: connected }),
+  toggleTutorMode: async (topic?: string) => {
+    const room = get().livekitRoom;
+    const agentId = getAgentParticipantIdentity(room);
+    const newMode = get().activeMode === 'tutor' ? 'buddy' : 'tutor';
+    if (room && room.state === 'connected' && agentId) {
+      try {
+        const res = await room.localParticipant.performRpc({
+          destinationIdentity: agentId,
+          method: 'toggleTutorMode',
+          payload: JSON.stringify({ mode: newMode, topic }),
+          responseTimeout: 4000
+        });
+        const st = JSON.parse(res);
+        set({ activeMode: st.active_mode || newMode, tutorState: st });
+        return;
+      } catch (err) {
+        console.warn('[LiveKit RPC] toggleTutorMode notice:', err);
+      }
+    }
+    set({ activeMode: newMode });
+  },
   toggleDrawer: (tab) => set((s) => ({
     drawerOpen: tab ? true : !s.drawerOpen,
     activeDrawerTab: tab || s.activeDrawerTab,
   })),
 
   setDrawerOpen: (open) => set({ drawerOpen: open }),
-  setActiveDrawerTab: (tab) => set({ activeDrawerTab: tab, drawerOpen: true }),
+  setActiveDrawerTab: (tab) => set({ activeDrawerTab: tab }),
   setActiveChapter: (chapter) => set({ activeChapter: chapter }),
   setIsVoiceActive: (active) => set({ isVoiceActive: active }),
 
   syncProgress: (data) => {
-    if (!data) return;
-    const currentSyllabus = get().syllabus;
+    const currentRoadmap = get().syllabus?.roadmap || DEFAULT_ROADMAP;
     const currentLearner = get().learnerState;
 
-    const activeCh = Number(data.active_chapter || data.learner_state?.active_chapter || get().activeChapter || 1);
-
-    // Normalize roadmap if provided
-    let updatedRoadmap = currentSyllabus?.roadmap || DEFAULT_ROADMAP;
-    if (Array.isArray(data.roadmap) && data.roadmap.length > 0) {
-      updatedRoadmap = data.roadmap.map((item: any, idx: number) => {
-        const chIdx = Number(item.chapter_idx || item.index || idx + 1);
-        const defaultMatch = DEFAULT_ROADMAP.find((d) => d.index === chIdx);
-        const isCurrent = chIdx === activeCh;
-        const isCompleted = item.status === 'completed' || chIdx < activeCh;
-        return {
-          index: chIdx,
-          title: item.title || defaultMatch?.title || `Chapter ${chIdx}`,
-          topic: item.topic || defaultMatch?.topic || 'Grammar Mastery & Applied Fluency',
-          status: (item.status as 'locked' | 'active' | 'completed') || (isCurrent ? 'active' : isCompleted ? 'completed' : 'locked'),
-          coursework_done: item.coursework_done ?? (isCompleted || (isCurrent && Boolean(data.coursework_completed))),
-          quiz_passed: item.quiz_passed ?? (isCompleted || (isCurrent && Boolean(data.quiz_passed)))
-        };
-      });
-    }
+    const activeCh = data.active_chapter ?? currentLearner.active_chapter;
+    const updatedRoadmap = (data.roadmap as ChapterInfo[]) || currentRoadmap;
 
     const updatedLearnerState: LearnerState = {
       active_chapter: activeCh,
       coursework_completed: Boolean(data.coursework_completed ?? data.learner_state?.coursework_completed ?? currentLearner.coursework_completed),
       milestone_quiz_passed: Boolean(data.quiz_passed ?? data.learner_state?.milestone_quiz_passed ?? currentLearner.milestone_quiz_passed),
-      chapter_scores: data.learner_state?.chapter_scores || currentLearner.chapter_scores || { [String(activeCh)]: data.cumulative_accuracy || 85 },
+      chapter_scores: data.learner_state?.chapter_scores || currentLearner.chapter_scores,
       total_errors: (data.failed_questions_queue?.length) ?? data.learner_state?.total_errors ?? currentLearner.total_errors,
       total_correct: data.learner_state?.total_correct ?? currentLearner.total_correct,
       failed_questions_queue: data.failed_questions_queue || data.learner_state?.failed_questions_queue || currentLearner.failed_questions_queue || []
     };
 
+    const activeM = (data.active_mode || data.tutor_state?.active_mode || get().activeMode);
+    const tutorSt = (data.tutor_state || get().tutorState);
+    const newLecs = (data.recent_lectures as CanvasLectureProps[]) || [];
+    const mergedLecs = newLecs.length > 0
+      ? [...newLecs, ...get().lectureHistory.filter(h => !newLecs.some(r => r.id === h.id))]
+      : get().lectureHistory;
+
     set({
       activeChapter: activeCh,
+      activeMode: activeM,
+      tutorState: tutorSt,
+      lectureHistory: mergedLecs,
       learnerState: updatedLearnerState,
       syllabus: {
         active_chapter: activeCh,
@@ -925,6 +996,14 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
     ]
   })),
 
+  pushInlineCanvasLecture: (lecture) => set((s) => ({
+    feed: [
+      ...s.feed.filter((i) => i.type !== 'streaming_card'),
+      { id: lecture.id || Math.random().toString(36).slice(2, 9), type: 'canvas_lecture', data: lecture }
+    ],
+    lectureHistory: [lecture, ...s.lectureHistory.filter((l) => l.id !== lecture.id)]
+  })),
+
   pushInlineSheetError: (data) => set((s) => ({
     feed: [
       ...s.feed.filter((i) => i.type !== 'streaming_card'),
@@ -945,6 +1024,8 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
       get().pushInlineDispute(evt.props as unknown as ContentionProps);
     } else if (evt.component === 'GrammarMovement') {
       get().pushInlineMovement(evt.props as unknown as GrammarMovementProps);
+    } else if (evt.component === 'CanvasLectureCard') {
+      get().pushInlineCanvasLecture(evt.props as unknown as CanvasLectureProps);
     } else if (evt.component === 'sheet_error') {
       get().pushInlineSheetError(evt.props as unknown as SheetErrorProps);
     }
@@ -1207,6 +1288,50 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
     });
   },
 
+  fetchLectureHistory: async () => {
+    const room = get().livekitRoom;
+    const agentId = getAgentParticipantIdentity(room);
+    if (room && room.state === 'connected' && agentId) {
+      try {
+        console.log(`[LiveKit RPC] Invoking getLectureHistory on ${agentId}...`);
+        const rpcRes = await room.localParticipant.performRpc({
+          destinationIdentity: agentId,
+          method: 'getLectureHistory',
+          payload: JSON.stringify({ limit: 25 }),
+          responseTimeout: 4000
+        });
+        const list = JSON.parse(rpcRes);
+        if (Array.isArray(list) && list.length > 0) {
+          set({ lectureHistory: list });
+        }
+      } catch (rpcErr) {
+        console.warn('[LiveKit RPC] getLectureHistory failed:', rpcErr);
+      }
+    }
+  },
+
+  deliverLecturePhase: async (phase_index: number, topic = 'Nouns', session_type = 'grammar_mastery', submodule?: string) => {
+    const room = get().livekitRoom;
+    const agentId = getAgentParticipantIdentity(room);
+    if (room && room.state === 'connected' && agentId) {
+      try {
+        console.log(`[LiveKit RPC] Invoking deliverCanvasLecture for ${topic} (${session_type}) phase ${phase_index}...`);
+        const rpcRes = await room.localParticipant.performRpc({
+          destinationIdentity: agentId,
+          method: 'deliverCanvasLecture',
+          payload: JSON.stringify({ phase_index, topic, session_type, submodule }),
+          responseTimeout: 8000
+        });
+        const lecture = JSON.parse(rpcRes);
+        if (lecture && lecture.id) {
+          get().pushInlineCanvasLecture(lecture);
+        }
+      } catch (rpcErr) {
+        console.warn('[LiveKit RPC] deliverCanvasLecture failed:', rpcErr);
+      }
+    }
+  },
+
   fetchSyllabus: async () => {
     const room = get().livekitRoom;
     const agentId = getAgentParticipantIdentity(room);
@@ -1386,7 +1511,7 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
 ================================================================================
 FILE: mvp_talker_offline/VisualsFrontend/src/hooks/useLiveKit.ts
 LANGUAGE: typescript
-LINES: 294
+LINES: 303
 PURPOSE: LiveKit WebRTC transport hook: room joining (/api/token), speaker audio track playback, text stream handling, and client RPC
 ================================================================================
 
@@ -1511,6 +1636,8 @@ export function useLiveKit() {
                   store.pushInlineDispute(evt.props as unknown as ContentionProps);
                 } else if (evt.component === 'GrammarMovement') {
                   store.pushInlineMovement(evt.props as unknown as GrammarMovementProps);
+                } else if (evt.component === 'CanvasLectureCard') {
+                  store.pushInlineCanvasLecture(evt.props as any);
                 } else if (evt.component === 'sheet_error') {
                   store.pushInlineSheetError(evt.props as any);
                 } else if (evt.component === 'SyllabusProgressTree') {
@@ -1571,6 +1698,8 @@ export function useLiveKit() {
                 store.pushInlineDispute(data.props);
               } else if (data.component === 'GrammarMovement') {
                 store.pushInlineMovement(data.props);
+              } else if (data.component === 'CanvasLectureCard') {
+                store.pushInlineCanvasLecture(data.props || data);
               } else if (data.component === 'sheet_error') {
                 store.pushInlineSheetError(data.props || data);
               }
@@ -1595,6 +1724,8 @@ export function useLiveKit() {
               store.pushInlineDispute(evt.props);
             } else if (evt.component === 'GrammarMovement') {
               store.pushInlineMovement(evt.props);
+            } else if (evt.component === 'CanvasLectureCard') {
+              store.pushInlineCanvasLecture(evt.props);
             } else if (evt.component === 'sheet_error') {
               store.pushInlineSheetError(evt.props || evt);
             }
@@ -1614,12 +1745,15 @@ export function useLiveKit() {
           store.setLivekitConnected(true);
           store.setLivekitRoom(room);
           store.setSseConnected(true); // Signal online status to UI
-          // Hydrate syllabus and in-flight last sheet immediately via LiveKit RPC
+          // Hydrate syllabus, in-flight last sheet, and lecture history immediately via LiveKit RPC
           store.fetchSyllabus().catch((err) => {
             console.warn('[LiveKit] Initial syllabus hydration notice:', err);
           });
           store.fetchLastSheet().catch((err) => {
             console.warn('[LiveKit] Initial last sheet hydration notice:', err);
+          });
+          store.fetchLectureHistory().catch((err) => {
+            console.warn('[LiveKit] Initial lecture history hydration notice:', err);
           });
         });
 
@@ -1724,7 +1858,7 @@ export function bionicHtml(text: string, enabled: boolean): string {
 ================================================================================
 FILE: mvp_talker_offline/VisualsFrontend/src/App.tsx
 LANGUAGE: typescript
-LINES: 258
+LINES: 328
 PURPOSE: Conversational Live Stage: Timeline feed, top status bar, bottom audio dock, and slide-over drawer
 ================================================================================
 
@@ -1743,11 +1877,12 @@ import { InlineDisputeCard } from './components/InlineDisputeCard';
 import { InlineNotesCard } from './components/InlineNotesCard';
 import { InlineGrammarMovementCard } from './components/InlineGrammarMovementCard';
 import { InlineSheetErrorCard } from './components/InlineSheetErrorCard';
+import { InlineCanvasLectureCard } from './components/InlineCanvasLectureCard';
 import { StreamingCard } from './components/StreamingCard';
 
 export default function App() {
   useLiveKit();
-  const { feed, fetchSyllabus } = useBuddyStore();
+  const { feed, fetchSyllabus, activeMode, tutorState } = useBuddyStore();
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -1793,6 +1928,64 @@ export default function App() {
             flexDirection: 'column'
           }}
         >
+          {/* ── Active Tutor Mode Live Banner ── */}
+          {activeMode === 'tutor' && (
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              style={{
+                marginBottom: '20px',
+                padding: '12px 18px',
+                background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.12) 0%, rgba(139, 92, 246, 0.08) 100%)',
+                border: '1px solid rgba(99, 102, 241, 0.35)',
+                borderRadius: 'var(--radius-lg)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '12px',
+                boxShadow: '0 4px 20px rgba(99, 102, 241, 0.12)',
+                backdropFilter: 'blur(8px)'
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div
+                  style={{
+                    width: '32px',
+                    height: '32px',
+                    borderRadius: '50%',
+                    background: 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '16px',
+                    boxShadow: '0 2px 8px rgba(99, 102, 241, 0.4)'
+                  }}
+                >
+                  🎓
+                </div>
+                <div>
+                  <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span>Tutor Mode: {tutorState?.current_topic || 'Nouns & Structure'}</span>
+                    <span style={{ fontSize: '10px', background: 'rgba(99, 102, 241, 0.25)', color: '#818cf8', padding: '1px 7px', borderRadius: '10px', letterSpacing: '0.04em', fontWeight: 600 }}>
+                      LIVE VOICE MASTERY
+                    </span>
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                    {tutorState?.pending_homework
+                      ? `Pending Homework: "${tutorState.pending_homework}" (${tutorState.homework_status || 'assigned'})`
+                      : 'Voice Lecture & Mastery Quiz Loop Active • 100% Conversational'}
+                  </div>
+                </div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--accent)' }}>
+                  {tutorState?.mastered_patterns?.length || 0} Patterns
+                </div>
+                <div style={{ fontSize: '10.5px', color: 'var(--text-tertiary)' }}>Mastered</div>
+              </div>
+            </motion.div>
+          )}
+
           {feed.length === 0 ? (
             <div
               style={{
@@ -1828,15 +2021,16 @@ export default function App() {
               </div>
             </div>
           ) : (
-            feed.map((item) => {
+            feed.map((item, idx) => {
               // ── Transcript Message (User or Assistant) ──
               if (item.type === 'transcript') {
                 const isUser = item.speaker === 'user';
+                const isLatest = idx === feed.length - 1;
                 return (
                   <motion.div
                     key={item.id}
                     initial={{ opacity: 0, y: 6 }}
-                    animate={{ opacity: item.is_interim ? 0.75 : 1, y: 0 }}
+                    animate={{ opacity: item.is_interim ? 0.85 : 1, y: 0 }}
                     transition={{ duration: 0.2 }}
                     style={{
                       display: 'flex',
@@ -1862,7 +2056,10 @@ export default function App() {
                         <>
                           <span>You</span>
                           {item.is_interim ? (
-                            <span style={{ color: 'var(--accent)', fontWeight: 500 }}>· speaking...</span>
+                            <span style={{ color: 'var(--accent)', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--accent)', display: 'inline-block', animation: 'pulse 1.2s infinite' }} />
+                              speaking...
+                            </span>
                           ) : (
                             <>
                               <span>·</span>
@@ -1874,14 +2071,15 @@ export default function App() {
                         <>
                           <div
                             style={{
-                              width: '14px',
-                              height: '14px',
+                              width: '15px',
+                              height: '15px',
                               borderRadius: '50%',
                               background: 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)',
                               display: 'flex',
                               alignItems: 'center',
                               justifyContent: 'center',
-                              color: '#ffffff'
+                              color: '#ffffff',
+                              boxShadow: isLatest ? '0 0 8px rgba(59, 130, 246, 0.5)' : 'none'
                             }}
                           >
                             <Sparkles size={9} />
@@ -1893,14 +2091,15 @@ export default function App() {
                       )}
                     </div>
 
-                    {/* Bubble */}
+                    {/* Bubble - Gemini Live / ChatGPT Live styling */}
                     <div
                       style={{
                         padding: isUser ? '12px 18px' : '6px 0',
                         borderRadius: isUser ? '16px 16px 4px 16px' : '0px',
-                        background: isUser ? (item.is_interim ? 'rgba(99, 102, 241, 0.08)' : 'var(--surface-2)') : 'transparent',
-                        border: isUser ? (item.is_interim ? '1px dashed var(--accent)' : '1px solid var(--border-subtle)') : 'none',
-                        color: item.is_interim ? 'var(--text-secondary)' : 'var(--text-primary)',
+                        background: isUser ? (item.is_interim ? 'rgba(99, 102, 241, 0.12)' : 'var(--surface-2)') : 'transparent',
+                        border: isUser ? (item.is_interim ? '1px solid var(--accent)' : '1px solid var(--border-subtle)') : 'none',
+                        boxShadow: isUser && item.is_interim ? '0 0 16px rgba(99, 102, 241, 0.25)' : 'none',
+                        color: item.is_interim ? 'var(--text-primary)' : 'var(--text-primary)',
                         fontSize: '14.5px',
                         lineHeight: 1.65,
                         maxWidth: isUser ? '85%' : '100%',
@@ -1966,6 +2165,11 @@ export default function App() {
                 return <InlineGrammarMovementCard key={item.id} data={item.data} />;
               }
 
+              // ── Inline Canvas Visual Lecture Card ──
+              if (item.type === 'canvas_lecture') {
+                return <InlineCanvasLectureCard key={item.id} data={item.data} />;
+              }
+
               // ── Inline Sheet Error Card ──
               if (item.type === 'sheet_error') {
                 return <InlineSheetErrorCard key={item.id} data={item.data} />;
@@ -1991,7 +2195,7 @@ export default function App() {
 ================================================================================
 FILE: mvp_talker_offline/VisualsFrontend/src/components/Header.tsx
 LANGUAGE: typescript
-LINES: 179
+LINES: 216
 PURPOSE: Top navigation bar with engine status indicator, active chapter pill, and quick triggers
 ================================================================================
 
@@ -2002,7 +2206,11 @@ import { useBuddyStore, DEFAULT_ROADMAP } from '../store';
 export const Header: React.FC = () => {
   const {
     sseConnected,
+    livekitConnected,
     activeChapter,
+    activeMode,
+    tutorState,
+    toggleTutorMode,
     triggerLLMQuiz,
     triggerRevision,
     toggleDrawer,
@@ -2055,7 +2263,7 @@ export const Header: React.FC = () => {
             alignItems: 'center',
             gap: '6px',
             fontSize: '12px',
-            color: sseConnected ? 'var(--text-secondary)' : 'var(--warning)',
+            color: (sseConnected || livekitConnected) ? 'var(--text-secondary)' : 'var(--warning)',
             background: 'var(--surface-1)',
             padding: '3px 10px',
             borderRadius: 'var(--radius-full)',
@@ -2067,16 +2275,39 @@ export const Header: React.FC = () => {
               width: '7px',
               height: '7px',
               borderRadius: '50%',
-              background: sseConnected ? 'var(--success)' : 'var(--warning)',
-              boxShadow: sseConnected ? '0 0 8px rgba(16, 185, 129, 0.6)' : 'none'
+              background: (sseConnected || livekitConnected) ? 'var(--success)' : 'var(--warning)',
+              boxShadow: (sseConnected || livekitConnected) ? '0 0 8px rgba(16, 185, 129, 0.6)' : 'none'
             }}
-            className={sseConnected ? 'pulse-beacon' : ''}
+            className={(sseConnected || livekitConnected) ? 'pulse-beacon' : ''}
           />
-          <span>{sseConnected ? 'Live Audio Connected' : 'Engine Ready (Demo Mode)'}</span>
+          <span>{(sseConnected || livekitConnected) ? 'Live WebRTC Voice' : 'Engine Ready'}</span>
         </div>
+
+        {/* Mode Selector Pill: Buddy Mode vs Tutor Mode */}
+        <button
+          onClick={() => toggleTutorMode()}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            fontSize: '12px',
+            fontWeight: 500,
+            cursor: 'pointer',
+            padding: '4px 12px',
+            borderRadius: 'var(--radius-full)',
+            background: activeMode === 'tutor' ? 'rgba(99, 102, 241, 0.15)' : 'var(--surface-1)',
+            border: activeMode === 'tutor' ? '1px solid var(--accent)' : '1px solid var(--border-subtle)',
+            color: activeMode === 'tutor' ? 'var(--accent)' : 'var(--text-secondary)',
+            transition: 'all 0.15s ease'
+          }}
+          title={activeMode === 'tutor' ? 'Click to switch to casual Buddy Mode' : 'Click to activate grammar Tutor Mode'}
+        >
+          <Sparkles size={12} color={activeMode === 'tutor' ? 'var(--accent)' : 'var(--text-tertiary)'} />
+          <span>{activeMode === 'tutor' ? '🎓 Tutor Mode (Active)' : '💬 Buddy Mode (Chat)'}</span>
+        </button>
       </div>
 
-      {/* ── Center Active Chapter Pill ── */}
+      {/* ── Center Active Chapter / Tutor Topic Pill ── */}
       <div
         style={{
           display: 'flex',
@@ -2086,7 +2317,7 @@ export const Header: React.FC = () => {
           border: '1px solid var(--border-subtle)',
           padding: '4px 14px',
           borderRadius: 'var(--radius-full)',
-          maxWidth: '380px'
+          maxWidth: '420px'
         }}
       >
         <BookOpen size={13} color="var(--accent)" />
@@ -2099,10 +2330,20 @@ export const Header: React.FC = () => {
             textOverflow: 'ellipsis'
           }}
         >
-          <strong style={{ color: 'var(--text-primary)', fontWeight: 600 }}>
-            Ch. {activeChapter}:
-          </strong>{' '}
-          {currentChapterInfo.title}
+          {activeMode === 'tutor' ? (
+            <>
+              <strong style={{ color: 'var(--accent)', fontWeight: 600 }}>Tutor Track:</strong>{' '}
+              {tutorState?.current_topic || 'Nouns & Sentence Foundations'}
+              {tutorState?.pending_homework && (
+                <span style={{ marginLeft: '6px', color: 'var(--warning)', fontWeight: 500 }}>· 📝 HW Pending</span>
+              )}
+            </>
+          ) : (
+            <>
+              <strong style={{ color: 'var(--text-primary)', fontWeight: 600 }}>Ch. {activeChapter}:</strong>{' '}
+              {currentChapterInfo.title}
+            </>
+          )}
         </span>
       </div>
 
@@ -2179,14 +2420,14 @@ export const Header: React.FC = () => {
 ================================================================================
 FILE: mvp_talker_offline/VisualsFrontend/src/components/AudioDock.tsx
 LANGUAGE: typescript
-LINES: 259
+LINES: 314
 PURPOSE: Floating voice visualizer dock with active waveform, composer textarea, and action chips
 ================================================================================
 
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import TextareaAutosize from 'react-textarea-autosize';
-import { Mic, MicOff, Send, Sparkles, BookOpen, Scale } from 'lucide-react';
+import { Mic, MicOff, Send, Sparkles, BookOpen, Scale, GraduationCap } from 'lucide-react';
 import { useBuddyStore } from '../store';
 
 export const AudioDock: React.FC = () => {
@@ -2195,7 +2436,11 @@ export const AudioDock: React.FC = () => {
     isVoiceActive,
     setIsVoiceActive,
     sseConnected,
+    livekitConnected,
     activeChapter,
+    activeMode,
+    toggleTutorMode,
+    deliverLecturePhase,
     triggerLLMQuiz,
     triggerRevision,
     disputeAnswer,
@@ -2241,6 +2486,57 @@ export const AudioDock: React.FC = () => {
           paddingBottom: '2px'
         }}
       >
+        <button
+          onClick={() => toggleTutorMode()}
+          style={{
+            background: activeMode === 'tutor' ? 'rgba(99, 102, 241, 0.2)' : 'var(--surface-1)',
+            border: activeMode === 'tutor' ? '1px solid var(--accent)' : '1px solid var(--border-subtle)',
+            borderRadius: 'var(--radius-full)',
+            padding: '5px 14px',
+            fontSize: '12px',
+            fontWeight: 500,
+            color: activeMode === 'tutor' ? 'var(--accent)' : 'var(--text-primary)',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            whiteSpace: 'nowrap',
+            transition: 'all 0.15s ease'
+          }}
+        >
+          <Sparkles size={12} color="var(--accent)" />
+          <span>{activeMode === 'tutor' ? '🎓 Exit Tutor Mode (Chat)' : '🎓 Start Tutor Mode: Nouns'}</span>
+        </button>
+
+        <button
+          onClick={() => deliverLecturePhase(2)}
+          style={{
+            background: 'var(--surface-1)',
+            border: '1px solid var(--border-subtle)',
+            borderRadius: 'var(--radius-full)',
+            padding: '5px 12px',
+            fontSize: '12px',
+            color: 'var(--text-secondary)',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '5px',
+            whiteSpace: 'nowrap',
+            transition: 'all 0.15s ease'
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.borderColor = 'var(--accent)';
+            e.currentTarget.style.color = 'var(--text-primary)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.borderColor = 'var(--border-subtle)';
+            e.currentTarget.style.color = 'var(--text-secondary)';
+          }}
+        >
+          <GraduationCap size={12} color="var(--accent)" />
+          <span>Canvas Lecture: Nouns</span>
+        </button>
+
         <button
           onClick={() => triggerLLMQuiz(activeChapter)}
           style={{
@@ -2358,7 +2654,7 @@ export const AudioDock: React.FC = () => {
             <motion.span
               key={i}
               animate={{
-                height: isVoiceActive && sseConnected ? [height, height * 0.35, height] : 4
+                height: isVoiceActive && (sseConnected || livekitConnected) ? [height, height * 0.35, height] : 4
               }}
               transition={{
                 repeat: Infinity,
@@ -2368,7 +2664,7 @@ export const AudioDock: React.FC = () => {
               }}
               style={{
                 width: '3px',
-                background: isVoiceActive && sseConnected ? 'var(--accent)' : 'var(--surface-3)',
+                background: isVoiceActive && (sseConnected || livekitConnected) ? 'var(--accent)' : 'var(--surface-3)',
                 borderRadius: '2px',
                 height: isVoiceActive ? `${height}px` : '4px'
               }}
@@ -2447,11 +2743,11 @@ export const AudioDock: React.FC = () => {
 ================================================================================
 FILE: mvp_talker_offline/VisualsFrontend/src/components/SlideOverDrawer.tsx
 LANGUAGE: typescript
-LINES: 332
+LINES: 547
 PURPOSE: Collapsible slide-over drawer with 18-chapter roadmap, analytics, and remediation queue
 ================================================================================
 
-import React from 'react';
+import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   X,
@@ -2459,13 +2755,21 @@ import {
   BarChart3,
   RefreshCw,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  GraduationCap,
+  Play,
+  Sparkles,
+  Clock,
+  Repeat,
+  Briefcase,
+  MessageSquare
 } from 'lucide-react';
 import { useBuddyStore } from '../store';
 import type { DrawerTab } from '../types';
 import { SyllabusSection } from './SyllabusSection';
 
 export const SlideOverDrawer: React.FC = () => {
+  const [lectureFilter, setLectureFilter] = useState<string>('all');
   const {
     drawerOpen,
     toggleDrawer,
@@ -2473,6 +2777,9 @@ export const SlideOverDrawer: React.FC = () => {
     setActiveDrawerTab,
     activeChapter,
     learnerState,
+    lectureHistory,
+    pushInlineCanvasLecture,
+    deliverLecturePhase,
     triggerLLMQuiz
   } = useBuddyStore();
 
@@ -2568,8 +2875,9 @@ export const SlideOverDrawer: React.FC = () => {
             >
               {[
                 { id: 'syllabus', label: 'Roadmap', icon: BookOpen },
+                { id: 'lectures', label: `Lectures (${lectureHistory.length})`, icon: GraduationCap },
                 { id: 'analytics', label: 'Analytics', icon: BarChart3 },
-                { id: 'remediation', label: `Remediation (${failedQueue.length})`, icon: RefreshCw }
+                { id: 'remediation', label: `Errors (${failedQueue.length})`, icon: RefreshCw }
               ].map((tab) => {
                 const isActive = activeDrawerTab === tab.id;
                 const Icon = tab.icon;
@@ -2774,6 +3082,209 @@ export const SlideOverDrawer: React.FC = () => {
                       ))}
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* ── TAB 4: LECTURES & REVISION SESSIONS ── */}
+              {activeDrawerTab === 'lectures' && (
+                <div>
+                  {/* Practice Category Selection Filter Pills */}
+                  <div style={{ marginBottom: '16px' }}>
+                    <div style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-tertiary)', fontWeight: 600, letterSpacing: '0.06em', marginBottom: '8px' }}>
+                      Practice Session Categories
+                    </div>
+                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                      {[
+                        { id: 'all', label: 'All Sessions', icon: Sparkles },
+                        { id: 'grammar_mastery', label: 'Grammar', icon: GraduationCap },
+                        { id: 'sentence_repetition', label: 'Repetition', icon: Repeat },
+                        { id: 'workplace_office', label: 'Workplace', icon: Briefcase },
+                        { id: 'conversational_banter', label: 'Banter', icon: MessageSquare }
+                      ].map((tab) => {
+                        const Icon = tab.icon;
+                        const isSel = lectureFilter === tab.id;
+                        return (
+                          <button
+                            key={tab.id}
+                            onClick={() => setLectureFilter(tab.id)}
+                            style={{
+                              padding: '5px 10px',
+                              borderRadius: 'var(--radius-full)',
+                              fontSize: '11px',
+                              fontWeight: 500,
+                              background: isSel ? 'var(--accent)' : 'var(--surface-2)',
+                              color: isSel ? '#ffffff' : 'var(--text-secondary)',
+                              border: `1px solid ${isSel ? 'var(--accent)' : 'var(--border-subtle)'}`,
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '5px',
+                              transition: 'all 0.15s ease'
+                            }}
+                          >
+                            <Icon size={12} />
+                            <span>{tab.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Practice Launchers */}
+                  <div style={{ marginBottom: '20px' }}>
+                    <div style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-tertiary)', fontWeight: 600, letterSpacing: '0.06em', marginBottom: '8px' }}>
+                      Interactive Practice Launchers
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      {[
+                        { phase: 1, topic: 'Nouns', session_type: 'grammar_mastery', title: 'Nouns 1: Concrete vs Abstract', desc: 'Sensory perception vs Cognitive concepts' },
+                        { phase: 2, topic: 'Nouns', session_type: 'grammar_mastery', title: 'Nouns 2: Countable vs Uncountable', desc: 'Mass nouns (much/many, fewer/less)' },
+                        { phase: 3, topic: 'Nouns', session_type: 'grammar_mastery', title: 'Nouns 3: Collective Concord', desc: 'Unitary whole vs Individual members' },
+                        { phase: 4, topic: 'Nouns', session_type: 'grammar_mastery', title: 'Nouns 4: Compound Head Nouns', desc: 'Head noun pluralization (mothers-in-law)' },
+                        { phase: 5, topic: 'Nouns', session_type: 'grammar_mastery', title: 'Nouns 5: Possessive Genitives', desc: "Tom and Mary's vs Tom's and Mary's" },
+                        { phase: 1, topic: 'Conversational Fluency', session_type: 'sentence_repetition', title: '🗣️ Daily Repetition: Spoken Contractions', desc: 'Cadence & rhythm of gonna, wanna, could\'ve' },
+                        { phase: 1, topic: 'Workplace Communication', session_type: 'workplace_office', title: '💼 Workplace: Polite Softening & Requests', desc: 'Transforming blunt commands into diplomatic requests' }
+                      ].filter(item => lectureFilter === 'all' || item.session_type === lectureFilter).map((item, idx) => (
+                        <button
+                          key={idx}
+                          onClick={() => {
+                            deliverLecturePhase(item.phase, item.topic, item.session_type);
+                            toggleDrawer();
+                          }}
+                          style={{
+                            padding: '10px 12px',
+                            background: 'var(--surface-2)',
+                            border: '1px solid var(--border-subtle)',
+                            borderRadius: 'var(--radius-md)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            cursor: 'pointer',
+                            textAlign: 'left',
+                            transition: 'all 0.15s ease'
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.borderColor = 'var(--accent)';
+                            e.currentTarget.style.background = 'var(--surface-3)';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.borderColor = 'var(--border-subtle)';
+                            e.currentTarget.style.background = 'var(--surface-2)';
+                          }}
+                        >
+                          <div>
+                            <div style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                              {item.title}
+                            </div>
+                            <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                              {item.desc}
+                            </div>
+                          </div>
+                          <Play size={13} color="var(--accent)" />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Previous Generated Lectures List */}
+                  <div>
+                    <div style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-tertiary)', fontWeight: 600, letterSpacing: '0.06em', marginBottom: '8px' }}>
+                      Previous Saved Sessions ({lectureHistory.filter(l => lectureFilter === 'all' || (l.session_type || 'grammar_mastery') === lectureFilter).length})
+                    </div>
+                    {lectureHistory.filter(l => lectureFilter === 'all' || (l.session_type || 'grammar_mastery') === lectureFilter).length === 0 ? (
+                      <div
+                        style={{
+                          padding: '24px 16px',
+                          textAlign: 'center',
+                          background: 'var(--surface-0)',
+                          borderRadius: 'var(--radius-md)',
+                          border: '1px dashed var(--border-subtle)',
+                          color: 'var(--text-tertiary)'
+                        }}
+                      >
+                        <Sparkles size={20} color="var(--accent)" style={{ margin: '0 auto 8px', display: 'block' }} />
+                        <div style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-secondary)' }}>
+                          No Saved Sessions in This Category
+                        </div>
+                        <div style={{ fontSize: '11.5px', marginTop: '4px' }}>
+                          Launch a practice session above or ask Buddy in voice: "Teach me about nouns" or "Let's do sentence repetition"!
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                        {lectureHistory
+                          .filter(l => lectureFilter === 'all' || (l.session_type || 'grammar_mastery') === lectureFilter)
+                          .map((lec) => (
+                          <div
+                            key={lec.id}
+                            style={{
+                              padding: '12px 14px',
+                              background: 'var(--surface-2)',
+                              borderRadius: 'var(--radius-md)',
+                              border: '1px solid var(--border-subtle)',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '6px'
+                            }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <span style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                                  {lec.submodule}
+                                </span>
+                                <span
+                                  style={{
+                                    fontSize: '9.5px',
+                                    padding: '1px 6px',
+                                    borderRadius: '8px',
+                                    background: 'rgba(99, 102, 241, 0.15)',
+                                    color: '#818cf8',
+                                    fontWeight: 600,
+                                    textTransform: 'uppercase'
+                                  }}
+                                >
+                                  {lec.session_type || 'grammar'}
+                                </span>
+                              </div>
+                              <span style={{ fontSize: '10px', color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                <Clock size={10} />
+                                {lec.timestamp ? lec.timestamp.slice(11, 16) : 'Recent'}
+                              </span>
+                            </div>
+
+                            <div style={{ fontSize: '12px', color: 'var(--text-secondary)', fontStyle: 'italic', lineHeight: 1.4 }}>
+                              "{lec.spoken_summary ? lec.spoken_summary.slice(0, 110) + '...' : 'Interactive visual lecture'}"
+                            </div>
+
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '4px' }}>
+                              <button
+                                onClick={() => {
+                                  pushInlineCanvasLecture(lec);
+                                  toggleDrawer();
+                                }}
+                                style={{
+                                  background: 'rgba(99, 102, 241, 0.15)',
+                                  border: '1px solid var(--accent)',
+                                  color: 'var(--accent)',
+                                  fontSize: '11px',
+                                  fontWeight: 500,
+                                  padding: '4px 10px',
+                                  borderRadius: 'var(--radius-sm)',
+                                  cursor: 'pointer',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '4px'
+                                }}
+                              >
+                                <Sparkles size={11} />
+                                <span>Re-open / Revise</span>
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>

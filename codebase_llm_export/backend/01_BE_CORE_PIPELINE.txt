@@ -1,7 +1,7 @@
 ================================================================================
 FILE: mvp_talker_offline/backend/agent.py
 LANGUAGE: python
-LINES: 1113
+LINES: 1551
 PURPOSE: LiveKit voice AI agent entrypoint: Faster-Whisper STT, Silero VAD, Piper TTS, Ollama LLM, in-process function tools (with RunContext UI streaming), and LiveKit RPC handlers
 ================================================================================
 
@@ -62,6 +62,10 @@ from syllabus_tracker import SyllabusTracker
 from simulation_engine import SimulationEngine
 from quiz_engine import QuizEngine
 from rag_store import RAGStore
+try:
+    from langgraph_tutor_graph import langgraph_engine
+except Exception:
+    langgraph_engine = None
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen-buddy")
@@ -98,43 +102,74 @@ async def ensure_audio_server_async():
                 await asyncio.sleep(0.2)
 
 INSTRUCTIONS = """
-You are Buddy, a warm, friendly, and engaging conversation buddy who is also a patient and encouraging English tutor.
+You are Buddy, a warm, friendly conversational English companion who can seamlessly switch into Master English Tutor Mode.
 You are chatting with your friend and learner, Bhupendra, in real time over voice.
 
-KEY CONVERSATION & TEACHING GUIDELINES:
-1. NATURAL FRIEND FIRST, TUTOR SECOND:
-   - Talk like a genuine human friend: warm, relaxed, lively, and conversational. Never say 'As an AI' or act like a robot.
-   - React naturally to what Bhupendra says. If he talks about his day, work, feelings, opinions, or hobbies, engage with genuine curiosity.
-   - Do NOT interrogate or lecture. Have a fun, relaxed dialogue.
+MODES OF OPERATION:
 
-2. GENTLE CONVERSATIONAL RECASTING (NEVER A GRAMMAR HITLER):
-   - Never be pedantic. Do NOT point out every small slip or interrupt friendly conversation to lecture on grammar rules.
-   - When Bhupendra makes a grammatical slip, simply recast the correct phrasing naturally in your conversational response.
-     * Example: Bhupendra says 'Yesterday I have went to market.' -> Buddy: 'Oh nice, you went to the market yesterday! What did you pick up while you were there?'
-     * Example: Bhupendra says 'She don't know the answer.' -> Buddy: 'Right, she doesn't know yet! How do you think she will find out?'
-   - If Bhupendra specifically asks for grammar explanations, rules, or citations (e.g. Oxford Guide or Arihant), gladly explain warmly and clearly.
+1. BUDDY MODE (DEFAULT CASUAL CHAT & SOFT RECASTING):
+   - You are a genuine human friend: warm, relaxed, lively, and conversational. Never say 'As an AI' or act robotic.
+   - You remember Bhupendra's entire learning history, mastered patterns, and common grammar slips.
+   - Soft Grammar Guidance: When Bhupendra makes a grammatical slip, NEVER lecture him or break the conversation. Softly and conversationally point it out in a friendly one-liner, then keep the chat moving.
+     * Example: Bhupendra says 'I have many informations about the project.' -> Buddy: 'Nice! Quick friendly reminder: in English information is mass uncountable, so we say "a lot of information" — but tell me, what did you discover?'
+   - Triggering Tutor Mode: If Bhupendra asks to study, learn a topic, or enter tutor mode ('Teach me about nouns', 'Tutor mode', 'Let's practice sentence repetition', 'Workplace English practice', 'Start lesson'), invoke `start_tutor_mode` or `deliver_canvas_lecture`.
 
-3. INTERACTIVE QUIZZING & TOOLS:
-   - When Bhupendra says 'Quiz me', 'Give me a quiz', or asks to test his skills, enthusiastically trigger a quiz with trigger_quiz.
-   - If Bhupendra disputes a grammar point or says 'The LLM is wrong', call dispute_answer to check authoritative sources without arguing.
-   - If Bhupendra asks about sentence structures or word order, call demonstrate_grammar_movement.
+2. MASTER TUTOR MODE (DYNAMIC CURRICULUM, CANVAS VISUALS & MULTI-TYPE PRACTICE):
+   - When activated, you are an inspiring, authoritative English Master Coach powered by LangGraph and local reference books (Oxford Guide, Arihant, Teacher Luke's course).
+   - FOUR PRACTICE SESSION TYPES SUPPORTED:
+     * `grammar_mastery`: Deep syntactic rules, concord balance scale, countable vs uncountable particle sorting, compound head-noun pluralization, possessive genitives.
+     * `sentence_repetition`: Spoken sentence shadowing of daily talk, rhythm & cadence, connected speech, contractions (wanna, gonna, could've, what're you).
+     * `workplace_office`: Professional polite softening (transforming blunt imperatives into collaborative requests), meeting interjections, executive register.
+     * `conversational_banter`: Natural daily talk, storytelling connectors, reactive dialogue.
+   - STEP 1 (HOMEWORK CHECK): If the tool reports pending homework from the previous session, warmly ask about it first and invoke `complete_homework`.
+   - STEP 2 (UNINTERRUPTED VOICE LECTURE + INTERACTIVE CANVAS):
+     * Deliver the session by invoking `deliver_canvas_lecture`.
+     * The tool renders 2 to 3 rich educational paragraphs and an interactive HTML5 Canvas visual (particle classifiers, concord balance scales, repetition cadence waves, or workplace matrices) to Bhupendra's screen, and persists it in SQLite for lifelong revision.
+     * SPOKEN VOICE SCRIPT: During the lecture delivery, speak ONLY 2 to 3 clear, conversational sentences summarizing the core intuition, and announce the visual on screen.
+   - STEP 3 (POST-LECTURE DISCUSSION & COUNTER-QUESTIONS):
+     * Once the lecture is delivered, open the floor: invite Bhupendra to ask questions, debate grammar nuances, or ask you to re-narrate with different analogies (software engineering, business, or everyday life).
+     * If Bhupendra asks to re-narrate or clarify, invoke `renarrate_lecture` or explain with fresh metaphors.
+   - STEP 4 (ISOMORPHIC PATTERN QUIZZING & SHADOWING REPETITION):
+     * Test the pattern directly with bite-sized challenges or invite him to shadow the practice sentences shown on screen.
+     * When Bhupendra gets it right, celebrate and invoke `record_pattern_mastery`.
+   - STEP 5 (ASSIGN HOMEWORK & RETURN TO BUDDY):
+     * Assign a bite-sized spoken challenge and invoke `assign_homework`.
+     * When Bhupendra wants to relax ('Let's just chat', 'Back to buddy mode', 'Exit tutor'), invoke `exit_tutor_mode` or `switch_to_buddy_mode`.
 
-4. SPOKEN VOICE PERFECTION (MANDATORY):
-   - Keep replies concise and easy to listen to: 1 to 3 spoken sentences per turn.
-   - Deliver one clear thought at a time.
-   - NEVER emit markdown formatting: NO asterisks (*), NO bullet points (-), NO headers (###), NO track labels (like 'Track A' or 'Track B'). Output clean, plain conversational English only.
-   - End your turn with a natural, friendly question or conversational prompt to invite him to speak next.
+3. SPOKEN VOICE PERFECTION (MANDATORY):
+   - You are a voice-first agent. Keep spoken replies concise: 1 to 3 clean sentences per turn.
+   - NEVER emit raw markdown symbols: NO asterisks (*), NO bullet dashes (-), NO hashtags (###), NO bracketed status tags. Output natural, clean conversational English only.
+   - Always end your turn with an engaging, friendly question or conversational prompt to invite him to speak.
+
+4. VISUAL SYNTACTIC MOVEMENT (MANDATORY):
+   - When explaining sentence transformations, negative inversions, questions, or passive voice shifts, invoke `demonstrate_grammar_movement` to animate tokens physically across the user's screen using Framer Motion.
 """
 
 class FasterWhisperSTT(stt.STT):
     def __init__(self, model_size="tiny.en", device="cpu", compute_type="int8"):
-        super().__init__(capabilities=stt.STTCapabilities(streaming=False, interim_results=False))
+        super().__init__(capabilities=stt.STTCapabilities(streaming=True, interim_results=True))
         stt_logger.info(f"Initializing in-memory Faster-Whisper ({model_size}) on {device} [100% offline]...")
         try:
             self._model = WhisperModel(model_size, device=device, compute_type=compute_type, local_files_only=True)
         except Exception:
             self._model = WhisperModel(model_size, device=device, compute_type=compute_type)
         stt_logger.info("In-memory STT ready.")
+
+    def stream(
+        self,
+        *,
+        language=None,
+        conn_options=None,
+    ) -> stt.RecognizeStream:
+        from livekit.plugins import silero
+        vad = silero.VAD.load()
+        adapter = stt.StreamAdapter(stt=self, vad=vad)
+        kwargs = {}
+        if language is not None:
+            kwargs["language"] = language
+        if conn_options is not None:
+            kwargs["conn_options"] = conn_options
+        return adapter.stream(**kwargs)
 
     async def _recognize_impl(
         self, buffer: utils.AudioBuffer, *, language=None, conn_options=None
@@ -159,15 +194,29 @@ class FasterWhisperSTT(stt.STT):
 
         audio_np = np.frombuffer(frame.data, dtype=np.int16).astype(np.float32) / 32768.0
 
+        HALLUCINATED_PHRASES = {
+            "thank you.", "thank you", "thanks for watching.", "thanks for watching",
+            "thank you for watching.", "subtitles by", "subtitles by the amara.org community",
+            "bye.", "bye", "you", "so", "watching."
+        }
+
         def run_inference():
             lang = language if isinstance(language, str) else "en"
+            # Pedagogical STT configuration:
+            # - condition_on_previous_text=False preserves raw acoustic output without auto-correcting ESL learner grammar errors.
+            # - initial_prompt instructs Whisper's decoder to transcribe verbatim slips rather than 'fixing' them.
             segments, info = self._model.transcribe(
                 audio_np,
                 beam_size=1,
                 language=lang,
-                condition_on_previous_text=False
+                condition_on_previous_text=False,
+                initial_prompt="Raw verbatim ESL English learner speech transcription. Transcribe grammatical errors, ungrammatical phrasing, and dropped words exactly as spoken without correcting.",
+                temperature=0.0,
+                no_speech_threshold=0.6,
             )
             text = " ".join(seg.text for seg in segments).strip()
+            if text.lower().strip() in HALLUCINATED_PHRASES:
+                text = ""
             return text, info.language
 
         loop = asyncio.get_event_loop()
@@ -193,8 +242,26 @@ def get_faster_whisper_stt(model_size="tiny.en") -> FasterWhisperSTT:
         _whisper_singleton = FasterWhisperSTT(model_size=model_size)
     return _whisper_singleton
 
-# StreamingFasterWhisperAdapter is an alias to the official LiveKit StreamAdapter
-StreamingFasterWhisperAdapter = stt.StreamAdapter
+class StreamingFasterWhisperAdapter(stt.StreamAdapter):
+    """
+    Adapter enabling streaming STT compatibility while supporting both positional
+    and keyword arguments, and explicitly exposing streaming=True and interim_results=True.
+    """
+    def __init__(self, stt_instance=None, vad_instance=None, **kwargs):
+        target_stt = stt_instance if stt_instance is not None else kwargs.get("stt")
+        target_vad = vad_instance if vad_instance is not None else kwargs.get("vad")
+        super().__init__(stt=target_stt, vad=target_vad)
+        self._capabilities = stt.STTCapabilities(
+            streaming=True,
+            interim_results=True,
+            diarization=False,
+            keyterms=getattr(target_stt.capabilities, "keyterms", False) if target_stt else False,
+            chat_context=getattr(target_stt.capabilities, "chat_context", False) if target_stt else False,
+        )
+
+    @property
+    def capabilities(self) -> stt.STTCapabilities:
+        return self._capabilities
 
 # ── PRIORITY MANAGER ──
 OLLAMA_BG_URL = os.getenv("OLLAMA_BG_URL", "")
@@ -719,8 +786,254 @@ async def search_web_grammar(context: RunContext, query: str) -> str:
     except Exception as e:
         return f"Web search notice: {e}"
 
+@function_tool()
+async def start_tutor_mode(context: RunContext, topic: Optional[str] = None) -> str:
+    """Activates focused Tutor Mode for English grammar mastery.
+    Retrieves syllabus state, active topic (e.g. Nouns), and any pending homework from last session.
+    """
+    tutor_state = tracker.activate_tutor_mode(topic=topic)
+    summary = tracker.get_learner_summary()
+    await send_room_text(context, "progress", json.dumps(summary))
+    
+    pending_hw = tutor_state.get("pending_homework")
+    active_top = tutor_state.get("current_topic", "Nouns: Concrete, Abstract & Countable")
+    mastered = tutor_state.get("mastered_patterns", [])
+    
+    genui_logger.info(f"Tutor mode activated. Topic: {active_top}, Pending HW: {bool(pending_hw)}")
+    
+    if pending_hw:
+        return (
+            f"[TUTOR MODE ACTIVATED] You are now in Tutor Mode. "
+            f"PENDING HOMEWORK FROM LAST SESSION: '{pending_hw}'. "
+            f"MANDATORY: Ask Bhupendra how he did with this homework challenge first before starting the new lecture. "
+            f"Upcoming topic after homework: '{active_top}'."
+        )
+    else:
+        return (
+            f"[TUTOR MODE ACTIVATED] You are now in Tutor Mode. No pending homework. "
+            f"Current topic: '{active_top}'. Mastered patterns so far: {mastered}. "
+            f"Deliver a short, interactive voice-first lecture in 2-3 sentences with one clear example, then check comprehension."
+        )
+
+@function_tool()
+async def complete_homework(context: RunContext, student_response: str, evaluation: str) -> str:
+    """Marks pending homework as completed and logs the student's response."""
+    tracker.complete_homework(evaluation=evaluation)
+    summary = tracker.get_learner_summary()
+    await send_room_text(context, "progress", json.dumps(summary))
+    genui_logger.info(f"Homework completed. Evaluation: {evaluation[:50]}")
+    return "Homework marked as completed! You may now proceed with the lesson or pattern quiz."
+
+@function_tool()
+async def assign_homework(context: RunContext, homework_task: str) -> str:
+    """Assigns a real-world, bite-sized spoken homework challenge for the next tutor session."""
+    tracker.assign_homework(task=homework_task)
+    summary = tracker.get_learner_summary()
+    await send_room_text(context, "progress", json.dumps(summary))
+    genui_logger.info(f"Assigned homework: {homework_task}")
+    return f"Homework challenge successfully recorded: '{homework_task}'. It will be checked next time Tutor Mode starts."
+
+@function_tool()
+async def record_pattern_mastery(context: RunContext, pattern_name: str, passed: bool) -> str:
+    """Records whether the learner successfully demonstrated mastery of a specific grammar pattern."""
+    mastered = tracker.record_pattern_mastery(pattern=pattern_name, passed=passed)
+    summary = tracker.get_learner_summary()
+    await send_room_text(context, "progress", json.dumps(summary))
+    genui_logger.info(f"Pattern mastery recorded: {pattern_name} (passed={passed})")
+    if passed:
+        return f"Pattern '{pattern_name}' mastered! Total mastered patterns: {mastered}. You can now give homework and conclude or practice the next pattern."
+    else:
+        return f"Pattern '{pattern_name}' not yet mastered. Offer another isomorphic practice question."
+
+@function_tool()
+async def deliver_canvas_lecture(
+    context: RunContext,
+    phase_index: int = 1,
+    topic: str = "Nouns",
+    submodule: Optional[str] = None,
+    session_type: str = "grammar_mastery",
+    custom_spoken_summary: Optional[str] = None,
+    custom_paragraphs: Optional[Union[str, List[str]]] = None,
+    canvas_type: Optional[str] = None,
+    canvas_config: Optional[Union[str, Dict[str, Any]]] = None,
+    repetition_items: Optional[Union[str, List[Dict[str, Any]]]] = None
+) -> str:
+    """Delivers a structured visual lecture across any grammar or fluency domain (grammar mastery,
+    daily sentence repetition, workplace office English, or conversational banter).
+    Renders 2-3 educational paragraphs and an interactive HTML5 Canvas visual, saves the session
+    in SQLite for lifelong student revision, and prepares for post-lecture Q&A / counter-questions.
+    """
+    req_id = f"req_lecture_{int(time.time() * 1000)}"
+    try:
+        # Dynamically synthesize session from curriculum & RAG
+        dyn_session = tracker.get_dynamic_course_session(
+            topic=topic,
+            submodule=submodule,
+            session_type=session_type,
+            phase_index=phase_index
+        )
+        
+        submod = submodule or dyn_session["submodule"]
+        spoken = custom_spoken_summary or dyn_session["spoken_summary"]
+        
+        if custom_paragraphs:
+            if isinstance(custom_paragraphs, str):
+                try:
+                    paras = json.loads(custom_paragraphs)
+                except Exception:
+                    paras = [p.strip() for p in custom_paragraphs.split("\n\n") if p.strip()]
+            else:
+                paras = custom_paragraphs
+        else:
+            paras = dyn_session["paragraphs"]
+
+        c_type = canvas_type or dyn_session.get("canvas_type", "particle_classifier")
+        
+        if canvas_config:
+            if isinstance(canvas_config, str):
+                try:
+                    cfg = json.loads(canvas_config)
+                except Exception:
+                    cfg = dyn_session.get("canvas_config", {})
+            else:
+                cfg = canvas_config
+        else:
+            cfg = dyn_session.get("canvas_config", {})
+
+        if repetition_items:
+            if isinstance(repetition_items, str):
+                try:
+                    reps = json.loads(repetition_items)
+                except Exception:
+                    reps = dyn_session.get("repetition_items", [])
+            else:
+                reps = repetition_items
+        else:
+            reps = dyn_session.get("repetition_items", [])
+
+        # Adapt content to learner preferences
+        prefs = tracker.get_learner_preferences()
+        analogy_style = prefs.get("analogy_style", "everyday")
+        if analogy_style == "software_engineering" and "laptop" not in paras[0].lower():
+            paras = [p + " (Analogy: like immutable vs mutable data structures)" for p in paras]
+
+        saved = tracker.save_lecture_session(
+            topic=topic,
+            submodule=submod,
+            phase_index=phase_index,
+            session_type=session_type,
+            spoken_summary=spoken,
+            paragraphs=paras,
+            canvas_type=c_type,
+            canvas_config=cfg,
+            repetition_items=reps,
+            key_takeaways=dyn_session.get("key_takeaways", [])
+        )
+
+        # Update LangGraph state to post-lecture Q&A
+        if langgraph_engine:
+            langgraph_engine.update_state({
+                "active_mode": "tutor_qa",
+                "current_topic": topic,
+                "submodule": submod,
+                "phase_index": phase_index,
+                "session_type": session_type,
+                "is_delivering_lecture": False,
+                "lecture_data": saved
+            })
+
+        payload = {
+            "schema_version": "1.0",
+            "type": "genui_render",
+            "component": "CanvasLectureCard",
+            "props": {
+                "id": saved["id"],
+                "req_id": req_id,
+                "topic": topic,
+                "submodule": submod,
+                "phase_index": phase_index,
+                "session_type": session_type,
+                "spoken_summary": spoken,
+                "paragraphs": paras,
+                "key_takeaways": dyn_session.get("key_takeaways", []),
+                "canvas_type": c_type,
+                "canvas_config": cfg,
+                "repetition_items": reps,
+                "timestamp": saved["timestamp"]
+            }
+        }
+        persist_sheet_payload(req_id, "CanvasLectureCard", payload)
+        await send_room_text(context, "genui", json.dumps(payload))
+        summary = tracker.get_learner_summary()
+        await send_room_text(context, "progress", json.dumps(summary))
+        genui_logger.event("CANVAS_LECTURE_DELIVERED", submod, req_id=req_id, phase=phase_index, session_type=session_type)
+
+        return (
+            f"[LECTURE RENDERED ON CANVAS] Delivered visual session '{submod}' ({session_type}, Phase {phase_index}). "
+            f"SPOKEN VOICE SCRIPT: '{spoken}'. Speak this naturally to Bhupendra in 2-3 clean sentences, "
+            f"then open the floor: tell him he can ask counter-questions, ask you to re-narrate, or practice the shadowing drills!"
+        )
+    except Exception as e:
+        await emit_sheet_error(
+            context,
+            component_attempted="CanvasLectureCard",
+            error_message=f"Failed to deliver canvas lecture: {e}",
+            req_id=req_id,
+            details=str(e)
+        )
+        return json.dumps({"status": "error", "error": str(e), "req_id": req_id})
+
+@function_tool()
+async def switch_to_buddy_mode(context: RunContext) -> str:
+    """Switches from Tutor mode back to friendly conversational Buddy mode while preserving all learning memory."""
+    tracker.exit_tutor_mode()
+    if langgraph_engine:
+        langgraph_engine.update_state({"active_mode": "buddy"})
+    summary = tracker.get_learner_summary()
+    await send_room_text(context, "progress", json.dumps(summary))
+    genui_logger.info("Switched to buddy mode.")
+    return "[BUDDY MODE ACTIVATED] Switched back to friendly casual conversation mode. Chat warmly and softly point out grammar slips."
+
+@function_tool()
+async def switch_to_tutor_mode(context: RunContext, topic: str = "Nouns", session_type: str = "grammar_mastery") -> str:
+    """Switches into Master Tutor Mode to deliver an educational lecture, interactive visual canvas, and practice drills."""
+    tracker.enter_tutor_mode(topic=topic)
+    if langgraph_engine:
+        langgraph_engine.update_state({"active_mode": "tutor_lecture", "current_topic": topic, "session_type": session_type})
+    summary = tracker.get_learner_summary()
+    await send_room_text(context, "progress", json.dumps(summary))
+    genui_logger.info(f"Switched to tutor mode for {topic} ({session_type}).")
+    return f"[TUTOR MODE ACTIVATED] Master Tutor active for '{topic}' ({session_type}). Ready to deliver lecture via deliver_canvas_lecture!"
+
+@function_tool()
+async def renarrate_lecture(context: RunContext, analogy_style: Optional[str] = "everyday") -> str:
+    """Re-narrates the current topic using alternative analogies (software engineering, business, or everyday life)."""
+    if analogy_style:
+        tracker.update_learner_preferences({"analogy_style": analogy_style})
+    return f"[RE-NARRATION ACTIVATED] Re-explain the current concept clearly using fresh {analogy_style} analogies in 2-3 spoken sentences."
+
+@function_tool()
+async def exit_tutor_mode(context: RunContext) -> str:
+    """Exits Tutor Mode and returns to friendly conversational Buddy Mode."""
+    tracker.exit_tutor_mode()
+    if langgraph_engine:
+        langgraph_engine.update_state({"active_mode": "buddy"})
+    summary = tracker.get_learner_summary()
+    await send_room_text(context, "progress", json.dumps(summary))
+    genui_logger.info("Exited tutor mode to buddy mode.")
+    return "[BUDDY MODE ACTIVATED] Switched back to friendly casual conversation mode."
+
 # Native LiveKit in-process function tools with RunContext
 IN_PROCESS_TOOLS = [
+    start_tutor_mode,
+    switch_to_tutor_mode,
+    switch_to_buddy_mode,
+    deliver_canvas_lecture,
+    renarrate_lecture,
+    complete_homework,
+    assign_homework,
+    record_pattern_mastery,
+    exit_tutor_mode,
     query_grammar_rag,
     trigger_quiz,
     generate_quiz,
@@ -903,6 +1216,33 @@ async def entrypoint(ctx: agents.JobContext):
     @ctx.room.local_participant.register_rpc_method("getLastSheet")
     async def rpc_get_last_sheet_alias(data: rtc.RpcInvocationData) -> str:
         return await rpc_get_last_sheet(data)
+
+    @ctx.room.local_participant.register_rpc_method("getTutorState")
+    async def rpc_get_tutor_state(data: rtc.RpcInvocationData) -> str:
+        try:
+            return json.dumps(tracker.get_tutor_state())
+        except Exception as e:
+            genui_logger.error(f"rpc_get_tutor_state error: {e}")
+            return json.dumps({"error": str(e)})
+
+    @ctx.room.local_participant.register_rpc_method("toggleTutorMode")
+    async def rpc_toggle_tutor_mode(data: rtc.RpcInvocationData) -> str:
+        try:
+            params = json.loads(data.payload) if data.payload else {}
+            target = params.get("mode")
+            topic = params.get("topic")
+            current = tracker.get_state().get("active_mode", "buddy")
+            if target == "tutor" or current != "tutor":
+                st = tracker.activate_tutor_mode(topic=topic)
+            else:
+                st = tracker.exit_tutor_mode()
+            summary = tracker.get_learner_summary()
+            await send_room_text(None, "progress", json.dumps(summary))
+            genui_logger.event("TUTOR_MODE_TOGGLED", f"Active mode: {st.get('active_mode')}, Topic: {st.get('current_topic')}")
+            return json.dumps(st)
+        except Exception as e:
+            genui_logger.error(f"rpc_toggle_tutor_mode error: {e}")
+            return json.dumps({"error": str(e)})
 
     @ctx.room.local_participant.register_rpc_method("submitQuizAnswer")
     async def rpc_submit_quiz_answer(data: rtc.RpcInvocationData) -> str:
@@ -1090,6 +1430,104 @@ async def entrypoint(ctx: agents.JobContext):
             genui_logger.error(f"rpc_demonstrate_grammar_movement error: {e}")
             return json.dumps({"error": str(e)})
 
+    @ctx.room.local_participant.register_rpc_method("getCurriculumCatalog")
+    async def rpc_get_curriculum_catalog(data: rtc.RpcInvocationData) -> str:
+        try:
+            return json.dumps(tracker.get_curriculum_catalog())
+        except Exception as e:
+            genui_logger.error(f"rpc_get_curriculum_catalog error: {e}")
+            return json.dumps({"error": str(e)})
+
+    @ctx.room.local_participant.register_rpc_method("getLectureHistory")
+    async def rpc_get_lecture_history(data: rtc.RpcInvocationData) -> str:
+        try:
+            params = json.loads(data.payload) if data.payload else {}
+            st = params.get("session_type")
+            limit = int(params.get("limit", 30))
+            return json.dumps(tracker.get_lecture_history(limit=limit, session_type=st))
+        except Exception as e:
+            genui_logger.error(f"rpc_get_lecture_history error: {e}")
+            return json.dumps({"error": str(e)})
+
+    @ctx.room.local_participant.register_rpc_method("updateLearnerPreferences")
+    async def rpc_update_learner_preferences(data: rtc.RpcInvocationData) -> str:
+        try:
+            params = json.loads(data.payload) if data.payload else {}
+            res = tracker.update_learner_preferences(params)
+            summary = tracker.get_learner_summary()
+            await send_room_text(None, "progress", json.dumps(summary))
+            return json.dumps(res)
+        except Exception as e:
+            genui_logger.error(f"rpc_update_learner_preferences error: {e}")
+            return json.dumps({"error": str(e)})
+
+    @ctx.room.local_participant.register_rpc_method("deliverCanvasLecture")
+    async def rpc_deliver_canvas_lecture(data: rtc.RpcInvocationData) -> str:
+        req_id = f"req_lec_{int(time.time() * 1000)}"
+        try:
+            params = json.loads(data.payload) if data.payload else {}
+            phase = int(params.get("phase_index", 1))
+            topic = params.get("topic", "Nouns")
+            submod = params.get("submodule")
+            st = params.get("session_type", "grammar_mastery")
+            session = tracker.get_dynamic_course_session(
+                topic=topic,
+                submodule=submod,
+                session_type=st,
+                phase_index=phase
+            )
+            saved = tracker.save_lecture_session(
+                topic=session["topic"],
+                submodule=session["submodule"],
+                phase_index=session["phase_index"],
+                session_type=session["session_type"],
+                spoken_summary=session["spoken_summary"],
+                paragraphs=session["paragraphs"],
+                canvas_type=session["canvas_type"],
+                canvas_config=session["canvas_config"],
+                repetition_items=session.get("repetition_items", []),
+                key_takeaways=session.get("key_takeaways", [])
+            )
+            if langgraph_engine:
+                langgraph_engine.update_state({
+                    "active_mode": "tutor_qa",
+                    "current_topic": session["topic"],
+                    "submodule": session["submodule"],
+                    "phase_index": phase,
+                    "session_type": session["session_type"],
+                    "is_delivering_lecture": False,
+                    "lecture_data": saved
+                })
+            payload = {
+                "schema_version": "1.0",
+                "type": "genui_render",
+                "component": "CanvasLectureCard",
+                "props": {
+                    "id": saved["id"],
+                    "req_id": req_id,
+                    "topic": saved["topic"],
+                    "submodule": saved["submodule"],
+                    "phase_index": saved["phase_index"],
+                    "session_type": saved["session_type"],
+                    "spoken_summary": saved["spoken_summary"],
+                    "paragraphs": saved["paragraphs"],
+                    "key_takeaways": saved["key_takeaways"],
+                    "canvas_type": saved["canvas_type"],
+                    "canvas_config": saved["canvas_config"],
+                    "repetition_items": saved.get("repetition_items", []),
+                    "timestamp": saved["timestamp"]
+                }
+            }
+            persist_sheet_payload(req_id, "CanvasLectureCard", payload)
+            await send_room_text(None, "genui", json.dumps(payload))
+            summary = tracker.get_learner_summary()
+            await send_room_text(None, "progress", json.dumps(summary))
+            genui_logger.event("RPC_CANVAS_LECTURE_DELIVERED", session["submodule"], phase=phase, session_type=st)
+            return json.dumps(saved)
+        except Exception as e:
+            genui_logger.error(f"rpc_deliver_canvas_lecture error: {e}")
+            return json.dumps({"error": str(e)})
+
     # ── Periodic Authoritative Learner State Sync Loop ───────────────
     async def push_periodic_progress():
         """Periodically pushes authoritative learner summary to room on topic 'progress'."""
@@ -1226,7 +1664,7 @@ system_logger = get_logger("SYSTEM")
 ================================================================================
 FILE: mvp_talker_offline/backend/audio_server.py
 LANGUAGE: python
-LINES: 124
+LINES: 159
 PURPOSE: Isolated FastAPI microservice serving local Piper neural TTS (/v1/audio/speech) and LiveKit JWT token minting (/api/token)
 ================================================================================
 
@@ -1288,25 +1726,60 @@ def clean_tts_text(text: str) -> str:
     return cleaned
 
 def synthesize_wav_piper(text: str) -> bytes:
-    from piper import SynthesisConfig
     text = clean_tts_text(text)
     if not text:
         text = "..."
-    config = SynthesisConfig(
-        length_scale=PIPER_LENGTH_SCALE,
-        noise_scale=PIPER_NOISE_SCALE,
-        noise_w_scale=PIPER_NOISE_W_SCALE
-    )
+
+    # Tier 1: Local Piper ONNX Voice (preferred offline high-fidelity neural TTS)
+    if piper_voice is not None:
+        try:
+            from piper import SynthesisConfig
+            config = SynthesisConfig(
+                length_scale=PIPER_LENGTH_SCALE,
+                noise_scale=PIPER_NOISE_SCALE,
+                noise_w_scale=PIPER_NOISE_W_SCALE
+            )
+            with io.BytesIO() as wav_io:
+                with wave.open(wav_io, "wb") as wav_file:
+                    piper_voice.synthesize_wav(text, wav_file, syn_config=config)
+                return wav_io.getvalue()
+        except Exception as e:
+            tts_logger.error(f"Piper synthesis error, attempting fallback: {e}")
+
+    # Tier 2: pyttsx3 offline system TTS
+    try:
+        import pyttsx3
+        import tempfile
+        engine = pyttsx3.init()
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
+            tmp_path = tf.name
+        engine.save_to_file(text, tmp_path)
+        engine.runAndWait()
+        with open(tmp_path, "rb") as f:
+            data = f.read()
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        if data:
+            return data
+    except Exception as e:
+        tts_logger.warning(f"pyttsx3 fallback failed: {e}")
+
+    # Tier 3: Valid PCM WAV buffer fallback (ensures OpenAI TTS client never crashes with 500/AttributeError)
     with io.BytesIO() as wav_io:
         with wave.open(wav_io, "wb") as wav_file:
-            piper_voice.synthesize_wav(text, wav_file, syn_config=config)
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(22050)
+            wav_file.writeframes(b"\x00\x00" * 2205)  # 100ms silence
         return wav_io.getvalue()
 
 # --- Focused Piper TTS Endpoint ---
 @app.post("/v1/audio/speech")
 @app.post("/synthesize")
 async def speech(request: Request):
-    """OpenAI-compatible audio speech synthesis endpoint powered by local Piper TTS."""
+    """OpenAI-compatible audio speech synthesis endpoint powered by local Piper TTS with fallback."""
     data = await request.json()
     input_text = data.get("input", "") or data.get("text", "")
     if not input_text:
@@ -1402,7 +1875,7 @@ CORE TEACHING & CONVERSATIONAL RULES:
 ================================================================================
 FILE: mvp_talker_offline/requirements.txt
 LANGUAGE: text
-LINES: 23
+LINES: 32
 PURPOSE: Python backend requirements (livekit, faster-whisper, fastapi, uvicorn, rank-bm25, duckduckgo-search)
 ================================================================================
 
@@ -1425,10 +1898,19 @@ piper-tts>=1.8.0
 pyttsx3>=2.90
 edge-tts>=6.1.0
 
-# Memory & MCP Toolset
+# Memory, Vector & LangGraph Framework
 mcp>=1.24.0,<2
 aiosqlite>=0.20.0
 aiohttp>=3.9.0
+chromadb>=0.5.0
+langgraph>=1.2.0
+langgraph-checkpoint-sqlite>=3.0.0
+livekit-plugins-langchain>=1.8.0
+langchain-core>=1.0.0
+
+# Ingestion & Web Search
+pypdf>=6.0.0
+duckduckgo-search>=8.0.0
 
 
 ================================================================================

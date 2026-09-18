@@ -56,25 +56,60 @@ def clean_tts_text(text: str) -> str:
     return cleaned
 
 def synthesize_wav_piper(text: str) -> bytes:
-    from piper import SynthesisConfig
     text = clean_tts_text(text)
     if not text:
         text = "..."
-    config = SynthesisConfig(
-        length_scale=PIPER_LENGTH_SCALE,
-        noise_scale=PIPER_NOISE_SCALE,
-        noise_w_scale=PIPER_NOISE_W_SCALE
-    )
+
+    # Tier 1: Local Piper ONNX Voice (preferred offline high-fidelity neural TTS)
+    if piper_voice is not None:
+        try:
+            from piper import SynthesisConfig
+            config = SynthesisConfig(
+                length_scale=PIPER_LENGTH_SCALE,
+                noise_scale=PIPER_NOISE_SCALE,
+                noise_w_scale=PIPER_NOISE_W_SCALE
+            )
+            with io.BytesIO() as wav_io:
+                with wave.open(wav_io, "wb") as wav_file:
+                    piper_voice.synthesize_wav(text, wav_file, syn_config=config)
+                return wav_io.getvalue()
+        except Exception as e:
+            tts_logger.error(f"Piper synthesis error, attempting fallback: {e}")
+
+    # Tier 2: pyttsx3 offline system TTS
+    try:
+        import pyttsx3
+        import tempfile
+        engine = pyttsx3.init()
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
+            tmp_path = tf.name
+        engine.save_to_file(text, tmp_path)
+        engine.runAndWait()
+        with open(tmp_path, "rb") as f:
+            data = f.read()
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        if data:
+            return data
+    except Exception as e:
+        tts_logger.warning(f"pyttsx3 fallback failed: {e}")
+
+    # Tier 3: Valid PCM WAV buffer fallback (ensures OpenAI TTS client never crashes with 500/AttributeError)
     with io.BytesIO() as wav_io:
         with wave.open(wav_io, "wb") as wav_file:
-            piper_voice.synthesize_wav(text, wav_file, syn_config=config)
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(22050)
+            wav_file.writeframes(b"\x00\x00" * 2205)  # 100ms silence
         return wav_io.getvalue()
 
 # --- Focused Piper TTS Endpoint ---
 @app.post("/v1/audio/speech")
 @app.post("/synthesize")
 async def speech(request: Request):
-    """OpenAI-compatible audio speech synthesis endpoint powered by local Piper TTS."""
+    """OpenAI-compatible audio speech synthesis endpoint powered by local Piper TTS with fallback."""
     data = await request.json()
     input_text = data.get("input", "") or data.get("text", "")
     if not input_text:

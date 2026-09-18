@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   X,
@@ -6,13 +6,21 @@ import {
   BarChart3,
   RefreshCw,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  GraduationCap,
+  Play,
+  Sparkles,
+  Clock,
+  Repeat,
+  Briefcase,
+  MessageSquare
 } from 'lucide-react';
 import { useBuddyStore } from '../store';
 import type { DrawerTab } from '../types';
 import { SyllabusSection } from './SyllabusSection';
 
 export const SlideOverDrawer: React.FC = () => {
+  const [lectureFilter, setLectureFilter] = useState<string>('all');
   const {
     drawerOpen,
     toggleDrawer,
@@ -20,6 +28,9 @@ export const SlideOverDrawer: React.FC = () => {
     setActiveDrawerTab,
     activeChapter,
     learnerState,
+    lectureHistory,
+    pushInlineCanvasLecture,
+    deliverLecturePhase,
     triggerLLMQuiz
   } = useBuddyStore();
 
@@ -115,8 +126,9 @@ export const SlideOverDrawer: React.FC = () => {
             >
               {[
                 { id: 'syllabus', label: 'Roadmap', icon: BookOpen },
+                { id: 'lectures', label: `Lectures (${lectureHistory.length})`, icon: GraduationCap },
                 { id: 'analytics', label: 'Analytics', icon: BarChart3 },
-                { id: 'remediation', label: `Remediation (${failedQueue.length})`, icon: RefreshCw }
+                { id: 'remediation', label: `Errors (${failedQueue.length})`, icon: RefreshCw }
               ].map((tab) => {
                 const isActive = activeDrawerTab === tab.id;
                 const Icon = tab.icon;
@@ -321,6 +333,209 @@ export const SlideOverDrawer: React.FC = () => {
                       ))}
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* ── TAB 4: LECTURES & REVISION SESSIONS ── */}
+              {activeDrawerTab === 'lectures' && (
+                <div>
+                  {/* Practice Category Selection Filter Pills */}
+                  <div style={{ marginBottom: '16px' }}>
+                    <div style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-tertiary)', fontWeight: 600, letterSpacing: '0.06em', marginBottom: '8px' }}>
+                      Practice Session Categories
+                    </div>
+                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                      {[
+                        { id: 'all', label: 'All Sessions', icon: Sparkles },
+                        { id: 'grammar_mastery', label: 'Grammar', icon: GraduationCap },
+                        { id: 'sentence_repetition', label: 'Repetition', icon: Repeat },
+                        { id: 'workplace_office', label: 'Workplace', icon: Briefcase },
+                        { id: 'conversational_banter', label: 'Banter', icon: MessageSquare }
+                      ].map((tab) => {
+                        const Icon = tab.icon;
+                        const isSel = lectureFilter === tab.id;
+                        return (
+                          <button
+                            key={tab.id}
+                            onClick={() => setLectureFilter(tab.id)}
+                            style={{
+                              padding: '5px 10px',
+                              borderRadius: 'var(--radius-full)',
+                              fontSize: '11px',
+                              fontWeight: 500,
+                              background: isSel ? 'var(--accent)' : 'var(--surface-2)',
+                              color: isSel ? '#ffffff' : 'var(--text-secondary)',
+                              border: `1px solid ${isSel ? 'var(--accent)' : 'var(--border-subtle)'}`,
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '5px',
+                              transition: 'all 0.15s ease'
+                            }}
+                          >
+                            <Icon size={12} />
+                            <span>{tab.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Practice Launchers */}
+                  <div style={{ marginBottom: '20px' }}>
+                    <div style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-tertiary)', fontWeight: 600, letterSpacing: '0.06em', marginBottom: '8px' }}>
+                      Interactive Practice Launchers
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      {[
+                        { phase: 1, topic: 'Nouns', session_type: 'grammar_mastery', title: 'Nouns 1: Concrete vs Abstract', desc: 'Sensory perception vs Cognitive concepts' },
+                        { phase: 2, topic: 'Nouns', session_type: 'grammar_mastery', title: 'Nouns 2: Countable vs Uncountable', desc: 'Mass nouns (much/many, fewer/less)' },
+                        { phase: 3, topic: 'Nouns', session_type: 'grammar_mastery', title: 'Nouns 3: Collective Concord', desc: 'Unitary whole vs Individual members' },
+                        { phase: 4, topic: 'Nouns', session_type: 'grammar_mastery', title: 'Nouns 4: Compound Head Nouns', desc: 'Head noun pluralization (mothers-in-law)' },
+                        { phase: 5, topic: 'Nouns', session_type: 'grammar_mastery', title: 'Nouns 5: Possessive Genitives', desc: "Tom and Mary's vs Tom's and Mary's" },
+                        { phase: 1, topic: 'Conversational Fluency', session_type: 'sentence_repetition', title: '🗣️ Daily Repetition: Spoken Contractions', desc: 'Cadence & rhythm of gonna, wanna, could\'ve' },
+                        { phase: 1, topic: 'Workplace Communication', session_type: 'workplace_office', title: '💼 Workplace: Polite Softening & Requests', desc: 'Transforming blunt commands into diplomatic requests' }
+                      ].filter(item => lectureFilter === 'all' || item.session_type === lectureFilter).map((item, idx) => (
+                        <button
+                          key={idx}
+                          onClick={() => {
+                            deliverLecturePhase(item.phase, item.topic, item.session_type);
+                            toggleDrawer();
+                          }}
+                          style={{
+                            padding: '10px 12px',
+                            background: 'var(--surface-2)',
+                            border: '1px solid var(--border-subtle)',
+                            borderRadius: 'var(--radius-md)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            cursor: 'pointer',
+                            textAlign: 'left',
+                            transition: 'all 0.15s ease'
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.borderColor = 'var(--accent)';
+                            e.currentTarget.style.background = 'var(--surface-3)';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.borderColor = 'var(--border-subtle)';
+                            e.currentTarget.style.background = 'var(--surface-2)';
+                          }}
+                        >
+                          <div>
+                            <div style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                              {item.title}
+                            </div>
+                            <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                              {item.desc}
+                            </div>
+                          </div>
+                          <Play size={13} color="var(--accent)" />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Previous Generated Lectures List */}
+                  <div>
+                    <div style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-tertiary)', fontWeight: 600, letterSpacing: '0.06em', marginBottom: '8px' }}>
+                      Previous Saved Sessions ({lectureHistory.filter(l => lectureFilter === 'all' || (l.session_type || 'grammar_mastery') === lectureFilter).length})
+                    </div>
+                    {lectureHistory.filter(l => lectureFilter === 'all' || (l.session_type || 'grammar_mastery') === lectureFilter).length === 0 ? (
+                      <div
+                        style={{
+                          padding: '24px 16px',
+                          textAlign: 'center',
+                          background: 'var(--surface-0)',
+                          borderRadius: 'var(--radius-md)',
+                          border: '1px dashed var(--border-subtle)',
+                          color: 'var(--text-tertiary)'
+                        }}
+                      >
+                        <Sparkles size={20} color="var(--accent)" style={{ margin: '0 auto 8px', display: 'block' }} />
+                        <div style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-secondary)' }}>
+                          No Saved Sessions in This Category
+                        </div>
+                        <div style={{ fontSize: '11.5px', marginTop: '4px' }}>
+                          Launch a practice session above or ask Buddy in voice: "Teach me about nouns" or "Let's do sentence repetition"!
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                        {lectureHistory
+                          .filter(l => lectureFilter === 'all' || (l.session_type || 'grammar_mastery') === lectureFilter)
+                          .map((lec) => (
+                          <div
+                            key={lec.id}
+                            style={{
+                              padding: '12px 14px',
+                              background: 'var(--surface-2)',
+                              borderRadius: 'var(--radius-md)',
+                              border: '1px solid var(--border-subtle)',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '6px'
+                            }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <span style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                                  {lec.submodule}
+                                </span>
+                                <span
+                                  style={{
+                                    fontSize: '9.5px',
+                                    padding: '1px 6px',
+                                    borderRadius: '8px',
+                                    background: 'rgba(99, 102, 241, 0.15)',
+                                    color: '#818cf8',
+                                    fontWeight: 600,
+                                    textTransform: 'uppercase'
+                                  }}
+                                >
+                                  {lec.session_type || 'grammar'}
+                                </span>
+                              </div>
+                              <span style={{ fontSize: '10px', color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                <Clock size={10} />
+                                {lec.timestamp ? lec.timestamp.slice(11, 16) : 'Recent'}
+                              </span>
+                            </div>
+
+                            <div style={{ fontSize: '12px', color: 'var(--text-secondary)', fontStyle: 'italic', lineHeight: 1.4 }}>
+                              "{lec.spoken_summary ? lec.spoken_summary.slice(0, 110) + '...' : 'Interactive visual lecture'}"
+                            </div>
+
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '4px' }}>
+                              <button
+                                onClick={() => {
+                                  pushInlineCanvasLecture(lec);
+                                  toggleDrawer();
+                                }}
+                                style={{
+                                  background: 'rgba(99, 102, 241, 0.15)',
+                                  border: '1px solid var(--accent)',
+                                  color: 'var(--accent)',
+                                  fontSize: '11px',
+                                  fontWeight: 500,
+                                  padding: '4px 10px',
+                                  borderRadius: 'var(--radius-sm)',
+                                  cursor: 'pointer',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '4px'
+                                }}
+                              >
+                                <Sparkles size={11} />
+                                <span>Re-open / Revise</span>
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
