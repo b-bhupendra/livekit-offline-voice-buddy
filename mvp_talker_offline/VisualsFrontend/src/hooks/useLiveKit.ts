@@ -7,17 +7,19 @@ import {
 } from 'livekit-client';
 import { useBuddyStore } from '../store';
 import type { QuizQuestion, ContentionProps, GrammarMovementProps } from '../types';
+import { TRANSPORT_CONFIG, getActiveTransportInfo } from '../config/transport';
 
 const TOKEN_URL = 'http://localhost:8880/api/token?identity=web-user&room_name=buddy-room';
 
 /**
- * Phase 0: Native LiveKit WebRTC Transport Hook.
- * Makes the browser a full LiveKit Room Participant:
+ * Native LiveKit WebRTC Transport Hook.
+ * Manages full bidirectional WebRTC room participant lifecycle:
  *  1. Mints JWT token from backend (/api/token) and joins room over WebRTC
- *  2. Routes live agent voice audio directly to WebRTC audio elements with zero host latency
+ *  2. Routes live agent voice audio directly to WebRTC audio elements
  *  3. Routes browser microphone audio through room.localParticipant.setMicrophoneEnabled()
- *  4. Listens to text streams for topics: "transcript", "genui", "genui_token"
- *  5. Supports LiveKit RPC for answer evaluation and dispute resolution
+ *  4. Listens to text streams for topics: "transcript", "genui", "progress"
+ *  5. Executes native LiveKit RPC for quiz answer evaluation and contention resolution
+ *  6. Hydrates in-flight state via get_last_sheet RPC on reconnect
  */
 export function useLiveKit() {
   const roomRef = useRef<Room | null>(null);
@@ -43,6 +45,10 @@ export function useLiveKit() {
 
     async function initLiveKit() {
       try {
+        if (!TRANSPORT_CONFIG.isWebRTCStable) {
+          console.warn('[LiveKit Transport] WebRTC transport not marked stable.');
+        }
+        console.log('[LiveKit Transport]', getActiveTransportInfo());
         console.log('[LiveKit] Requesting access token from backend...');
         const res = await fetch(TOKEN_URL);
         if (!res.ok) {

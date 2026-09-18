@@ -55,6 +55,7 @@ from rag_store import RAGStore
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen-buddy")
 AUDIO_SERVER_URL = os.getenv("AUDIO_SERVER_URL", "http://127.0.0.1:8880/v1")
+LIVEKIT_TRANSPORT_MODE = os.getenv("LIVEKIT_TRANSPORT_MODE", "webrtc")
 
 tracker = SyllabusTracker()
 rag = RAGStore()
@@ -714,7 +715,7 @@ async def search_web_grammar(context: RunContext, query: str) -> str:
     except Exception as e:
         return f"Web search notice: {e}"
 
-# In-process function tools replacing external stdio FastMCP loopback
+# Native LiveKit in-process function tools with RunContext
 IN_PROCESS_TOOLS = [
     query_grammar_rag,
     trigger_quiz,
@@ -795,6 +796,7 @@ async def entrypoint(ctx: agents.JobContext):
 
     set_session_id(ctx.room.name if ctx.room else f"session_{int(time.time())}")
     system_logger.info(f"RTC session initialized for room: {get_session_id()}")
+    system_logger.info(f"Active transport mode: {LIVEKIT_TRANSPORT_MODE} (LiveKit WebRTC active, legacy SSE bridge retired)")
 
     @session.on("user_state_changed")
     def on_user_state(ev):

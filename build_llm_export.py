@@ -60,6 +60,7 @@ FE_CHUNKS = {
     ],
     "02_FE_STATE_AND_SERVICES.txt": [
         ("mvp_talker_offline/VisualsFrontend/src/types.ts", "Central TypeScript interfaces (FeedItem, QuizQuestion, ContentionProps, SyllabusData)", "typescript"),
+        ("mvp_talker_offline/VisualsFrontend/src/config/transport.ts", "Transport configuration establishing LiveKit WebRTC as authoritative transport and formally deprecating legacy SSE/stdio bridges", "typescript"),
         ("mvp_talker_offline/VisualsFrontend/src/store.ts", "Zustand state store managing sequential feed array, LiveKit room instance, drawer state, and LiveKit RPC actions", "typescript"),
         ("mvp_talker_offline/VisualsFrontend/src/hooks/useLiveKit.ts", "LiveKit WebRTC transport hook: room joining (/api/token), speaker audio track playback, text stream handling, and client RPC", "typescript"),
         ("mvp_talker_offline/VisualsFrontend/src/utils/bionic.ts", "Bionic reading text transformation algorithm bolding initial letters of words", "typescript"),
@@ -163,6 +164,7 @@ BE_CHUNKS = {
         ("mvp_talker_offline/backend/verify_phase3.py", "Automated test suite verifying streaming STT capabilities, StreamingFasterWhisperAdapter, and VoiceTurnPriorityManager", "python"),
         ("mvp_talker_offline/backend/verify_phase4.py", "Automated test suite verifying versioned GenUI schema ('1.0'), demonstrate_grammar_movement tool, and frontend motion integration", "python"),
         ("mvp_talker_offline/backend/verify_phase5.py", "Automated test suite verifying in-flight reconnects, SQLite sheet persistence, get_last_sheet RPC, structured logging, and sheet_error surfacing", "python"),
+        ("mvp_talker_offline/backend/headless_console_test.py", "Headless CLI runner scripting milestone execution via LiveKit Agents fake_job_context with GenUI ANSI event cards and assertions", "python"),
         ("mvp_talker_offline/data/curriculum.json", "Official 18-chapter English grammar curriculum definition with title, topics, rules, and coursework requirements", "json"),
         ("mvp_talker_offline/data/quiz_banks/chapter_01_bank.json", "Pre-verified milestone quiz bank schema for Chapter 1 (Present Simple & Continuous) with citations and explanations", "json"),
         ("mvp_talker_offline/data/stories/aesop_dilemmas.txt", "Sample narrative conversation scenario used by agent for conversational grammar practice", "text"),
