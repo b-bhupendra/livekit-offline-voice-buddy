@@ -111,7 +111,18 @@ export type GenUIComponent =
   | 'InteractiveWorksheet'
   | 'BionicSketchNote'
   | 'SyllabusProgressTree'
-  | 'GrammarMovement';
+  | 'GrammarMovement'
+  | 'sheet_error';
+
+export interface SheetErrorProps {
+  req_id?: string;
+  error_code?: string;
+  title?: string;
+  message: string;
+  component_attempted?: string;
+  retryable?: boolean;
+  details?: string;
+}
 
 export interface GenUIEvent {
   schema_version?: '1.0' | string;
@@ -171,9 +182,11 @@ export interface EventLogEntry {
 export type FeedItem =
   | { id: string; type: 'transcript'; speaker: 'user' | 'agent'; text: string; ts: string; is_interim?: boolean }
   | { id: string; type: 'streaming_card'; role: string; content: string }
-  | { id: string; type: 'quiz'; questions: QuizQuestion[]; source: 'bank' | 'llm_generated'; chapter?: number }
-  | { id: string; type: 'dispute'; data: ContentionProps }
-  | { id: string; type: 'notes'; notes: Record<string, unknown> }
-  | { id: string; type: 'movement'; data: GrammarMovementProps };
+  | { id: string; type: 'quiz'; questions: QuizQuestion[]; source: 'bank' | 'llm_generated'; chapter?: number; req_id?: string }
+  | { id: string; type: 'dispute'; data: ContentionProps; req_id?: string }
+  | { id: string; type: 'notes'; notes: Record<string, unknown>; req_id?: string }
+  | { id: string; type: 'movement'; data: GrammarMovementProps; req_id?: string }
+  | { id: string; type: 'sheet_error'; data: SheetErrorProps };
 
 export type DrawerTab = 'syllabus' | 'analytics' | 'remediation';
+

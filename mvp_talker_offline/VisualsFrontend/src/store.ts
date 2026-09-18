@@ -11,7 +11,8 @@ import type {
   ChapterInfo,
   GenUIEvent,
   LearnerSummary,
-  GrammarMovementProps
+  GrammarMovementProps,
+  SheetErrorProps
 } from './types';
 
 // ── Default 18-Chapter Curriculum Roadmap ─────────────────────────────────────
@@ -101,6 +102,7 @@ export interface BuddyStore {
   pushInlineDispute: (data: ContentionProps) => void;
   pushInlineNotes: (notes: Record<string, unknown>) => void;
   pushInlineMovement: (data: GrammarMovementProps) => void;
+  pushInlineSheetError: (data: SheetErrorProps) => void;
   pushGenUI: (evt: GenUIEvent) => void;
 
   submitAnswer: (questionId: string, optionId: string, chapter: number, rawText?: string) => Promise<QuizSubmitResult>;
@@ -108,6 +110,7 @@ export interface BuddyStore {
   triggerRevision: (chapter: number) => Promise<void>;
   fetchSyllabus: () => Promise<void>;
   fetchQuiz: (chapter: number, mode?: string) => Promise<void>;
+  fetchLastSheet: () => Promise<void>;
   disputeAnswer: (claim: string, questionId?: string) => Promise<void>;
   advanceChapter: () => Promise<void>;
   setSseConnected: (v: boolean) => void;
@@ -334,6 +337,13 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
     ]
   })),
 
+  pushInlineSheetError: (data) => set((s) => ({
+    feed: [
+      ...s.feed.filter((i) => i.type !== 'streaming_card'),
+      { id: data.req_id || Math.random().toString(36).slice(2, 9), type: 'sheet_error', data }
+    ]
+  })),
+
   pushGenUI: (evt) => {
     if (evt.component === 'QuizCard') {
       const questions = (evt.props?.questions as QuizQuestion[]) || [];
@@ -347,6 +357,8 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
       get().pushInlineDispute(evt.props as unknown as ContentionProps);
     } else if (evt.component === 'GrammarMovement') {
       get().pushInlineMovement(evt.props as unknown as GrammarMovementProps);
+    } else if (evt.component === 'sheet_error') {
+      get().pushInlineSheetError(evt.props as unknown as SheetErrorProps);
     }
   },
 
@@ -659,6 +671,51 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
     }
     // Fall back to LLM synthesis
     get().triggerLLMQuiz(chapter, mode);
+  },
+
+  fetchLastSheet: async () => {
+    const room = get().livekitRoom;
+    const agentId = getAgentParticipantIdentity(room);
+
+    if (room && room.state === 'connected' && agentId) {
+      try {
+        console.log(`[LiveKit RPC] Invoking get_last_sheet on ${agentId}...`);
+        const rpcRes = await room.localParticipant.performRpc({
+          destinationIdentity: agentId,
+          method: 'get_last_sheet',
+          payload: '',
+          responseTimeout: 4000
+        });
+        const data = JSON.parse(rpcRes);
+        if (data && data.status === 'ok' && data.payload) {
+          const reqId = data.req_id;
+          const alreadyRendered = get().feed.some(
+            (item: any) =>
+              item.req_id === reqId ||
+              item.id === reqId ||
+              item.data?.req_id === reqId ||
+              item.data?.id === reqId
+          );
+          if (!alreadyRendered) {
+            console.log(`[LiveKit In-Flight Reconnect] Hydrating last sheet ${data.component} (req_id=${reqId})`);
+            const payload = data.payload;
+            if (payload.type === 'genui_render') {
+              get().pushGenUI(payload as GenUIEvent);
+            } else if (data.component === 'sheet_error') {
+              get().pushInlineSheetError(payload.props || payload);
+            } else {
+              get().pushGenUI({
+                type: 'genui_render',
+                component: data.component,
+                props: payload.props || payload
+              });
+            }
+          }
+        }
+      } catch (rpcErr) {
+        console.warn('[LiveKit RPC] get_last_sheet hydration notice:', rpcErr);
+      }
+    }
   },
 
   advanceChapter: async () => {

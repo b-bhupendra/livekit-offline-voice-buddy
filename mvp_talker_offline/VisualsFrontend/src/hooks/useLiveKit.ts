@@ -113,6 +113,8 @@ export function useLiveKit() {
                   store.pushInlineDispute(evt.props as unknown as ContentionProps);
                 } else if (evt.component === 'GrammarMovement') {
                   store.pushInlineMovement(evt.props as unknown as GrammarMovementProps);
+                } else if (evt.component === 'sheet_error') {
+                  store.pushInlineSheetError(evt.props as any);
                 } else if (evt.component === 'SyllabusProgressTree') {
                   if (evt.props?.new_chapter) {
                     store.setActiveChapter(evt.props.new_chapter);
@@ -171,6 +173,8 @@ export function useLiveKit() {
                 store.pushInlineDispute(data.props);
               } else if (data.component === 'GrammarMovement') {
                 store.pushInlineMovement(data.props);
+              } else if (data.component === 'sheet_error') {
+                store.pushInlineSheetError(data.props || data);
               }
             } else if (topic === 'genui_token' || data.token) {
               store.appendStreamToken(data.token, data.role || 'llm');
@@ -193,6 +197,8 @@ export function useLiveKit() {
               store.pushInlineDispute(evt.props);
             } else if (evt.component === 'GrammarMovement') {
               store.pushInlineMovement(evt.props);
+            } else if (evt.component === 'sheet_error') {
+              store.pushInlineSheetError(evt.props || evt);
             }
             return JSON.stringify({ received: true });
           } catch (e) {
@@ -210,17 +216,21 @@ export function useLiveKit() {
           store.setLivekitConnected(true);
           store.setLivekitRoom(room);
           store.setSseConnected(true); // Signal online status to UI
-          // Hydrate syllabus immediately via LiveKit RPC
+          // Hydrate syllabus and in-flight last sheet immediately via LiveKit RPC
           store.fetchSyllabus().catch((err) => {
             console.warn('[LiveKit] Initial syllabus hydration notice:', err);
+          });
+          store.fetchLastSheet().catch((err) => {
+            console.warn('[LiveKit] Initial last sheet hydration notice:', err);
           });
         });
 
         room.on(RoomEvent.ParticipantConnected, (participant) => {
           const ident = participant.identity.toLowerCase();
           if (ident.includes('agent') || ident.includes('buddy') || participant.isAgent) {
-            console.log(`[LiveKit] Agent participant ${participant.identity} connected. Hydrating syllabus...`);
+            console.log(`[LiveKit] Agent participant ${participant.identity} connected. Hydrating syllabus and last sheet...`);
             useBuddyStore.getState().fetchSyllabus().catch(() => {});
+            useBuddyStore.getState().fetchLastSheet().catch(() => {});
           }
         });
 

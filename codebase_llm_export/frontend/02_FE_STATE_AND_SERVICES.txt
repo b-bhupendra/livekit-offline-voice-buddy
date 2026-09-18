@@ -1,7 +1,7 @@
 ================================================================================
 FILE: mvp_talker_offline/VisualsFrontend/src/types.ts
 LANGUAGE: typescript
-LINES: 179
+LINES: 192
 PURPOSE: Central TypeScript interfaces (FeedItem, QuizQuestion, ContentionProps, SyllabusData)
 ================================================================================
 
@@ -118,7 +118,18 @@ export type GenUIComponent =
   | 'InteractiveWorksheet'
   | 'BionicSketchNote'
   | 'SyllabusProgressTree'
-  | 'GrammarMovement';
+  | 'GrammarMovement'
+  | 'sheet_error';
+
+export interface SheetErrorProps {
+  req_id?: string;
+  error_code?: string;
+  title?: string;
+  message: string;
+  component_attempted?: string;
+  retryable?: boolean;
+  details?: string;
+}
 
 export interface GenUIEvent {
   schema_version?: '1.0' | string;
@@ -178,18 +189,20 @@ export interface EventLogEntry {
 export type FeedItem =
   | { id: string; type: 'transcript'; speaker: 'user' | 'agent'; text: string; ts: string; is_interim?: boolean }
   | { id: string; type: 'streaming_card'; role: string; content: string }
-  | { id: string; type: 'quiz'; questions: QuizQuestion[]; source: 'bank' | 'llm_generated'; chapter?: number }
-  | { id: string; type: 'dispute'; data: ContentionProps }
-  | { id: string; type: 'notes'; notes: Record<string, unknown> }
-  | { id: string; type: 'movement'; data: GrammarMovementProps };
+  | { id: string; type: 'quiz'; questions: QuizQuestion[]; source: 'bank' | 'llm_generated'; chapter?: number; req_id?: string }
+  | { id: string; type: 'dispute'; data: ContentionProps; req_id?: string }
+  | { id: string; type: 'notes'; notes: Record<string, unknown>; req_id?: string }
+  | { id: string; type: 'movement'; data: GrammarMovementProps; req_id?: string }
+  | { id: string; type: 'sheet_error'; data: SheetErrorProps };
 
 export type DrawerTab = 'syllabus' | 'analytics' | 'remediation';
+
 
 
 ================================================================================
 FILE: mvp_talker_offline/VisualsFrontend/src/store.ts
 LANGUAGE: typescript
-LINES: 738
+LINES: 795
 PURPOSE: Zustand state store managing sequential feed array, LiveKit room instance, drawer state, and LiveKit RPC actions
 ================================================================================
 
@@ -206,7 +219,8 @@ import type {
   ChapterInfo,
   GenUIEvent,
   LearnerSummary,
-  GrammarMovementProps
+  GrammarMovementProps,
+  SheetErrorProps
 } from './types';
 
 // ── Default 18-Chapter Curriculum Roadmap ─────────────────────────────────────
@@ -296,6 +310,7 @@ export interface BuddyStore {
   pushInlineDispute: (data: ContentionProps) => void;
   pushInlineNotes: (notes: Record<string, unknown>) => void;
   pushInlineMovement: (data: GrammarMovementProps) => void;
+  pushInlineSheetError: (data: SheetErrorProps) => void;
   pushGenUI: (evt: GenUIEvent) => void;
 
   submitAnswer: (questionId: string, optionId: string, chapter: number, rawText?: string) => Promise<QuizSubmitResult>;
@@ -303,6 +318,7 @@ export interface BuddyStore {
   triggerRevision: (chapter: number) => Promise<void>;
   fetchSyllabus: () => Promise<void>;
   fetchQuiz: (chapter: number, mode?: string) => Promise<void>;
+  fetchLastSheet: () => Promise<void>;
   disputeAnswer: (claim: string, questionId?: string) => Promise<void>;
   advanceChapter: () => Promise<void>;
   setSseConnected: (v: boolean) => void;
@@ -529,6 +545,13 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
     ]
   })),
 
+  pushInlineSheetError: (data) => set((s) => ({
+    feed: [
+      ...s.feed.filter((i) => i.type !== 'streaming_card'),
+      { id: data.req_id || Math.random().toString(36).slice(2, 9), type: 'sheet_error', data }
+    ]
+  })),
+
   pushGenUI: (evt) => {
     if (evt.component === 'QuizCard') {
       const questions = (evt.props?.questions as QuizQuestion[]) || [];
@@ -542,6 +565,8 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
       get().pushInlineDispute(evt.props as unknown as ContentionProps);
     } else if (evt.component === 'GrammarMovement') {
       get().pushInlineMovement(evt.props as unknown as GrammarMovementProps);
+    } else if (evt.component === 'sheet_error') {
+      get().pushInlineSheetError(evt.props as unknown as SheetErrorProps);
     }
   },
 
@@ -856,6 +881,51 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
     get().triggerLLMQuiz(chapter, mode);
   },
 
+  fetchLastSheet: async () => {
+    const room = get().livekitRoom;
+    const agentId = getAgentParticipantIdentity(room);
+
+    if (room && room.state === 'connected' && agentId) {
+      try {
+        console.log(`[LiveKit RPC] Invoking get_last_sheet on ${agentId}...`);
+        const rpcRes = await room.localParticipant.performRpc({
+          destinationIdentity: agentId,
+          method: 'get_last_sheet',
+          payload: '',
+          responseTimeout: 4000
+        });
+        const data = JSON.parse(rpcRes);
+        if (data && data.status === 'ok' && data.payload) {
+          const reqId = data.req_id;
+          const alreadyRendered = get().feed.some(
+            (item: any) =>
+              item.req_id === reqId ||
+              item.id === reqId ||
+              item.data?.req_id === reqId ||
+              item.data?.id === reqId
+          );
+          if (!alreadyRendered) {
+            console.log(`[LiveKit In-Flight Reconnect] Hydrating last sheet ${data.component} (req_id=${reqId})`);
+            const payload = data.payload;
+            if (payload.type === 'genui_render') {
+              get().pushGenUI(payload as GenUIEvent);
+            } else if (data.component === 'sheet_error') {
+              get().pushInlineSheetError(payload.props || payload);
+            } else {
+              get().pushGenUI({
+                type: 'genui_render',
+                component: data.component,
+                props: payload.props || payload
+              });
+            }
+          }
+        }
+      } catch (rpcErr) {
+        console.warn('[LiveKit RPC] get_last_sheet hydration notice:', rpcErr);
+      }
+    }
+  },
+
   advanceChapter: async () => {
     const room = get().livekitRoom;
     const agentId = getAgentParticipantIdentity(room);
@@ -936,7 +1006,7 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
 ================================================================================
 FILE: mvp_talker_offline/VisualsFrontend/src/hooks/useLiveKit.ts
 LANGUAGE: typescript
-LINES: 278
+LINES: 288
 PURPOSE: LiveKit WebRTC transport hook: room joining (/api/token), speaker audio track playback, text stream handling, and client RPC
 ================================================================================
 
@@ -1055,6 +1125,8 @@ export function useLiveKit() {
                   store.pushInlineDispute(evt.props as unknown as ContentionProps);
                 } else if (evt.component === 'GrammarMovement') {
                   store.pushInlineMovement(evt.props as unknown as GrammarMovementProps);
+                } else if (evt.component === 'sheet_error') {
+                  store.pushInlineSheetError(evt.props as any);
                 } else if (evt.component === 'SyllabusProgressTree') {
                   if (evt.props?.new_chapter) {
                     store.setActiveChapter(evt.props.new_chapter);
@@ -1113,6 +1185,8 @@ export function useLiveKit() {
                 store.pushInlineDispute(data.props);
               } else if (data.component === 'GrammarMovement') {
                 store.pushInlineMovement(data.props);
+              } else if (data.component === 'sheet_error') {
+                store.pushInlineSheetError(data.props || data);
               }
             } else if (topic === 'genui_token' || data.token) {
               store.appendStreamToken(data.token, data.role || 'llm');
@@ -1135,6 +1209,8 @@ export function useLiveKit() {
               store.pushInlineDispute(evt.props);
             } else if (evt.component === 'GrammarMovement') {
               store.pushInlineMovement(evt.props);
+            } else if (evt.component === 'sheet_error') {
+              store.pushInlineSheetError(evt.props || evt);
             }
             return JSON.stringify({ received: true });
           } catch (e) {
@@ -1152,17 +1228,21 @@ export function useLiveKit() {
           store.setLivekitConnected(true);
           store.setLivekitRoom(room);
           store.setSseConnected(true); // Signal online status to UI
-          // Hydrate syllabus immediately via LiveKit RPC
+          // Hydrate syllabus and in-flight last sheet immediately via LiveKit RPC
           store.fetchSyllabus().catch((err) => {
             console.warn('[LiveKit] Initial syllabus hydration notice:', err);
+          });
+          store.fetchLastSheet().catch((err) => {
+            console.warn('[LiveKit] Initial last sheet hydration notice:', err);
           });
         });
 
         room.on(RoomEvent.ParticipantConnected, (participant) => {
           const ident = participant.identity.toLowerCase();
           if (ident.includes('agent') || ident.includes('buddy') || participant.isAgent) {
-            console.log(`[LiveKit] Agent participant ${participant.identity} connected. Hydrating syllabus...`);
+            console.log(`[LiveKit] Agent participant ${participant.identity} connected. Hydrating syllabus and last sheet...`);
             useBuddyStore.getState().fetchSyllabus().catch(() => {});
+            useBuddyStore.getState().fetchLastSheet().catch(() => {});
           }
         });
 

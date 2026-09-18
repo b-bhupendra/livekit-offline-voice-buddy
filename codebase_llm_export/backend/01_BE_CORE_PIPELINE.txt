@@ -1,7 +1,7 @@
 ================================================================================
 FILE: mvp_talker_offline/backend/agent.py
 LANGUAGE: python
-LINES: 850
+LINES: 1070
 PURPOSE: LiveKit voice AI agent entrypoint: Faster-Whisper STT, Silero VAD, Piper TTS, Ollama LLM, in-process function tools (with RunContext UI streaming), and LiveKit RPC handlers
 ================================================================================
 
@@ -25,11 +25,17 @@ import asyncio
 import datetime
 import subprocess
 import json
+import sqlite3
 import aiohttp
 from typing import Optional, List, Dict, Any, Union
 import numpy as np
 from pathlib import Path
 from dotenv import load_dotenv
+
+from structured_logger import (
+    stt_logger, llm_logger, tts_logger, rag_logger, genui_logger, system_logger,
+    next_turn, set_session_id, get_session_id, get_turn_id
+)
 
 # Auto-reexec with local PortAudio library if needed
 lib_dir = str(Path.home() / ".local/usr/lib/x86_64-linux-gnu")
@@ -74,7 +80,7 @@ async def ensure_audio_server_async():
     if not is_audio_server_running():
         server_script = Path(__file__).resolve().parent / "audio_server.py"
         if server_script.exists():
-            print("Starting background local audio server (port 8880)...")
+            tts_logger.info("Starting background local audio server (port 8880)...")
             subprocess.Popen(
                 [sys.executable, str(server_script)],
                 stdout=subprocess.DEVNULL,
@@ -83,7 +89,7 @@ async def ensure_audio_server_async():
             )
             for _ in range(15):
                 if is_audio_server_running():
-                    print("Local audio server online.")
+                    tts_logger.info("Local audio server online.")
                     return
                 await asyncio.sleep(0.2)
 
@@ -126,12 +132,12 @@ CORE PEDAGOGICAL PILLARS & ANTI-HALLUCINATION RULES:
 class FasterWhisperSTT(stt.STT):
     def __init__(self, model_size="tiny.en", device="cpu", compute_type="int8"):
         super().__init__(capabilities=stt.STTCapabilities(streaming=True, interim_results=True))
-        print(f"Initializing in-memory Faster-Whisper ({model_size}) on {device} [100% offline]...")
+        stt_logger.info(f"Initializing in-memory Faster-Whisper ({model_size}) on {device} [100% offline]...")
         try:
             self._model = WhisperModel(model_size, device=device, compute_type=compute_type, local_files_only=True)
         except Exception:
             self._model = WhisperModel(model_size, device=device, compute_type=compute_type)
-        print("In-memory STT ready.")
+        stt_logger.info("In-memory STT ready.")
 
     async def _recognize_impl(
         self, buffer: utils.AudioBuffer, *, language=None, conn_options=None
@@ -168,7 +174,7 @@ class FasterWhisperSTT(stt.STT):
         text, detected_lang = await loop.run_in_executor(None, run_inference)
 
         if text:
-            print(f"\n[Faster-Whisper STT]: \"{text}\"")
+            stt_logger.info(f"Transcribed audio: \"{text}\" (lang={detected_lang})")
 
         return stt.SpeechEvent(
             type=stt.SpeechEventType.FINAL_TRANSCRIPT,
@@ -230,6 +236,7 @@ DATA_DIR = WORKSPACE_ROOT / "data"
 DB_PATH = DATA_DIR / "memory.db"
 
 def get_db_connection():
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
     with conn:
@@ -250,7 +257,93 @@ def get_db_connection():
                 grammar_rule TEXT
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS sheet_payloads (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                req_id TEXT UNIQUE NOT NULL,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                component TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                session_id TEXT
+            )
+        """)
     return conn
+
+def persist_sheet_payload(req_id: str, component: str, payload_data: Union[Dict[str, Any], str], session_id: Optional[str] = None) -> None:
+    """Persist a GenUI sheet payload keyed by req_id in SQLite for in-flight reconnect hydration."""
+    try:
+        payload_str = json.dumps(payload_data) if isinstance(payload_data, dict) else str(payload_data)
+        sid = session_id or get_session_id()
+        with get_db_connection() as conn:
+            conn.execute("""
+                INSERT INTO sheet_payloads (req_id, component, payload, session_id)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(req_id) DO UPDATE SET
+                    component=excluded.component,
+                    payload=excluded.payload,
+                    session_id=excluded.session_id,
+                    timestamp=CURRENT_TIMESTAMP
+            """, (req_id, component, payload_str, sid))
+            conn.commit()
+        genui_logger.event("SHEET_PERSISTED", f"req_id={req_id}, component={component}", req_id=req_id, component=component)
+    except Exception as e:
+        genui_logger.error(f"Failed to persist sheet payload req_id={req_id}: {e}")
+
+def get_last_sheet_payload() -> Optional[Dict[str, Any]]:
+    """Retrieve the most recent sheet payload from SQLite."""
+    try:
+        with get_db_connection() as conn:
+            row = conn.execute("""
+                SELECT req_id, component, payload, timestamp, session_id
+                FROM sheet_payloads
+                ORDER BY id DESC
+                LIMIT 1
+            """).fetchone()
+            if row:
+                try:
+                    parsed_payload = json.loads(row["payload"])
+                except Exception:
+                    parsed_payload = row["payload"]
+                return {
+                    "req_id": row["req_id"],
+                    "component": row["component"],
+                    "payload": parsed_payload,
+                    "timestamp": row["timestamp"],
+                    "session_id": row["session_id"],
+                    "status": "ok"
+                }
+    except Exception as e:
+        genui_logger.error(f"Failed to fetch last sheet payload from SQLite: {e}")
+    return None
+
+async def emit_sheet_error(
+    context: Optional[RunContext],
+    component_attempted: str,
+    error_message: str,
+    req_id: Optional[str] = None,
+    details: Optional[str] = None,
+    retryable: bool = True
+) -> Dict[str, Any]:
+    """Gracefully surfaces generation errors directly to the connected room as an inline GenUI card."""
+    rid = req_id or f"req_err_{int(time.time() * 1000)}"
+    error_payload = {
+        "schema_version": "1.0",
+        "type": "genui_render",
+        "component": "sheet_error",
+        "props": {
+            "req_id": rid,
+            "error_code": "GENUI_SYNTHESIS_ERROR",
+            "title": f"Interactive {component_attempted} Unavailable",
+            "message": error_message,
+            "component_attempted": component_attempted,
+            "retryable": retryable,
+            "details": details or error_message
+        }
+    }
+    genui_logger.error(f"Surfacing GenUI error: {error_message} for component {component_attempted}", req_id=rid)
+    persist_sheet_payload(rid, "sheet_error", error_payload)
+    await send_room_text(context, "genui", json.dumps(error_payload))
+    return error_payload
 
 async def send_room_text(context: Optional[RunContext], topic: str, payload_str: str):
     """
@@ -266,7 +359,7 @@ async def send_room_text(context: Optional[RunContext], topic: str, payload_str:
         try:
             await room.local_participant.send_text(payload_str, topic=topic)
         except Exception as e:
-            print(f"[send_room_text] send_text({topic}) failed: {e}")
+            genui_logger.error(f"send_text({topic}) failed: {e}")
 
 async def broadcast_livekit_text(topic: str, payload_str: str):
     await send_room_text(None, topic, payload_str)
@@ -309,11 +402,13 @@ async def _ollama_stream(prompt: str, system: str = "", model: str = None):
                         except json.JSONDecodeError:
                             continue
     except Exception as e:
+        llm_logger.error(f"Ollama streaming error: {e}")
         yield f"[Ollama error: {e}]"
 
 @function_tool()
 async def query_grammar_rag(context: RunContext, query: str) -> str:
     """Query verified Oxford Guide and Arihant General English grammar chunks for rules and citations."""
+    rag_logger.info(f"Querying grammar RAG: \"{query}\"")
     active_info = tracker.get_active_chapter()
     active_ch = active_info.get("chapter_idx", 1)
     results = rag.hybrid_search(query, top_k=3, chapter_filter=active_ch)
@@ -322,6 +417,7 @@ async def query_grammar_rag(context: RunContext, query: str) -> str:
     if not results:
         emb_status = rag.get_embedding_status()
         if not emb_status.get("is_available"):
+            rag_logger.warning("Local embedding service unreachable during RAG query")
             return (
                 f"[Embedding Service Offline]: Local embedding engine ({emb_status.get('model')}) is unreachable. "
                 f"Sparse keyword search returned no direct matches in the local grammar reference. "
@@ -329,6 +425,7 @@ async def query_grammar_rag(context: RunContext, query: str) -> str:
             )
         return "No direct grammar matches found in local reference."
     
+    rag_logger.info(f"RAG search returned {len(results)} chunks")
     chunks = [
         f"[{r.get('source_title', 'Grammar Guide')} - Section: {r.get('section_title', '')}]\n{r['text']}"
         for r in results
@@ -341,29 +438,46 @@ async def query_grammar_rag(context: RunContext, query: str) -> str:
 @function_tool()
 async def trigger_quiz(context: RunContext, chapter: int, mode: str = "milestone") -> str:
     """Generate or retrieve a grammar quiz for the active chapter and push UI updates directly via LiveKit text stream."""
-    qs = quizzer.get_milestone_quiz(chapter, count=5) if mode == "milestone" else quizzer.get_checkpoint_quiz(chapter, count=3)
-    
-    # Broadcast native LiveKit GenUI artifact directly to browser timeline
-    payload = {
-        "schema_version": "1.0",
-        "type": "genui_render",
-        "component": "QuizCard",
-        "props": {
-            "questions": qs,
+    req_id = f"req_quiz_{int(time.time() * 1000)}"
+    try:
+        qs = quizzer.get_milestone_quiz(chapter, count=5) if mode == "milestone" else quizzer.get_checkpoint_quiz(chapter, count=3)
+        if not qs:
+            raise ValueError(f"No questions found for chapter {chapter}")
+        
+        # Broadcast native LiveKit GenUI artifact directly to browser timeline
+        payload = {
+            "schema_version": "1.0",
+            "type": "genui_render",
+            "component": "QuizCard",
+            "props": {
+                "req_id": req_id,
+                "questions": qs,
+                "chapter": chapter,
+                "mode": mode,
+                "source": "llm_generated"
+            }
+        }
+        persist_sheet_payload(req_id, "QuizCard", payload)
+        await send_room_text(context, "genui", json.dumps(payload))
+        genui_logger.event("QUIZ_GENERATED", f"Chapter {chapter} ({mode})", req_id=req_id, count=len(qs))
+        
+        return json.dumps({
+            "status": "quiz_prepared",
+            "req_id": req_id,
             "chapter": chapter,
             "mode": mode,
-            "source": "llm_generated"
-        }
-    }
-    await send_room_text(context, "genui", json.dumps(payload))
-    
-    return json.dumps({
-        "status": "quiz_prepared",
-        "chapter": chapter,
-        "mode": mode,
-        "questions_count": len(qs),
-        "questions": qs
-    }, indent=2)
+            "questions_count": len(qs),
+            "questions": qs
+        }, indent=2)
+    except Exception as e:
+        await emit_sheet_error(
+            context,
+            component_attempted="QuizCard",
+            error_message=f"Could not generate quiz for Chapter {chapter}: {e}",
+            req_id=req_id,
+            details=str(e)
+        )
+        return json.dumps({"status": "error", "error": str(e), "req_id": req_id})
 
 @function_tool()
 async def generate_quiz(context: RunContext, chapter: int, mode: str = "milestone") -> str:
@@ -373,18 +487,32 @@ async def generate_quiz(context: RunContext, chapter: int, mode: str = "mileston
 @function_tool()
 async def dispute_answer(context: RunContext, user_claim: str) -> str:
     """Resolve a learner's dispute or contention regarding whether an answer is grammatically correct or acceptable."""
-    ruling = simulation.handle_answer_contention(user_claim)
-    
-    # Broadcast native LiveKit GenUI artifact directly to browser timeline
-    payload = {
-        "schema_version": "1.0",
-        "type": "genui_render",
-        "component": "ContentionResolver",
-        "props": ruling
-    }
-    await send_room_text(context, "genui", json.dumps(payload))
-    
-    return json.dumps(ruling, indent=2)
+    req_id = f"req_dispute_{int(time.time() * 1000)}"
+    try:
+        ruling = simulation.handle_answer_contention(user_claim)
+        ruling["req_id"] = req_id
+        
+        # Broadcast native LiveKit GenUI artifact directly to browser timeline
+        payload = {
+            "schema_version": "1.0",
+            "type": "genui_render",
+            "component": "ContentionResolver",
+            "props": ruling
+        }
+        persist_sheet_payload(req_id, "ContentionResolver", payload)
+        await send_room_text(context, "genui", json.dumps(payload))
+        genui_logger.event("DISPUTE_RESOLVED", f"Claim: {user_claim[:40]}", req_id=req_id)
+        
+        return json.dumps(ruling, indent=2)
+    except Exception as e:
+        await emit_sheet_error(
+            context,
+            component_attempted="ContentionResolver",
+            error_message=f"Failed to arbitrate contention: {e}",
+            req_id=req_id,
+            details=str(e)
+        )
+        return json.dumps({"status": "error", "error": str(e), "req_id": req_id})
 
 @function_tool()
 async def get_learner_progress(context: RunContext) -> str:
@@ -395,39 +523,54 @@ async def get_learner_progress(context: RunContext) -> str:
 @function_tool()
 async def generate_revision_notes(context: RunContext, chapter: int) -> str:
     """Synthesize structured study notes and common pitfalls for the specified chapter and push to the UI."""
-    active_ch = tracker.get_active_chapter()
-    rag_results = rag.hybrid_search(f"chapter {chapter} rules summary", top_k=4, chapter_filter=chapter)
-    context_text = "\n\n".join([r["text"] for r in rag_results]) if rag_results else ""
-    
-    notes_payload = {
-        "title": f"Chapter {chapter}: Mastery & Structure Notes",
-        "chapter": chapter,
-        "overview": f"Synthesized revision summary for Chapter {chapter} based on Oxford Guide & Arihant references.",
-        "rules": [
-            {
-                "title": "Core Syntactic Concord",
-                "body": context_text[:350] if context_text else "Subject-verb agreement must be preserved across clauses.",
-                "citation": f"Oxford Guide Ch {chapter}"
-            }
-        ],
-        "pitfalls": [
-            "Avoid subject-verb discord across intervening prepositional phrases."
-        ]
-    }
-    payload = {
-        "schema_version": "1.0",
-        "type": "genui_render",
-        "component": "BionicSketchNote",
-        "props": {"notes": notes_payload}
-    }
-    await send_room_text(context, "genui", json.dumps(payload))
-    
-    return json.dumps({
-        "chapter": chapter,
-        "title": f"Chapter {chapter} Revision",
-        "reference_excerpt": context_text[:800],
-        "status": "ready"
-    }, indent=2)
+    req_id = f"req_notes_{int(time.time() * 1000)}"
+    try:
+        active_ch = tracker.get_active_chapter()
+        rag_results = rag.hybrid_search(f"chapter {chapter} rules summary", top_k=4, chapter_filter=chapter)
+        context_text = "\n\n".join([r["text"] for r in rag_results]) if rag_results else ""
+        
+        notes_payload = {
+            "req_id": req_id,
+            "title": f"Chapter {chapter}: Mastery & Structure Notes",
+            "chapter": chapter,
+            "overview": f"Synthesized revision summary for Chapter {chapter} based on Oxford Guide & Arihant references.",
+            "rules": [
+                {
+                    "title": "Core Syntactic Concord",
+                    "body": context_text[:350] if context_text else "Subject-verb agreement must be preserved across clauses.",
+                    "citation": f"Oxford Guide Ch {chapter}"
+                }
+            ],
+            "pitfalls": [
+                "Avoid subject-verb discord across intervening prepositional phrases."
+            ]
+        }
+        payload = {
+            "schema_version": "1.0",
+            "type": "genui_render",
+            "component": "BionicSketchNote",
+            "props": {"notes": notes_payload, "req_id": req_id}
+        }
+        persist_sheet_payload(req_id, "BionicSketchNote", payload)
+        await send_room_text(context, "genui", json.dumps(payload))
+        genui_logger.event("REVISION_NOTES_GENERATED", f"Chapter {chapter}", req_id=req_id)
+        
+        return json.dumps({
+            "chapter": chapter,
+            "req_id": req_id,
+            "title": f"Chapter {chapter} Revision",
+            "reference_excerpt": context_text[:800],
+            "status": "ready"
+        }, indent=2)
+    except Exception as e:
+        await emit_sheet_error(
+            context,
+            component_attempted="BionicSketchNote",
+            error_message=f"Failed to generate revision notes for Chapter {chapter}: {e}",
+            req_id=req_id,
+            details=str(e)
+        )
+        return json.dumps({"status": "error", "error": str(e), "req_id": req_id})
 
 @function_tool()
 async def demonstrate_grammar_movement(
@@ -441,57 +584,72 @@ async def demonstrate_grammar_movement(
     rule_citation: str = "Oxford Guide Ch 2 & Arihant Rule 14"
 ) -> str:
     """Demonstrate syntactic movement (e.g. subject-auxiliary inversion, cleft sentences, passive shifts) with animated GenUI cards."""
-    if isinstance(initial_tokens, str):
-        try:
-            initial_tokens = json.loads(initial_tokens)
-        except Exception:
-            initial_tokens = None
-    if isinstance(transformed_tokens, str):
-        try:
-            transformed_tokens = json.loads(transformed_tokens)
-        except Exception:
-            transformed_tokens = None
+    req_id = f"req_movement_{int(time.time() * 1000)}"
+    try:
+        if isinstance(initial_tokens, str):
+            try:
+                initial_tokens = json.loads(initial_tokens)
+            except Exception:
+                initial_tokens = None
+        if isinstance(transformed_tokens, str):
+            try:
+                transformed_tokens = json.loads(transformed_tokens)
+            except Exception:
+                transformed_tokens = None
 
-    if not initial_tokens:
-        initial_tokens = [
-            {"id": "tok-1", "text": "She", "role": "subject"},
-            {"id": "tok-2", "text": "is", "role": "aux"},
-            {"id": "tok-3", "text": "reading", "role": "verb"},
-            {"id": "tok-4", "text": "the book.", "role": "object"}
-        ]
-    if not transformed_tokens:
-        transformed_tokens = [
-            {"id": "tok-2", "text": "Is", "role": "aux"},
-            {"id": "tok-1", "text": "she", "role": "subject"},
-            {"id": "tok-3", "text": "reading", "role": "verb"},
-            {"id": "tok-4", "text": "the book?", "role": "object"}
-        ]
+        if not initial_tokens:
+            initial_tokens = [
+                {"id": "tok-1", "text": "She", "role": "subject"},
+                {"id": "tok-2", "text": "is", "role": "aux"},
+                {"id": "tok-3", "text": "reading", "role": "verb"},
+                {"id": "tok-4", "text": "the book.", "role": "object"}
+            ]
+        if not transformed_tokens:
+            transformed_tokens = [
+                {"id": "tok-2", "text": "Is", "role": "aux"},
+                {"id": "tok-1", "text": "she", "role": "subject"},
+                {"id": "tok-3", "text": "reading", "role": "verb"},
+                {"id": "tok-4", "text": "the book?", "role": "object"}
+            ]
 
-    movement_id = f"movement_{int(time.time() * 1000)}"
-    props = {
-        "id": movement_id,
-        "title": title,
-        "rule": rule,
-        "chapter": chapter,
-        "initial_tokens": initial_tokens,
-        "transformed_tokens": transformed_tokens,
-        "explanation": explanation,
-        "rule_citation": rule_citation
-    }
+        movement_id = f"movement_{int(time.time() * 1000)}"
+        props = {
+            "id": movement_id,
+            "req_id": req_id,
+            "title": title,
+            "rule": rule,
+            "chapter": chapter,
+            "initial_tokens": initial_tokens,
+            "transformed_tokens": transformed_tokens,
+            "explanation": explanation,
+            "rule_citation": rule_citation
+        }
 
-    payload = {
-        "schema_version": "1.0",
-        "type": "genui_render",
-        "component": "GrammarMovement",
-        "props": props
-    }
-    await send_room_text(context, "genui", json.dumps(payload))
-    return json.dumps({
-        "status": "demonstration_rendered",
-        "movement_id": movement_id,
-        "title": title,
-        "chapter": chapter
-    }, indent=2)
+        payload = {
+            "schema_version": "1.0",
+            "type": "genui_render",
+            "component": "GrammarMovement",
+            "props": props
+        }
+        persist_sheet_payload(req_id, "GrammarMovement", payload)
+        await send_room_text(context, "genui", json.dumps(payload))
+        genui_logger.event("GRAMMAR_MOVEMENT_DEMO", title, req_id=req_id, movement_id=movement_id)
+        return json.dumps({
+            "status": "demonstration_rendered",
+            "req_id": req_id,
+            "movement_id": movement_id,
+            "title": title,
+            "chapter": chapter
+        }, indent=2)
+    except Exception as e:
+        await emit_sheet_error(
+            context,
+            component_attempted="GrammarMovement",
+            error_message=f"Failed to generate grammar movement demonstration: {e}",
+            req_id=req_id,
+            details=str(e)
+        )
+        return json.dumps({"status": "error", "error": str(e), "req_id": req_id})
 
 @function_tool()
 async def advance_chapter(context: RunContext) -> str:
@@ -518,7 +676,7 @@ async def log_learner_recast(context: RunContext, original_utterance: str, polis
             )
             conn.commit()
     except Exception as e:
-        print(f"[log_learner_recast] DB error: {e}")
+        system_logger.error(f"[log_learner_recast] DB error: {e}")
     return f"Logged recast: '{original_utterance}' -> '{polished_recast}' ({grammar_rule})"
 
 @function_tool()
@@ -533,7 +691,7 @@ async def save_conversation_turn(context: RunContext, user_message: str, assista
             )
             conn.commit()
     except Exception as e:
-        print(f"[save_conversation_turn] DB error: {e}")
+        system_logger.error(f"[save_conversation_turn] DB error: {e}")
     return "Saved turn successfully."
 
 @function_tool()
@@ -613,19 +771,22 @@ async def entrypoint(ctx: agents.JobContext):
         preemptive_generation=True,
     )
 
+    set_session_id(ctx.room.name if ctx.room else f"session_{int(time.time())}")
+    system_logger.info(f"RTC session initialized for room: {get_session_id()}")
+
     @session.on("user_state_changed")
     def on_user_state(ev):
         if ev.new_state == "speaking":
             voice_priority_lock.user_speaking = True
-            print("\n[Microphone: User is speaking...]")
+            stt_logger.info("User started speaking")
         elif ev.new_state == "listening":
             voice_priority_lock.user_speaking = False
-            print("\n[Microphone: Audio captured, processing utterance...]")
+            stt_logger.info("User stopped speaking, processing utterance...")
 
     @session.on("agent_state_changed")
     def on_agent_state(ev):
         voice_priority_lock.agent_state = str(ev.new_state).split('.')[-1].lower()
-        print(f"\n[Agent State]: {ev.new_state}")
+        llm_logger.info(f"Agent state changed to: {ev.new_state}")
 
     @session.on("user_input_transcribed")
     async def on_user_input(ev):
@@ -634,7 +795,11 @@ async def entrypoint(ctx: agents.JobContext):
         
         if transcript:
             if is_final:
-                print(f"\n[Transcribed Input] (final=True): \"{transcript}\"")
+                turn = next_turn()
+                stt_logger.info(f"Final user transcript: \"{transcript}\" (turn={turn})")
+            else:
+                stt_logger.debug(f"Interim user transcript: \"{transcript}\"")
+                
             if ctx.room and ctx.room.isconnected():
                 try:
                     await ctx.room.local_participant.send_text(
@@ -645,13 +810,14 @@ async def entrypoint(ctx: agents.JobContext):
                         }),
                         topic="transcript"
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    stt_logger.error(f"Failed to send transcript to room: {e}")
 
     @session.on("agent_speech_committed")
     async def on_agent_speech(ev):
         text = getattr(ev, "text", None) or getattr(ev, "transcript", None) or ""
         if text:
+            tts_logger.info(f"Agent speech committed: \"{text[:100]}...\"")
             if ctx.room and ctx.room.isconnected():
                 try:
                     await ctx.room.local_participant.send_text(
@@ -662,14 +828,39 @@ async def entrypoint(ctx: agents.JobContext):
                         }),
                         topic="transcript"
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    tts_logger.error(f"Failed to send agent speech to room: {e}")
+
+    @session.on("error")
+    def on_session_error(ev):
+        source = getattr(ev, "source", "unknown")
+        err = getattr(ev, "error", ev)
+        system_logger.error(f"LiveKit agent session error from {source}: {err}")
+
+    @session.on("metrics_collected")
+    def on_metrics_collected(ev):
+        metrics = getattr(ev, "metrics", ev)
+        system_logger.debug(f"Metrics collected: {metrics}")
 
     buddy = BuddyAgent()
     await session.start(agent=buddy, room=ctx.room)
     _active_room = ctx.room
 
     # ── LiveKit RPC Method Registrations on Agent Local Participant ──
+    @ctx.room.local_participant.register_rpc_method("get_last_sheet")
+    async def rpc_get_last_sheet(data: rtc.RpcInvocationData) -> str:
+        genui_logger.info("Client invoked get_last_sheet RPC on mount/reconnect")
+        sheet = get_last_sheet_payload()
+        if sheet:
+            genui_logger.event("LAST_SHEET_RETURNED", f"req_id={sheet.get('req_id')}, component={sheet.get('component')}")
+            return json.dumps(sheet)
+        genui_logger.info("No previous interactive sheet found in SQLite")
+        return json.dumps({"status": "empty", "message": "No previous interactive sheet found."})
+
+    @ctx.room.local_participant.register_rpc_method("getLastSheet")
+    async def rpc_get_last_sheet_alias(data: rtc.RpcInvocationData) -> str:
+        return await rpc_get_last_sheet(data)
+
     @ctx.room.local_participant.register_rpc_method("submitQuizAnswer")
     async def rpc_submit_quiz_answer(data: rtc.RpcInvocationData) -> str:
         try:
@@ -694,54 +885,73 @@ async def entrypoint(ctx: agents.JobContext):
                 }
             
             eval_result = quizzer.evaluate_answer(target_q, user_ans)
+            genui_logger.event("QUIZ_ANSWER_EVALUATED", f"q_id={q_id}, is_correct={eval_result.get('is_correct')}")
             # Push authoritative progress update immediately over WebRTC
             try:
                 await send_room_text(None, "progress", json.dumps(tracker.get_learner_summary()))
             except Exception as e:
-                print(f"[LiveKit] Failed to broadcast progress after answer: {e}")
+                genui_logger.error(f"Failed to broadcast progress after answer: {e}")
             return json.dumps(eval_result)
         except Exception as e:
+            genui_logger.error(f"rpc_submit_quiz_answer error: {e}")
             return json.dumps({"error": str(e), "is_correct": False})
 
     @ctx.room.local_participant.register_rpc_method("disputeAnswer")
     async def rpc_dispute_answer(data: rtc.RpcInvocationData) -> str:
+        req_id = f"req_dispute_{int(time.time() * 1000)}"
         try:
             params = json.loads(data.payload)
             user_claim = params.get("user_claim", "")
             ruling = simulation.handle_answer_contention(user_claim)
-            await send_room_text(None, "genui", json.dumps({
+            ruling["req_id"] = req_id
+            payload = {
+                "schema_version": "1.0",
                 "type": "genui_render",
                 "component": "ContentionResolver",
                 "props": ruling
-            }))
+            }
+            persist_sheet_payload(req_id, "ContentionResolver", payload)
+            await send_room_text(None, "genui", json.dumps(payload))
+            genui_logger.event("RPC_DISPUTE_ANSWER", f"Claim: {user_claim[:30]}", req_id=req_id)
             return json.dumps(ruling)
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            genui_logger.error(f"rpc_dispute_answer error: {e}")
+            await emit_sheet_error(None, component_attempted="ContentionResolver", error_message=str(e), req_id=req_id)
+            return json.dumps({"error": str(e), "req_id": req_id})
 
     @ctx.room.local_participant.register_rpc_method("triggerQuiz")
     async def rpc_trigger_quiz(data: rtc.RpcInvocationData) -> str:
+        req_id = f"req_quiz_{int(time.time() * 1000)}"
         try:
             params = json.loads(data.payload) if data.payload else {}
             chapter = int(params.get("chapter", tracker.get_active_chapter()))
             mode = params.get("mode", "milestone")
             qs = quizzer.get_milestone_quiz(chapter, count=5) if mode == "milestone" else quizzer.get_checkpoint_quiz(chapter, count=3)
-            await send_room_text(None, "genui", json.dumps({
+            payload = {
+                "schema_version": "1.0",
                 "type": "genui_render",
                 "component": "QuizCard",
-                "props": {"questions": qs, "chapter": chapter, "mode": mode, "source": "bank"}
-            }))
-            return json.dumps({"status": "ok", "questions": qs})
+                "props": {"req_id": req_id, "questions": qs, "chapter": chapter, "mode": mode, "source": "bank"}
+            }
+            persist_sheet_payload(req_id, "QuizCard", payload)
+            await send_room_text(None, "genui", json.dumps(payload))
+            genui_logger.event("RPC_QUIZ_TRIGGERED", f"Chapter {chapter}", req_id=req_id)
+            return json.dumps({"status": "ok", "req_id": req_id, "questions": qs})
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            genui_logger.error(f"rpc_trigger_quiz error: {e}")
+            await emit_sheet_error(None, component_attempted="QuizCard", error_message=str(e), req_id=req_id)
+            return json.dumps({"error": str(e), "req_id": req_id})
 
     @ctx.room.local_participant.register_rpc_method("triggerRevision")
     async def rpc_trigger_revision(data: rtc.RpcInvocationData) -> str:
+        req_id = f"req_notes_{int(time.time() * 1000)}"
         try:
             params = json.loads(data.payload) if data.payload else {}
             chapter = int(params.get("chapter", tracker.get_active_chapter()))
             rag_results = rag.hybrid_search(f"chapter {chapter} rules summary", top_k=4, chapter_filter=chapter)
             context_text = "\n\n".join([r["text"] for r in rag_results]) if rag_results else ""
             notes_payload = {
+                "req_id": req_id,
                 "title": f"Chapter {chapter}: Mastery & Structure Notes",
                 "chapter": chapter,
                 "overview": f"Synthesized revision summary for Chapter {chapter}.",
@@ -750,14 +960,20 @@ async def entrypoint(ctx: agents.JobContext):
                 ],
                 "pitfalls": ["Avoid subject-verb discord across intervening clauses."]
             }
-            await send_room_text(None, "genui", json.dumps({
+            payload = {
+                "schema_version": "1.0",
                 "type": "genui_render",
                 "component": "BionicSketchNote",
-                "props": {"notes": notes_payload}
-            }))
-            return json.dumps({"status": "ok", "notes": notes_payload})
+                "props": {"notes": notes_payload, "req_id": req_id}
+            }
+            persist_sheet_payload(req_id, "BionicSketchNote", payload)
+            await send_room_text(None, "genui", json.dumps(payload))
+            genui_logger.event("RPC_REVISION_TRIGGERED", f"Chapter {chapter}", req_id=req_id)
+            return json.dumps({"status": "ok", "req_id": req_id, "notes": notes_payload})
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            genui_logger.error(f"rpc_trigger_revision error: {e}")
+            await emit_sheet_error(None, component_attempted="BionicSketchNote", error_message=str(e), req_id=req_id)
+            return json.dumps({"error": str(e), "req_id": req_id})
 
     @ctx.room.local_participant.register_rpc_method("advanceChapter")
     async def rpc_advance_chapter(data: rtc.RpcInvocationData) -> str:
@@ -774,6 +990,7 @@ async def entrypoint(ctx: agents.JobContext):
             "component": "SyllabusProgressTree",
             "props": {"new_chapter": new_ch}
         }))
+        genui_logger.event("CHAPTER_ADVANCED", f"Advanced to Chapter {new_ch}")
         return json.dumps({"success": True, "active_chapter": new_ch})
 
     @ctx.room.local_participant.register_rpc_method("getSyllabus")
@@ -782,6 +999,7 @@ async def entrypoint(ctx: agents.JobContext):
             summary = tracker.get_learner_summary()
             return json.dumps(summary)
         except Exception as e:
+            genui_logger.error(f"rpc_get_syllabus error: {e}")
             return json.dumps({"error": str(e)})
 
     @ctx.room.local_participant.register_rpc_method("getQuiz")
@@ -799,6 +1017,7 @@ async def entrypoint(ctx: agents.JobContext):
                 qs = quizzer.get_milestone_quiz(chapter_idx, count=10)
             return json.dumps({"chapter": chapter_idx, "mode": mode, "questions": qs})
         except Exception as e:
+            genui_logger.error(f"rpc_get_quiz error: {e}")
             return json.dumps({"error": str(e), "questions": []})
 
     @ctx.room.local_participant.register_rpc_method("demonstrateGrammarMovement")
@@ -825,6 +1044,7 @@ async def entrypoint(ctx: agents.JobContext):
             )
             return res
         except Exception as e:
+            genui_logger.error(f"rpc_demonstrate_grammar_movement error: {e}")
             return json.dumps({"error": str(e)})
 
     # ── Periodic Authoritative Learner State Sync Loop ───────────────
@@ -838,7 +1058,7 @@ async def entrypoint(ctx: agents.JobContext):
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                print(f"[Periodic Progress] notice: {e}")
+                genui_logger.debug(f"Periodic progress broadcast notice: {e}")
 
     progress_task = asyncio.create_task(push_periodic_progress())
     ctx.add_shutdown_callback(lambda: progress_task.cancel())
@@ -847,10 +1067,10 @@ async def entrypoint(ctx: agents.JobContext):
     try:
         await send_room_text(None, "progress", json.dumps(tracker.get_learner_summary()))
     except Exception as e:
-        print(f"[LiveKit] Initial progress broadcast notice: {e}")
+        genui_logger.debug(f"Initial progress broadcast notice: {e}")
 
     greeting = tracker.get_startup_greeting()
-    print(f"\n[Agent]: Speaking initial greeting: \"{greeting}\"")
+    tts_logger.info(f"Agent initial greeting: \"{greeting}\"")
     await session.say(greeting, allow_interruptions=True)
 
 if __name__ == "__main__":
@@ -858,9 +1078,112 @@ if __name__ == "__main__":
 
 
 ================================================================================
+FILE: mvp_talker_offline/backend/structured_logger.py
+LANGUAGE: python
+LINES: 94
+PURPOSE: Localized structured logging subsystem with consistent session_id and sequential turn_id for STT, LLM, TTS, RAG, and GenUI
+================================================================================
+
+"""Localized Structured Logging System for LiveKit Voice Agent.
+Provides dedicated subsystem loggers with consistent session and turn IDs:
+- STT: Faster-Whisper transcription events, audio frames, interim/final latency
+- LLM: Generation tokens, inference prompt/completion, latency
+- TTS: Audio server synthesis, Piper chunk delivery, playout
+- RAG: Hybrid vector + keyword search, embedding availability
+- GenUI: Interactive sheets (QuizCard, ContentionResolver, Notes, GrammarMovement, sheet_error)
+"""
+
+import os
+import sys
+import time
+import json
+import logging
+import contextvars
+from datetime import datetime
+from typing import Any, Dict, Optional
+
+# Context variables for current session and turn tracing
+_current_session_id: contextvars.ContextVar[str] = contextvars.ContextVar("session_id", default="session_default")
+_current_turn_id: contextvars.ContextVar[int] = contextvars.ContextVar("turn_id", default=0)
+
+def set_session_id(session_id: str) -> None:
+    _current_session_id.set(session_id)
+
+def get_session_id() -> str:
+    return _current_session_id.get()
+
+def set_turn_id(turn_id: int) -> None:
+    _current_turn_id.set(turn_id)
+
+def get_turn_id() -> int:
+    return _current_turn_id.get()
+
+def next_turn() -> int:
+    new_turn = _current_turn_id.get() + 1
+    _current_turn_id.set(new_turn)
+    return new_turn
+
+class SubsystemLogAdapter(logging.LoggerAdapter):
+    """Logger adapter that injects subsystem name, session_id, and turn_id into every log record."""
+    def __init__(self, logger: logging.Logger, subsystem: str):
+        super().__init__(logger, {"subsystem": subsystem.upper()})
+        self.subsystem = subsystem.upper()
+
+    def process(self, msg: Any, kwargs: Dict[str, Any]) -> tuple:
+        extra = kwargs.get("extra", {})
+        session_id = extra.get("session_id", get_session_id())
+        turn_id = extra.get("turn_id", get_turn_id())
+        
+        # Build prefix
+        prefix = f"[{self.subsystem}] [sess={session_id} turn={turn_id}]"
+        
+        # If additional structured payload is provided in kwargs
+        structured_data = {k: v for k, v in kwargs.items() if k not in ("extra", "exc_info", "stack_info", "stacklevel")}
+        if structured_data:
+            msg = f"{msg} | {json.dumps(structured_data, default=str)}"
+            for k in list(structured_data.keys()):
+                kwargs.pop(k)
+
+        formatted_msg = f"{prefix} {msg}"
+        return formatted_msg, kwargs
+
+    def event(self, event_name: str, message: str = "", **kwargs):
+        """Log a structured domain event at INFO level."""
+        data_str = f" | {json.dumps(kwargs, default=str)}" if kwargs else ""
+        self.info(f"{event_name}: {message}{data_str}")
+
+# Set up base logger
+_base_logger = logging.getLogger("livekit.buddy")
+_base_logger.setLevel(logging.INFO)
+
+if not _base_logger.handlers:
+    _handler = logging.StreamHandler(sys.stdout)
+    _handler.setLevel(logging.INFO)
+    _formatter = logging.Formatter(
+        "%(asctime)s.%(msecs)03d %(levelname)s %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    )
+    _handler.setFormatter(_formatter)
+    _base_logger.addHandler(_handler)
+
+# Localized logger factories
+def get_logger(subsystem: str) -> SubsystemLogAdapter:
+    logger = logging.getLogger(f"livekit.buddy.{subsystem.lower()}")
+    return SubsystemLogAdapter(logger, subsystem)
+
+# Pre-initialized localized loggers for core voice subsystems
+stt_logger = get_logger("STT")
+llm_logger = get_logger("LLM")
+tts_logger = get_logger("TTS")
+rag_logger = get_logger("RAG")
+genui_logger = get_logger("GenUI")
+system_logger = get_logger("SYSTEM")
+
+
+================================================================================
 FILE: mvp_talker_offline/backend/audio_server.py
 LANGUAGE: python
-LINES: 111
+LINES: 114
 PURPOSE: Isolated FastAPI microservice serving local Piper neural TTS (/v1/audio/speech) and LiveKit JWT token minting (/api/token)
 ================================================================================
 
@@ -869,6 +1192,9 @@ import os
 import re
 import wave
 from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv()
 
 os.environ["HF_HUB_OFFLINE"] = "1"
 

@@ -12,6 +12,7 @@ import { InlineQuizCard } from './components/InlineQuizCard';
 import { InlineDisputeCard } from './components/InlineDisputeCard';
 import { InlineNotesCard } from './components/InlineNotesCard';
 import { InlineGrammarMovementCard } from './components/InlineGrammarMovementCard';
+import { InlineSheetErrorCard } from './components/InlineSheetErrorCard';
 import { StreamingCard } from './components/StreamingCard';
 
 export default function App() {
@@ -233,6 +234,11 @@ export default function App() {
               // ── Inline Syntactic Grammar Movement Card ──
               if (item.type === 'movement') {
                 return <InlineGrammarMovementCard key={item.id} data={item.data} />;
+              }
+
+              // ── Inline Sheet Error Card ──
+              if (item.type === 'sheet_error') {
+                return <InlineSheetErrorCard key={item.id} data={item.data} />;
               }
 
               return null;

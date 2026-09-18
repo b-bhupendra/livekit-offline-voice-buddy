@@ -3,6 +3,9 @@ import os
 import re
 import wave
 from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv()
 
 os.environ["HF_HUB_OFFLINE"] = "1"
 

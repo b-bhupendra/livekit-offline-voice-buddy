@@ -243,7 +243,7 @@ INCLUDES: BACKEND (LiveKit Agent, Engines, Pipeline) & FRONTEND (React 19 Canvas
 ================================================================================
 FILE: mvp_talker_offline/backend/agent.py
 LANGUAGE: python
-LINES: 850
+LINES: 1070
 PURPOSE: LiveKit voice AI agent entrypoint: Faster-Whisper STT, Silero VAD, Piper TTS, Ollama LLM, in-process function tools (with RunContext UI streaming), and LiveKit RPC handlers
 ================================================================================
 
@@ -267,11 +267,17 @@ import asyncio
 import datetime
 import subprocess
 import json
+import sqlite3
 import aiohttp
 from typing import Optional, List, Dict, Any, Union
 import numpy as np
 from pathlib import Path
 from dotenv import load_dotenv
+
+from structured_logger import (
+    stt_logger, llm_logger, tts_logger, rag_logger, genui_logger, system_logger,
+    next_turn, set_session_id, get_session_id, get_turn_id
+)
 
 # Auto-reexec with local PortAudio library if needed
 lib_dir = str(Path.home() / ".local/usr/lib/x86_64-linux-gnu")
@@ -316,7 +322,7 @@ async def ensure_audio_server_async():
     if not is_audio_server_running():
         server_script = Path(__file__).resolve().parent / "audio_server.py"
         if server_script.exists():
-            print("Starting background local audio server (port 8880)...")
+            tts_logger.info("Starting background local audio server (port 8880)...")
             subprocess.Popen(
                 [sys.executable, str(server_script)],
                 stdout=subprocess.DEVNULL,
@@ -325,7 +331,7 @@ async def ensure_audio_server_async():
             )
             for _ in range(15):
                 if is_audio_server_running():
-                    print("Local audio server online.")
+                    tts_logger.info("Local audio server online.")
                     return
                 await asyncio.sleep(0.2)
 
@@ -368,12 +374,12 @@ CORE PEDAGOGICAL PILLARS & ANTI-HALLUCINATION RULES:
 class FasterWhisperSTT(stt.STT):
     def __init__(self, model_size="tiny.en", device="cpu", compute_type="int8"):
         super().__init__(capabilities=stt.STTCapabilities(streaming=True, interim_results=True))
-        print(f"Initializing in-memory Faster-Whisper ({model_size}) on {device} [100% offline]...")
+        stt_logger.info(f"Initializing in-memory Faster-Whisper ({model_size}) on {device} [100% offline]...")
         try:
             self._model = WhisperModel(model_size, device=device, compute_type=compute_type, local_files_only=True)
         except Exception:
             self._model = WhisperModel(model_size, device=device, compute_type=compute_type)
-        print("In-memory STT ready.")
+        stt_logger.info("In-memory STT ready.")
 
     async def _recognize_impl(
         self, buffer: utils.AudioBuffer, *, language=None, conn_options=None
@@ -410,7 +416,7 @@ class FasterWhisperSTT(stt.STT):
         text, detected_lang = await loop.run_in_executor(None, run_inference)
 
         if text:
-            print(f"\n[Faster-Whisper STT]: \"{text}\"")
+            stt_logger.info(f"Transcribed audio: \"{text}\" (lang={detected_lang})")
 
         return stt.SpeechEvent(
             type=stt.SpeechEventType.FINAL_TRANSCRIPT,
@@ -472,6 +478,7 @@ DATA_DIR = WORKSPACE_ROOT / "data"
 DB_PATH = DATA_DIR / "memory.db"
 
 def get_db_connection():
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
     with conn:
@@ -492,7 +499,93 @@ def get_db_connection():
                 grammar_rule TEXT
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS sheet_payloads (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                req_id TEXT UNIQUE NOT NULL,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                component TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                session_id TEXT
+            )
+        """)
     return conn
+
+def persist_sheet_payload(req_id: str, component: str, payload_data: Union[Dict[str, Any], str], session_id: Optional[str] = None) -> None:
+    """Persist a GenUI sheet payload keyed by req_id in SQLite for in-flight reconnect hydration."""
+    try:
+        payload_str = json.dumps(payload_data) if isinstance(payload_data, dict) else str(payload_data)
+        sid = session_id or get_session_id()
+        with get_db_connection() as conn:
+            conn.execute("""
+                INSERT INTO sheet_payloads (req_id, component, payload, session_id)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(req_id) DO UPDATE SET
+                    component=excluded.component,
+                    payload=excluded.payload,
+                    session_id=excluded.session_id,
+                    timestamp=CURRENT_TIMESTAMP
+            """, (req_id, component, payload_str, sid))
+            conn.commit()
+        genui_logger.event("SHEET_PERSISTED", f"req_id={req_id}, component={component}", req_id=req_id, component=component)
+    except Exception as e:
+        genui_logger.error(f"Failed to persist sheet payload req_id={req_id}: {e}")
+
+def get_last_sheet_payload() -> Optional[Dict[str, Any]]:
+    """Retrieve the most recent sheet payload from SQLite."""
+    try:
+        with get_db_connection() as conn:
+            row = conn.execute("""
+                SELECT req_id, component, payload, timestamp, session_id
+                FROM sheet_payloads
+                ORDER BY id DESC
+                LIMIT 1
+            """).fetchone()
+            if row:
+                try:
+                    parsed_payload = json.loads(row["payload"])
+                except Exception:
+                    parsed_payload = row["payload"]
+                return {
+                    "req_id": row["req_id"],
+                    "component": row["component"],
+                    "payload": parsed_payload,
+                    "timestamp": row["timestamp"],
+                    "session_id": row["session_id"],
+                    "status": "ok"
+                }
+    except Exception as e:
+        genui_logger.error(f"Failed to fetch last sheet payload from SQLite: {e}")
+    return None
+
+async def emit_sheet_error(
+    context: Optional[RunContext],
+    component_attempted: str,
+    error_message: str,
+    req_id: Optional[str] = None,
+    details: Optional[str] = None,
+    retryable: bool = True
+) -> Dict[str, Any]:
+    """Gracefully surfaces generation errors directly to the connected room as an inline GenUI card."""
+    rid = req_id or f"req_err_{int(time.time() * 1000)}"
+    error_payload = {
+        "schema_version": "1.0",
+        "type": "genui_render",
+        "component": "sheet_error",
+        "props": {
+            "req_id": rid,
+            "error_code": "GENUI_SYNTHESIS_ERROR",
+            "title": f"Interactive {component_attempted} Unavailable",
+            "message": error_message,
+            "component_attempted": component_attempted,
+            "retryable": retryable,
+            "details": details or error_message
+        }
+    }
+    genui_logger.error(f"Surfacing GenUI error: {error_message} for component {component_attempted}", req_id=rid)
+    persist_sheet_payload(rid, "sheet_error", error_payload)
+    await send_room_text(context, "genui", json.dumps(error_payload))
+    return error_payload
 
 async def send_room_text(context: Optional[RunContext], topic: str, payload_str: str):
     """
@@ -508,7 +601,7 @@ async def send_room_text(context: Optional[RunContext], topic: str, payload_str:
         try:
             await room.local_participant.send_text(payload_str, topic=topic)
         except Exception as e:
-            print(f"[send_room_text] send_text({topic}) failed: {e}")
+            genui_logger.error(f"send_text({topic}) failed: {e}")
 
 async def broadcast_livekit_text(topic: str, payload_str: str):
     await send_room_text(None, topic, payload_str)
@@ -551,11 +644,13 @@ async def _ollama_stream(prompt: str, system: str = "", model: str = None):
                         except json.JSONDecodeError:
                             continue
     except Exception as e:
+        llm_logger.error(f"Ollama streaming error: {e}")
         yield f"[Ollama error: {e}]"
 
 @function_tool()
 async def query_grammar_rag(context: RunContext, query: str) -> str:
     """Query verified Oxford Guide and Arihant General English grammar chunks for rules and citations."""
+    rag_logger.info(f"Querying grammar RAG: \"{query}\"")
     active_info = tracker.get_active_chapter()
     active_ch = active_info.get("chapter_idx", 1)
     results = rag.hybrid_search(query, top_k=3, chapter_filter=active_ch)
@@ -564,6 +659,7 @@ async def query_grammar_rag(context: RunContext, query: str) -> str:
     if not results:
         emb_status = rag.get_embedding_status()
         if not emb_status.get("is_available"):
+            rag_logger.warning("Local embedding service unreachable during RAG query")
             return (
                 f"[Embedding Service Offline]: Local embedding engine ({emb_status.get('model')}) is unreachable. "
                 f"Sparse keyword search returned no direct matches in the local grammar reference. "
@@ -571,6 +667,7 @@ async def query_grammar_rag(context: RunContext, query: str) -> str:
             )
         return "No direct grammar matches found in local reference."
     
+    rag_logger.info(f"RAG search returned {len(results)} chunks")
     chunks = [
         f"[{r.get('source_title', 'Grammar Guide')} - Section: {r.get('section_title', '')}]\n{r['text']}"
         for r in results
@@ -583,29 +680,46 @@ async def query_grammar_rag(context: RunContext, query: str) -> str:
 @function_tool()
 async def trigger_quiz(context: RunContext, chapter: int, mode: str = "milestone") -> str:
     """Generate or retrieve a grammar quiz for the active chapter and push UI updates directly via LiveKit text stream."""
-    qs = quizzer.get_milestone_quiz(chapter, count=5) if mode == "milestone" else quizzer.get_checkpoint_quiz(chapter, count=3)
-    
-    # Broadcast native LiveKit GenUI artifact directly to browser timeline
-    payload = {
-        "schema_version": "1.0",
-        "type": "genui_render",
-        "component": "QuizCard",
-        "props": {
-            "questions": qs,
+    req_id = f"req_quiz_{int(time.time() * 1000)}"
+    try:
+        qs = quizzer.get_milestone_quiz(chapter, count=5) if mode == "milestone" else quizzer.get_checkpoint_quiz(chapter, count=3)
+        if not qs:
+            raise ValueError(f"No questions found for chapter {chapter}")
+        
+        # Broadcast native LiveKit GenUI artifact directly to browser timeline
+        payload = {
+            "schema_version": "1.0",
+            "type": "genui_render",
+            "component": "QuizCard",
+            "props": {
+                "req_id": req_id,
+                "questions": qs,
+                "chapter": chapter,
+                "mode": mode,
+                "source": "llm_generated"
+            }
+        }
+        persist_sheet_payload(req_id, "QuizCard", payload)
+        await send_room_text(context, "genui", json.dumps(payload))
+        genui_logger.event("QUIZ_GENERATED", f"Chapter {chapter} ({mode})", req_id=req_id, count=len(qs))
+        
+        return json.dumps({
+            "status": "quiz_prepared",
+            "req_id": req_id,
             "chapter": chapter,
             "mode": mode,
-            "source": "llm_generated"
-        }
-    }
-    await send_room_text(context, "genui", json.dumps(payload))
-    
-    return json.dumps({
-        "status": "quiz_prepared",
-        "chapter": chapter,
-        "mode": mode,
-        "questions_count": len(qs),
-        "questions": qs
-    }, indent=2)
+            "questions_count": len(qs),
+            "questions": qs
+        }, indent=2)
+    except Exception as e:
+        await emit_sheet_error(
+            context,
+            component_attempted="QuizCard",
+            error_message=f"Could not generate quiz for Chapter {chapter}: {e}",
+            req_id=req_id,
+            details=str(e)
+        )
+        return json.dumps({"status": "error", "error": str(e), "req_id": req_id})
 
 @function_tool()
 async def generate_quiz(context: RunContext, chapter: int, mode: str = "milestone") -> str:
@@ -615,18 +729,32 @@ async def generate_quiz(context: RunContext, chapter: int, mode: str = "mileston
 @function_tool()
 async def dispute_answer(context: RunContext, user_claim: str) -> str:
     """Resolve a learner's dispute or contention regarding whether an answer is grammatically correct or acceptable."""
-    ruling = simulation.handle_answer_contention(user_claim)
-    
-    # Broadcast native LiveKit GenUI artifact directly to browser timeline
-    payload = {
-        "schema_version": "1.0",
-        "type": "genui_render",
-        "component": "ContentionResolver",
-        "props": ruling
-    }
-    await send_room_text(context, "genui", json.dumps(payload))
-    
-    return json.dumps(ruling, indent=2)
+    req_id = f"req_dispute_{int(time.time() * 1000)}"
+    try:
+        ruling = simulation.handle_answer_contention(user_claim)
+        ruling["req_id"] = req_id
+        
+        # Broadcast native LiveKit GenUI artifact directly to browser timeline
+        payload = {
+            "schema_version": "1.0",
+            "type": "genui_render",
+            "component": "ContentionResolver",
+            "props": ruling
+        }
+        persist_sheet_payload(req_id, "ContentionResolver", payload)
+        await send_room_text(context, "genui", json.dumps(payload))
+        genui_logger.event("DISPUTE_RESOLVED", f"Claim: {user_claim[:40]}", req_id=req_id)
+        
+        return json.dumps(ruling, indent=2)
+    except Exception as e:
+        await emit_sheet_error(
+            context,
+            component_attempted="ContentionResolver",
+            error_message=f"Failed to arbitrate contention: {e}",
+            req_id=req_id,
+            details=str(e)
+        )
+        return json.dumps({"status": "error", "error": str(e), "req_id": req_id})
 
 @function_tool()
 async def get_learner_progress(context: RunContext) -> str:
@@ -637,39 +765,54 @@ async def get_learner_progress(context: RunContext) -> str:
 @function_tool()
 async def generate_revision_notes(context: RunContext, chapter: int) -> str:
     """Synthesize structured study notes and common pitfalls for the specified chapter and push to the UI."""
-    active_ch = tracker.get_active_chapter()
-    rag_results = rag.hybrid_search(f"chapter {chapter} rules summary", top_k=4, chapter_filter=chapter)
-    context_text = "\n\n".join([r["text"] for r in rag_results]) if rag_results else ""
-    
-    notes_payload = {
-        "title": f"Chapter {chapter}: Mastery & Structure Notes",
-        "chapter": chapter,
-        "overview": f"Synthesized revision summary for Chapter {chapter} based on Oxford Guide & Arihant references.",
-        "rules": [
-            {
-                "title": "Core Syntactic Concord",
-                "body": context_text[:350] if context_text else "Subject-verb agreement must be preserved across clauses.",
-                "citation": f"Oxford Guide Ch {chapter}"
-            }
-        ],
-        "pitfalls": [
-            "Avoid subject-verb discord across intervening prepositional phrases."
-        ]
-    }
-    payload = {
-        "schema_version": "1.0",
-        "type": "genui_render",
-        "component": "BionicSketchNote",
-        "props": {"notes": notes_payload}
-    }
-    await send_room_text(context, "genui", json.dumps(payload))
-    
-    return json.dumps({
-        "chapter": chapter,
-        "title": f"Chapter {chapter} Revision",
-        "reference_excerpt": context_text[:800],
-        "status": "ready"
-    }, indent=2)
+    req_id = f"req_notes_{int(time.time() * 1000)}"
+    try:
+        active_ch = tracker.get_active_chapter()
+        rag_results = rag.hybrid_search(f"chapter {chapter} rules summary", top_k=4, chapter_filter=chapter)
+        context_text = "\n\n".join([r["text"] for r in rag_results]) if rag_results else ""
+        
+        notes_payload = {
+            "req_id": req_id,
+            "title": f"Chapter {chapter}: Mastery & Structure Notes",
+            "chapter": chapter,
+            "overview": f"Synthesized revision summary for Chapter {chapter} based on Oxford Guide & Arihant references.",
+            "rules": [
+                {
+                    "title": "Core Syntactic Concord",
+                    "body": context_text[:350] if context_text else "Subject-verb agreement must be preserved across clauses.",
+                    "citation": f"Oxford Guide Ch {chapter}"
+                }
+            ],
+            "pitfalls": [
+                "Avoid subject-verb discord across intervening prepositional phrases."
+            ]
+        }
+        payload = {
+            "schema_version": "1.0",
+            "type": "genui_render",
+            "component": "BionicSketchNote",
+            "props": {"notes": notes_payload, "req_id": req_id}
+        }
+        persist_sheet_payload(req_id, "BionicSketchNote", payload)
+        await send_room_text(context, "genui", json.dumps(payload))
+        genui_logger.event("REVISION_NOTES_GENERATED", f"Chapter {chapter}", req_id=req_id)
+        
+        return json.dumps({
+            "chapter": chapter,
+            "req_id": req_id,
+            "title": f"Chapter {chapter} Revision",
+            "reference_excerpt": context_text[:800],
+            "status": "ready"
+        }, indent=2)
+    except Exception as e:
+        await emit_sheet_error(
+            context,
+            component_attempted="BionicSketchNote",
+            error_message=f"Failed to generate revision notes for Chapter {chapter}: {e}",
+            req_id=req_id,
+            details=str(e)
+        )
+        return json.dumps({"status": "error", "error": str(e), "req_id": req_id})
 
 @function_tool()
 async def demonstrate_grammar_movement(
@@ -683,57 +826,72 @@ async def demonstrate_grammar_movement(
     rule_citation: str = "Oxford Guide Ch 2 & Arihant Rule 14"
 ) -> str:
     """Demonstrate syntactic movement (e.g. subject-auxiliary inversion, cleft sentences, passive shifts) with animated GenUI cards."""
-    if isinstance(initial_tokens, str):
-        try:
-            initial_tokens = json.loads(initial_tokens)
-        except Exception:
-            initial_tokens = None
-    if isinstance(transformed_tokens, str):
-        try:
-            transformed_tokens = json.loads(transformed_tokens)
-        except Exception:
-            transformed_tokens = None
+    req_id = f"req_movement_{int(time.time() * 1000)}"
+    try:
+        if isinstance(initial_tokens, str):
+            try:
+                initial_tokens = json.loads(initial_tokens)
+            except Exception:
+                initial_tokens = None
+        if isinstance(transformed_tokens, str):
+            try:
+                transformed_tokens = json.loads(transformed_tokens)
+            except Exception:
+                transformed_tokens = None
 
-    if not initial_tokens:
-        initial_tokens = [
-            {"id": "tok-1", "text": "She", "role": "subject"},
-            {"id": "tok-2", "text": "is", "role": "aux"},
-            {"id": "tok-3", "text": "reading", "role": "verb"},
-            {"id": "tok-4", "text": "the book.", "role": "object"}
-        ]
-    if not transformed_tokens:
-        transformed_tokens = [
-            {"id": "tok-2", "text": "Is", "role": "aux"},
-            {"id": "tok-1", "text": "she", "role": "subject"},
-            {"id": "tok-3", "text": "reading", "role": "verb"},
-            {"id": "tok-4", "text": "the book?", "role": "object"}
-        ]
+        if not initial_tokens:
+            initial_tokens = [
+                {"id": "tok-1", "text": "She", "role": "subject"},
+                {"id": "tok-2", "text": "is", "role": "aux"},
+                {"id": "tok-3", "text": "reading", "role": "verb"},
+                {"id": "tok-4", "text": "the book.", "role": "object"}
+            ]
+        if not transformed_tokens:
+            transformed_tokens = [
+                {"id": "tok-2", "text": "Is", "role": "aux"},
+                {"id": "tok-1", "text": "she", "role": "subject"},
+                {"id": "tok-3", "text": "reading", "role": "verb"},
+                {"id": "tok-4", "text": "the book?", "role": "object"}
+            ]
 
-    movement_id = f"movement_{int(time.time() * 1000)}"
-    props = {
-        "id": movement_id,
-        "title": title,
-        "rule": rule,
-        "chapter": chapter,
-        "initial_tokens": initial_tokens,
-        "transformed_tokens": transformed_tokens,
-        "explanation": explanation,
-        "rule_citation": rule_citation
-    }
+        movement_id = f"movement_{int(time.time() * 1000)}"
+        props = {
+            "id": movement_id,
+            "req_id": req_id,
+            "title": title,
+            "rule": rule,
+            "chapter": chapter,
+            "initial_tokens": initial_tokens,
+            "transformed_tokens": transformed_tokens,
+            "explanation": explanation,
+            "rule_citation": rule_citation
+        }
 
-    payload = {
-        "schema_version": "1.0",
-        "type": "genui_render",
-        "component": "GrammarMovement",
-        "props": props
-    }
-    await send_room_text(context, "genui", json.dumps(payload))
-    return json.dumps({
-        "status": "demonstration_rendered",
-        "movement_id": movement_id,
-        "title": title,
-        "chapter": chapter
-    }, indent=2)
+        payload = {
+            "schema_version": "1.0",
+            "type": "genui_render",
+            "component": "GrammarMovement",
+            "props": props
+        }
+        persist_sheet_payload(req_id, "GrammarMovement", payload)
+        await send_room_text(context, "genui", json.dumps(payload))
+        genui_logger.event("GRAMMAR_MOVEMENT_DEMO", title, req_id=req_id, movement_id=movement_id)
+        return json.dumps({
+            "status": "demonstration_rendered",
+            "req_id": req_id,
+            "movement_id": movement_id,
+            "title": title,
+            "chapter": chapter
+        }, indent=2)
+    except Exception as e:
+        await emit_sheet_error(
+            context,
+            component_attempted="GrammarMovement",
+            error_message=f"Failed to generate grammar movement demonstration: {e}",
+            req_id=req_id,
+            details=str(e)
+        )
+        return json.dumps({"status": "error", "error": str(e), "req_id": req_id})
 
 @function_tool()
 async def advance_chapter(context: RunContext) -> str:
@@ -760,7 +918,7 @@ async def log_learner_recast(context: RunContext, original_utterance: str, polis
             )
             conn.commit()
     except Exception as e:
-        print(f"[log_learner_recast] DB error: {e}")
+        system_logger.error(f"[log_learner_recast] DB error: {e}")
     return f"Logged recast: '{original_utterance}' -> '{polished_recast}' ({grammar_rule})"
 
 @function_tool()
@@ -775,7 +933,7 @@ async def save_conversation_turn(context: RunContext, user_message: str, assista
             )
             conn.commit()
     except Exception as e:
-        print(f"[save_conversation_turn] DB error: {e}")
+        system_logger.error(f"[save_conversation_turn] DB error: {e}")
     return "Saved turn successfully."
 
 @function_tool()
@@ -855,19 +1013,22 @@ async def entrypoint(ctx: agents.JobContext):
         preemptive_generation=True,
     )
 
+    set_session_id(ctx.room.name if ctx.room else f"session_{int(time.time())}")
+    system_logger.info(f"RTC session initialized for room: {get_session_id()}")
+
     @session.on("user_state_changed")
     def on_user_state(ev):
         if ev.new_state == "speaking":
             voice_priority_lock.user_speaking = True
-            print("\n[Microphone: User is speaking...]")
+            stt_logger.info("User started speaking")
         elif ev.new_state == "listening":
             voice_priority_lock.user_speaking = False
-            print("\n[Microphone: Audio captured, processing utterance...]")
+            stt_logger.info("User stopped speaking, processing utterance...")
 
     @session.on("agent_state_changed")
     def on_agent_state(ev):
         voice_priority_lock.agent_state = str(ev.new_state).split('.')[-1].lower()
-        print(f"\n[Agent State]: {ev.new_state}")
+        llm_logger.info(f"Agent state changed to: {ev.new_state}")
 
     @session.on("user_input_transcribed")
     async def on_user_input(ev):
@@ -876,7 +1037,11 @@ async def entrypoint(ctx: agents.JobContext):
         
         if transcript:
             if is_final:
-                print(f"\n[Transcribed Input] (final=True): \"{transcript}\"")
+                turn = next_turn()
+                stt_logger.info(f"Final user transcript: \"{transcript}\" (turn={turn})")
+            else:
+                stt_logger.debug(f"Interim user transcript: \"{transcript}\"")
+                
             if ctx.room and ctx.room.isconnected():
                 try:
                     await ctx.room.local_participant.send_text(
@@ -887,13 +1052,14 @@ async def entrypoint(ctx: agents.JobContext):
                         }),
                         topic="transcript"
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    stt_logger.error(f"Failed to send transcript to room: {e}")
 
     @session.on("agent_speech_committed")
     async def on_agent_speech(ev):
         text = getattr(ev, "text", None) or getattr(ev, "transcript", None) or ""
         if text:
+            tts_logger.info(f"Agent speech committed: \"{text[:100]}...\"")
             if ctx.room and ctx.room.isconnected():
                 try:
                     await ctx.room.local_participant.send_text(
@@ -904,14 +1070,39 @@ async def entrypoint(ctx: agents.JobContext):
                         }),
                         topic="transcript"
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    tts_logger.error(f"Failed to send agent speech to room: {e}")
+
+    @session.on("error")
+    def on_session_error(ev):
+        source = getattr(ev, "source", "unknown")
+        err = getattr(ev, "error", ev)
+        system_logger.error(f"LiveKit agent session error from {source}: {err}")
+
+    @session.on("metrics_collected")
+    def on_metrics_collected(ev):
+        metrics = getattr(ev, "metrics", ev)
+        system_logger.debug(f"Metrics collected: {metrics}")
 
     buddy = BuddyAgent()
     await session.start(agent=buddy, room=ctx.room)
     _active_room = ctx.room
 
     # ── LiveKit RPC Method Registrations on Agent Local Participant ──
+    @ctx.room.local_participant.register_rpc_method("get_last_sheet")
+    async def rpc_get_last_sheet(data: rtc.RpcInvocationData) -> str:
+        genui_logger.info("Client invoked get_last_sheet RPC on mount/reconnect")
+        sheet = get_last_sheet_payload()
+        if sheet:
+            genui_logger.event("LAST_SHEET_RETURNED", f"req_id={sheet.get('req_id')}, component={sheet.get('component')}")
+            return json.dumps(sheet)
+        genui_logger.info("No previous interactive sheet found in SQLite")
+        return json.dumps({"status": "empty", "message": "No previous interactive sheet found."})
+
+    @ctx.room.local_participant.register_rpc_method("getLastSheet")
+    async def rpc_get_last_sheet_alias(data: rtc.RpcInvocationData) -> str:
+        return await rpc_get_last_sheet(data)
+
     @ctx.room.local_participant.register_rpc_method("submitQuizAnswer")
     async def rpc_submit_quiz_answer(data: rtc.RpcInvocationData) -> str:
         try:
@@ -936,54 +1127,73 @@ async def entrypoint(ctx: agents.JobContext):
                 }
             
             eval_result = quizzer.evaluate_answer(target_q, user_ans)
+            genui_logger.event("QUIZ_ANSWER_EVALUATED", f"q_id={q_id}, is_correct={eval_result.get('is_correct')}")
             # Push authoritative progress update immediately over WebRTC
             try:
                 await send_room_text(None, "progress", json.dumps(tracker.get_learner_summary()))
             except Exception as e:
-                print(f"[LiveKit] Failed to broadcast progress after answer: {e}")
+                genui_logger.error(f"Failed to broadcast progress after answer: {e}")
             return json.dumps(eval_result)
         except Exception as e:
+            genui_logger.error(f"rpc_submit_quiz_answer error: {e}")
             return json.dumps({"error": str(e), "is_correct": False})
 
     @ctx.room.local_participant.register_rpc_method("disputeAnswer")
     async def rpc_dispute_answer(data: rtc.RpcInvocationData) -> str:
+        req_id = f"req_dispute_{int(time.time() * 1000)}"
         try:
             params = json.loads(data.payload)
             user_claim = params.get("user_claim", "")
             ruling = simulation.handle_answer_contention(user_claim)
-            await send_room_text(None, "genui", json.dumps({
+            ruling["req_id"] = req_id
+            payload = {
+                "schema_version": "1.0",
                 "type": "genui_render",
                 "component": "ContentionResolver",
                 "props": ruling
-            }))
+            }
+            persist_sheet_payload(req_id, "ContentionResolver", payload)
+            await send_room_text(None, "genui", json.dumps(payload))
+            genui_logger.event("RPC_DISPUTE_ANSWER", f"Claim: {user_claim[:30]}", req_id=req_id)
             return json.dumps(ruling)
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            genui_logger.error(f"rpc_dispute_answer error: {e}")
+            await emit_sheet_error(None, component_attempted="ContentionResolver", error_message=str(e), req_id=req_id)
+            return json.dumps({"error": str(e), "req_id": req_id})
 
     @ctx.room.local_participant.register_rpc_method("triggerQuiz")
     async def rpc_trigger_quiz(data: rtc.RpcInvocationData) -> str:
+        req_id = f"req_quiz_{int(time.time() * 1000)}"
         try:
             params = json.loads(data.payload) if data.payload else {}
             chapter = int(params.get("chapter", tracker.get_active_chapter()))
             mode = params.get("mode", "milestone")
             qs = quizzer.get_milestone_quiz(chapter, count=5) if mode == "milestone" else quizzer.get_checkpoint_quiz(chapter, count=3)
-            await send_room_text(None, "genui", json.dumps({
+            payload = {
+                "schema_version": "1.0",
                 "type": "genui_render",
                 "component": "QuizCard",
-                "props": {"questions": qs, "chapter": chapter, "mode": mode, "source": "bank"}
-            }))
-            return json.dumps({"status": "ok", "questions": qs})
+                "props": {"req_id": req_id, "questions": qs, "chapter": chapter, "mode": mode, "source": "bank"}
+            }
+            persist_sheet_payload(req_id, "QuizCard", payload)
+            await send_room_text(None, "genui", json.dumps(payload))
+            genui_logger.event("RPC_QUIZ_TRIGGERED", f"Chapter {chapter}", req_id=req_id)
+            return json.dumps({"status": "ok", "req_id": req_id, "questions": qs})
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            genui_logger.error(f"rpc_trigger_quiz error: {e}")
+            await emit_sheet_error(None, component_attempted="QuizCard", error_message=str(e), req_id=req_id)
+            return json.dumps({"error": str(e), "req_id": req_id})
 
     @ctx.room.local_participant.register_rpc_method("triggerRevision")
     async def rpc_trigger_revision(data: rtc.RpcInvocationData) -> str:
+        req_id = f"req_notes_{int(time.time() * 1000)}"
         try:
             params = json.loads(data.payload) if data.payload else {}
             chapter = int(params.get("chapter", tracker.get_active_chapter()))
             rag_results = rag.hybrid_search(f"chapter {chapter} rules summary", top_k=4, chapter_filter=chapter)
             context_text = "\n\n".join([r["text"] for r in rag_results]) if rag_results else ""
             notes_payload = {
+                "req_id": req_id,
                 "title": f"Chapter {chapter}: Mastery & Structure Notes",
                 "chapter": chapter,
                 "overview": f"Synthesized revision summary for Chapter {chapter}.",
@@ -992,14 +1202,20 @@ async def entrypoint(ctx: agents.JobContext):
                 ],
                 "pitfalls": ["Avoid subject-verb discord across intervening clauses."]
             }
-            await send_room_text(None, "genui", json.dumps({
+            payload = {
+                "schema_version": "1.0",
                 "type": "genui_render",
                 "component": "BionicSketchNote",
-                "props": {"notes": notes_payload}
-            }))
-            return json.dumps({"status": "ok", "notes": notes_payload})
+                "props": {"notes": notes_payload, "req_id": req_id}
+            }
+            persist_sheet_payload(req_id, "BionicSketchNote", payload)
+            await send_room_text(None, "genui", json.dumps(payload))
+            genui_logger.event("RPC_REVISION_TRIGGERED", f"Chapter {chapter}", req_id=req_id)
+            return json.dumps({"status": "ok", "req_id": req_id, "notes": notes_payload})
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            genui_logger.error(f"rpc_trigger_revision error: {e}")
+            await emit_sheet_error(None, component_attempted="BionicSketchNote", error_message=str(e), req_id=req_id)
+            return json.dumps({"error": str(e), "req_id": req_id})
 
     @ctx.room.local_participant.register_rpc_method("advanceChapter")
     async def rpc_advance_chapter(data: rtc.RpcInvocationData) -> str:
@@ -1016,6 +1232,7 @@ async def entrypoint(ctx: agents.JobContext):
             "component": "SyllabusProgressTree",
             "props": {"new_chapter": new_ch}
         }))
+        genui_logger.event("CHAPTER_ADVANCED", f"Advanced to Chapter {new_ch}")
         return json.dumps({"success": True, "active_chapter": new_ch})
 
     @ctx.room.local_participant.register_rpc_method("getSyllabus")
@@ -1024,6 +1241,7 @@ async def entrypoint(ctx: agents.JobContext):
             summary = tracker.get_learner_summary()
             return json.dumps(summary)
         except Exception as e:
+            genui_logger.error(f"rpc_get_syllabus error: {e}")
             return json.dumps({"error": str(e)})
 
     @ctx.room.local_participant.register_rpc_method("getQuiz")
@@ -1041,6 +1259,7 @@ async def entrypoint(ctx: agents.JobContext):
                 qs = quizzer.get_milestone_quiz(chapter_idx, count=10)
             return json.dumps({"chapter": chapter_idx, "mode": mode, "questions": qs})
         except Exception as e:
+            genui_logger.error(f"rpc_get_quiz error: {e}")
             return json.dumps({"error": str(e), "questions": []})
 
     @ctx.room.local_participant.register_rpc_method("demonstrateGrammarMovement")
@@ -1067,6 +1286,7 @@ async def entrypoint(ctx: agents.JobContext):
             )
             return res
         except Exception as e:
+            genui_logger.error(f"rpc_demonstrate_grammar_movement error: {e}")
             return json.dumps({"error": str(e)})
 
     # ── Periodic Authoritative Learner State Sync Loop ───────────────
@@ -1080,7 +1300,7 @@ async def entrypoint(ctx: agents.JobContext):
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                print(f"[Periodic Progress] notice: {e}")
+                genui_logger.debug(f"Periodic progress broadcast notice: {e}")
 
     progress_task = asyncio.create_task(push_periodic_progress())
     ctx.add_shutdown_callback(lambda: progress_task.cancel())
@@ -1089,10 +1309,10 @@ async def entrypoint(ctx: agents.JobContext):
     try:
         await send_room_text(None, "progress", json.dumps(tracker.get_learner_summary()))
     except Exception as e:
-        print(f"[LiveKit] Initial progress broadcast notice: {e}")
+        genui_logger.debug(f"Initial progress broadcast notice: {e}")
 
     greeting = tracker.get_startup_greeting()
-    print(f"\n[Agent]: Speaking initial greeting: \"{greeting}\"")
+    tts_logger.info(f"Agent initial greeting: \"{greeting}\"")
     await session.say(greeting, allow_interruptions=True)
 
 if __name__ == "__main__":
@@ -1100,9 +1320,112 @@ if __name__ == "__main__":
 
 
 ================================================================================
+FILE: mvp_talker_offline/backend/structured_logger.py
+LANGUAGE: python
+LINES: 94
+PURPOSE: Localized structured logging subsystem with consistent session_id and sequential turn_id for STT, LLM, TTS, RAG, and GenUI
+================================================================================
+
+"""Localized Structured Logging System for LiveKit Voice Agent.
+Provides dedicated subsystem loggers with consistent session and turn IDs:
+- STT: Faster-Whisper transcription events, audio frames, interim/final latency
+- LLM: Generation tokens, inference prompt/completion, latency
+- TTS: Audio server synthesis, Piper chunk delivery, playout
+- RAG: Hybrid vector + keyword search, embedding availability
+- GenUI: Interactive sheets (QuizCard, ContentionResolver, Notes, GrammarMovement, sheet_error)
+"""
+
+import os
+import sys
+import time
+import json
+import logging
+import contextvars
+from datetime import datetime
+from typing import Any, Dict, Optional
+
+# Context variables for current session and turn tracing
+_current_session_id: contextvars.ContextVar[str] = contextvars.ContextVar("session_id", default="session_default")
+_current_turn_id: contextvars.ContextVar[int] = contextvars.ContextVar("turn_id", default=0)
+
+def set_session_id(session_id: str) -> None:
+    _current_session_id.set(session_id)
+
+def get_session_id() -> str:
+    return _current_session_id.get()
+
+def set_turn_id(turn_id: int) -> None:
+    _current_turn_id.set(turn_id)
+
+def get_turn_id() -> int:
+    return _current_turn_id.get()
+
+def next_turn() -> int:
+    new_turn = _current_turn_id.get() + 1
+    _current_turn_id.set(new_turn)
+    return new_turn
+
+class SubsystemLogAdapter(logging.LoggerAdapter):
+    """Logger adapter that injects subsystem name, session_id, and turn_id into every log record."""
+    def __init__(self, logger: logging.Logger, subsystem: str):
+        super().__init__(logger, {"subsystem": subsystem.upper()})
+        self.subsystem = subsystem.upper()
+
+    def process(self, msg: Any, kwargs: Dict[str, Any]) -> tuple:
+        extra = kwargs.get("extra", {})
+        session_id = extra.get("session_id", get_session_id())
+        turn_id = extra.get("turn_id", get_turn_id())
+        
+        # Build prefix
+        prefix = f"[{self.subsystem}] [sess={session_id} turn={turn_id}]"
+        
+        # If additional structured payload is provided in kwargs
+        structured_data = {k: v for k, v in kwargs.items() if k not in ("extra", "exc_info", "stack_info", "stacklevel")}
+        if structured_data:
+            msg = f"{msg} | {json.dumps(structured_data, default=str)}"
+            for k in list(structured_data.keys()):
+                kwargs.pop(k)
+
+        formatted_msg = f"{prefix} {msg}"
+        return formatted_msg, kwargs
+
+    def event(self, event_name: str, message: str = "", **kwargs):
+        """Log a structured domain event at INFO level."""
+        data_str = f" | {json.dumps(kwargs, default=str)}" if kwargs else ""
+        self.info(f"{event_name}: {message}{data_str}")
+
+# Set up base logger
+_base_logger = logging.getLogger("livekit.buddy")
+_base_logger.setLevel(logging.INFO)
+
+if not _base_logger.handlers:
+    _handler = logging.StreamHandler(sys.stdout)
+    _handler.setLevel(logging.INFO)
+    _formatter = logging.Formatter(
+        "%(asctime)s.%(msecs)03d %(levelname)s %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    )
+    _handler.setFormatter(_formatter)
+    _base_logger.addHandler(_handler)
+
+# Localized logger factories
+def get_logger(subsystem: str) -> SubsystemLogAdapter:
+    logger = logging.getLogger(f"livekit.buddy.{subsystem.lower()}")
+    return SubsystemLogAdapter(logger, subsystem)
+
+# Pre-initialized localized loggers for core voice subsystems
+stt_logger = get_logger("STT")
+llm_logger = get_logger("LLM")
+tts_logger = get_logger("TTS")
+rag_logger = get_logger("RAG")
+genui_logger = get_logger("GenUI")
+system_logger = get_logger("SYSTEM")
+
+
+================================================================================
 FILE: mvp_talker_offline/backend/audio_server.py
 LANGUAGE: python
-LINES: 111
+LINES: 114
 PURPOSE: Isolated FastAPI microservice serving local Piper neural TTS (/v1/audio/speech) and LiveKit JWT token minting (/api/token)
 ================================================================================
 
@@ -1111,6 +1434,9 @@ import os
 import re
 import wave
 from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv()
 
 os.environ["HF_HUB_OFFLINE"] = "1"
 
@@ -3334,6 +3660,189 @@ class TestPhase4GenUIExpansion(unittest.TestCase):
         self.assertIn("streaming_card", store_content, "store.ts pushInlineMovement must filter streaming_card")
 
         print(" [PASS] Frontend design tokens, Framer Motion layoutId card, and store integration verified.")
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+================================================================================
+FILE: mvp_talker_offline/backend/verify_phase5.py
+LANGUAGE: python
+LINES: 174
+PURPOSE: Automated test suite verifying in-flight reconnects, SQLite sheet persistence, get_last_sheet RPC, structured logging, and sheet_error surfacing
+================================================================================
+
+#!/usr/bin/env python3
+"""
+Verification Script for Phase 5: Reliability & Observability.
+Tests:
+  1. In-Flight Reconnects & SQLite Sheet Persistence:
+     - Verify req_id mapped to payload in SQLite
+     - Verify get_last_sheet_payload returns the latest payload
+  2. LiveKit RPC get_last_sheet:
+     - Verify get_last_sheet returns formatted JSON payload
+  3. Structured Logging Subsystem:
+     - Verify localized loggers for STT, LLM, TTS, RAG, GenUI
+     - Verify session_id and turn_id tracing across log records
+  4. Surface Errors Gracefully (sheet_error):
+     - Verify emit_sheet_error broadcasts versioned sheet_error payload
+     - Verify frontend types, InlineSheetErrorCard, and store integration
+"""
+
+import os
+import sys
+import json
+import time
+import asyncio
+import unittest
+from unittest.mock import patch, MagicMock
+
+BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, BACKEND_DIR)
+
+import agent
+import structured_logger
+
+class TestPhase5ReliabilityObservability(unittest.TestCase):
+
+    def test_01_sqlite_sheet_persistence_and_retrieval(self):
+        """1. Verify persisting req_id mapped to GenUI payload in SQLite and retrieving it."""
+        test_req_id = f"test_req_{int(time.time() * 1000)}"
+        test_payload = {
+            "schema_version": "1.0",
+            "type": "genui_render",
+            "component": "QuizCard",
+            "props": {
+                "chapter": 1,
+                "mode": "milestone",
+                "source": "test_persistence"
+            }
+        }
+
+        # Persist payload
+        agent.persist_sheet_payload(test_req_id, "QuizCard", test_payload, session_id="test_session_p5")
+
+        # Retrieve last sheet payload
+        last_sheet = agent.get_last_sheet_payload()
+        self.assertIsNotNone(last_sheet, "Must return a valid sheet payload")
+        self.assertEqual(last_sheet.get("req_id"), test_req_id)
+        self.assertEqual(last_sheet.get("component"), "QuizCard")
+        self.assertEqual(last_sheet.get("status"), "ok")
+        self.assertEqual(last_sheet.get("session_id"), "test_session_p5")
+        self.assertEqual(last_sheet["payload"]["props"]["source"], "test_persistence")
+
+        print(" [PASS] In-Flight Reconnects: SQLite persistence and retrieval of req_id mapped payload verified.")
+
+    def test_02_structured_logging_subsystem(self):
+        """2. Verify localized loggers for STT, LLM, TTS, RAG, and GenUI with consistent session and turn IDs."""
+        # Set session and turn
+        structured_logger.set_session_id("sess_observability_test")
+        structured_logger.set_turn_id(1)
+
+        self.assertEqual(structured_logger.get_session_id(), "sess_observability_test")
+        self.assertEqual(structured_logger.get_turn_id(), 1)
+
+        # Advance turn
+        t2 = structured_logger.next_turn()
+        self.assertEqual(t2, 2)
+        self.assertEqual(structured_logger.get_turn_id(), 2)
+
+        # Check all localized loggers exist and have correct subsystem
+        loggers = {
+            "STT": structured_logger.stt_logger,
+            "LLM": structured_logger.llm_logger,
+            "TTS": structured_logger.tts_logger,
+            "RAG": structured_logger.rag_logger,
+            "GenUI": structured_logger.genui_logger,
+            "SYSTEM": structured_logger.system_logger,
+        }
+
+        for name, lgr in loggers.items():
+            self.assertEqual(lgr.subsystem, name.upper())
+            formatted_msg, kwargs = lgr.process("Test diagnostic message", {})
+            self.assertIn(f"[{name.upper()}]", formatted_msg)
+            self.assertIn("sess=sess_observability_test", formatted_msg)
+            self.assertIn("turn=2", formatted_msg)
+
+        print(" [PASS] Structured Logging: Localized loggers (STT, LLM, TTS, RAG, GenUI) with consistent IDs verified.")
+
+    def test_03_surface_errors_gracefully_sheet_error(self):
+        """3. Verify emit_sheet_error broadcasts a valid versioned sheet_error payload and persists it."""
+        captured_payloads = []
+
+        async def fake_send_room_text(context, topic, payload_str):
+            if topic == "genui":
+                captured_payloads.append(json.loads(payload_str))
+
+        test_err_req_id = f"test_err_{int(time.time() * 1000)}"
+        with patch("agent.send_room_text", side_effect=fake_send_room_text):
+            err_result = asyncio.run(agent.emit_sheet_error(
+                context=None,
+                component_attempted="QuizCard",
+                error_message="Ollama embedding timeout after 5000ms",
+                req_id=test_err_req_id,
+                details="Traceback: Ollama connection timed out"
+            ))
+
+        self.assertEqual(len(captured_payloads), 1)
+        err_payload = captured_payloads[0]
+        self.assertEqual(err_payload.get("schema_version"), "1.0")
+        self.assertEqual(err_payload.get("type"), "genui_render")
+        self.assertEqual(err_payload.get("component"), "sheet_error")
+        props = err_payload.get("props", {})
+        self.assertEqual(props.get("req_id"), test_err_req_id)
+        self.assertEqual(props.get("component_attempted"), "QuizCard")
+        self.assertTrue(props.get("retryable"))
+
+        # Verify it was persisted in SQLite as the last sheet
+        last_sheet = agent.get_last_sheet_payload()
+        self.assertEqual(last_sheet.get("req_id"), test_err_req_id)
+        self.assertEqual(last_sheet.get("component"), "sheet_error")
+
+        print(" [PASS] Graceful Error Surfacing: sheet_error emitted, schema validated, and persisted in SQLite.")
+
+    def test_04_frontend_components_and_store_integration(self):
+        """4. Verify frontend types, InlineSheetErrorCard, store fetchLastSheet, and App rendering exist."""
+        fe_dir = os.path.join(BACKEND_DIR, "..", "VisualsFrontend", "src")
+        types_path = os.path.join(fe_dir, "types.ts")
+        card_path = os.path.join(fe_dir, "components", "InlineSheetErrorCard.tsx")
+        store_path = os.path.join(fe_dir, "store.ts")
+        app_path = os.path.join(fe_dir, "App.tsx")
+        livekit_path = os.path.join(fe_dir, "hooks", "useLiveKit.ts")
+
+        # 1. types.ts
+        with open(types_path, "r", encoding="utf-8") as f:
+            types_content = f.read()
+        self.assertIn("'sheet_error'", types_content, "types.ts must include sheet_error in GenUIComponent")
+        self.assertIn("SheetErrorProps", types_content, "types.ts must export SheetErrorProps")
+        self.assertIn("type: 'sheet_error'", types_content, "FeedItem must include sheet_error variant")
+
+        # 2. InlineSheetErrorCard.tsx
+        self.assertTrue(os.path.exists(card_path), "InlineSheetErrorCard.tsx must exist")
+        with open(card_path, "r", encoding="utf-8") as f:
+            card_content = f.read()
+        self.assertIn("data: SheetErrorProps", card_content, "InlineSheetErrorCard must accept SheetErrorProps")
+        self.assertIn("handleRetry", card_content, "InlineSheetErrorCard must provide retry action")
+
+        # 3. store.ts
+        with open(store_path, "r", encoding="utf-8") as f:
+            store_content = f.read()
+        self.assertIn("pushInlineSheetError", store_content, "store.ts must define pushInlineSheetError")
+        self.assertIn("fetchLastSheet", store_content, "store.ts must define fetchLastSheet")
+        self.assertIn("get_last_sheet", store_content, "store.ts must invoke get_last_sheet RPC")
+
+        # 4. App.tsx
+        with open(app_path, "r", encoding="utf-8") as f:
+            app_content = f.read()
+        self.assertIn("InlineSheetErrorCard", app_content, "App.tsx must render InlineSheetErrorCard")
+
+        # 5. useLiveKit.ts
+        with open(livekit_path, "r", encoding="utf-8") as f:
+            lk_content = f.read()
+        self.assertIn("fetchLastSheet", lk_content, "useLiveKit must invoke fetchLastSheet on mount/reconnect")
+        self.assertIn("sheet_error", lk_content, "useLiveKit must handle sheet_error topic events")
+
+        print(" [PASS] Frontend Integration: Types, InlineSheetErrorCard, store.fetchLastSheet, and reconnect hooks verified.")
 
 if __name__ == "__main__":
     unittest.main()
@@ -6500,7 +7009,7 @@ button {
 ================================================================================
 FILE: mvp_talker_offline/VisualsFrontend/src/types.ts
 LANGUAGE: typescript
-LINES: 179
+LINES: 192
 PURPOSE: Central TypeScript interfaces (FeedItem, QuizQuestion, ContentionProps, SyllabusData)
 ================================================================================
 
@@ -6617,7 +7126,18 @@ export type GenUIComponent =
   | 'InteractiveWorksheet'
   | 'BionicSketchNote'
   | 'SyllabusProgressTree'
-  | 'GrammarMovement';
+  | 'GrammarMovement'
+  | 'sheet_error';
+
+export interface SheetErrorProps {
+  req_id?: string;
+  error_code?: string;
+  title?: string;
+  message: string;
+  component_attempted?: string;
+  retryable?: boolean;
+  details?: string;
+}
 
 export interface GenUIEvent {
   schema_version?: '1.0' | string;
@@ -6677,18 +7197,20 @@ export interface EventLogEntry {
 export type FeedItem =
   | { id: string; type: 'transcript'; speaker: 'user' | 'agent'; text: string; ts: string; is_interim?: boolean }
   | { id: string; type: 'streaming_card'; role: string; content: string }
-  | { id: string; type: 'quiz'; questions: QuizQuestion[]; source: 'bank' | 'llm_generated'; chapter?: number }
-  | { id: string; type: 'dispute'; data: ContentionProps }
-  | { id: string; type: 'notes'; notes: Record<string, unknown> }
-  | { id: string; type: 'movement'; data: GrammarMovementProps };
+  | { id: string; type: 'quiz'; questions: QuizQuestion[]; source: 'bank' | 'llm_generated'; chapter?: number; req_id?: string }
+  | { id: string; type: 'dispute'; data: ContentionProps; req_id?: string }
+  | { id: string; type: 'notes'; notes: Record<string, unknown>; req_id?: string }
+  | { id: string; type: 'movement'; data: GrammarMovementProps; req_id?: string }
+  | { id: string; type: 'sheet_error'; data: SheetErrorProps };
 
 export type DrawerTab = 'syllabus' | 'analytics' | 'remediation';
+
 
 
 ================================================================================
 FILE: mvp_talker_offline/VisualsFrontend/src/store.ts
 LANGUAGE: typescript
-LINES: 738
+LINES: 795
 PURPOSE: Zustand state store managing sequential feed array, LiveKit room instance, drawer state, and LiveKit RPC actions
 ================================================================================
 
@@ -6705,7 +7227,8 @@ import type {
   ChapterInfo,
   GenUIEvent,
   LearnerSummary,
-  GrammarMovementProps
+  GrammarMovementProps,
+  SheetErrorProps
 } from './types';
 
 // ── Default 18-Chapter Curriculum Roadmap ─────────────────────────────────────
@@ -6795,6 +7318,7 @@ export interface BuddyStore {
   pushInlineDispute: (data: ContentionProps) => void;
   pushInlineNotes: (notes: Record<string, unknown>) => void;
   pushInlineMovement: (data: GrammarMovementProps) => void;
+  pushInlineSheetError: (data: SheetErrorProps) => void;
   pushGenUI: (evt: GenUIEvent) => void;
 
   submitAnswer: (questionId: string, optionId: string, chapter: number, rawText?: string) => Promise<QuizSubmitResult>;
@@ -6802,6 +7326,7 @@ export interface BuddyStore {
   triggerRevision: (chapter: number) => Promise<void>;
   fetchSyllabus: () => Promise<void>;
   fetchQuiz: (chapter: number, mode?: string) => Promise<void>;
+  fetchLastSheet: () => Promise<void>;
   disputeAnswer: (claim: string, questionId?: string) => Promise<void>;
   advanceChapter: () => Promise<void>;
   setSseConnected: (v: boolean) => void;
@@ -7028,6 +7553,13 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
     ]
   })),
 
+  pushInlineSheetError: (data) => set((s) => ({
+    feed: [
+      ...s.feed.filter((i) => i.type !== 'streaming_card'),
+      { id: data.req_id || Math.random().toString(36).slice(2, 9), type: 'sheet_error', data }
+    ]
+  })),
+
   pushGenUI: (evt) => {
     if (evt.component === 'QuizCard') {
       const questions = (evt.props?.questions as QuizQuestion[]) || [];
@@ -7041,6 +7573,8 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
       get().pushInlineDispute(evt.props as unknown as ContentionProps);
     } else if (evt.component === 'GrammarMovement') {
       get().pushInlineMovement(evt.props as unknown as GrammarMovementProps);
+    } else if (evt.component === 'sheet_error') {
+      get().pushInlineSheetError(evt.props as unknown as SheetErrorProps);
     }
   },
 
@@ -7355,6 +7889,51 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
     get().triggerLLMQuiz(chapter, mode);
   },
 
+  fetchLastSheet: async () => {
+    const room = get().livekitRoom;
+    const agentId = getAgentParticipantIdentity(room);
+
+    if (room && room.state === 'connected' && agentId) {
+      try {
+        console.log(`[LiveKit RPC] Invoking get_last_sheet on ${agentId}...`);
+        const rpcRes = await room.localParticipant.performRpc({
+          destinationIdentity: agentId,
+          method: 'get_last_sheet',
+          payload: '',
+          responseTimeout: 4000
+        });
+        const data = JSON.parse(rpcRes);
+        if (data && data.status === 'ok' && data.payload) {
+          const reqId = data.req_id;
+          const alreadyRendered = get().feed.some(
+            (item: any) =>
+              item.req_id === reqId ||
+              item.id === reqId ||
+              item.data?.req_id === reqId ||
+              item.data?.id === reqId
+          );
+          if (!alreadyRendered) {
+            console.log(`[LiveKit In-Flight Reconnect] Hydrating last sheet ${data.component} (req_id=${reqId})`);
+            const payload = data.payload;
+            if (payload.type === 'genui_render') {
+              get().pushGenUI(payload as GenUIEvent);
+            } else if (data.component === 'sheet_error') {
+              get().pushInlineSheetError(payload.props || payload);
+            } else {
+              get().pushGenUI({
+                type: 'genui_render',
+                component: data.component,
+                props: payload.props || payload
+              });
+            }
+          }
+        }
+      } catch (rpcErr) {
+        console.warn('[LiveKit RPC] get_last_sheet hydration notice:', rpcErr);
+      }
+    }
+  },
+
   advanceChapter: async () => {
     const room = get().livekitRoom;
     const agentId = getAgentParticipantIdentity(room);
@@ -7435,7 +8014,7 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
 ================================================================================
 FILE: mvp_talker_offline/VisualsFrontend/src/hooks/useLiveKit.ts
 LANGUAGE: typescript
-LINES: 278
+LINES: 288
 PURPOSE: LiveKit WebRTC transport hook: room joining (/api/token), speaker audio track playback, text stream handling, and client RPC
 ================================================================================
 
@@ -7554,6 +8133,8 @@ export function useLiveKit() {
                   store.pushInlineDispute(evt.props as unknown as ContentionProps);
                 } else if (evt.component === 'GrammarMovement') {
                   store.pushInlineMovement(evt.props as unknown as GrammarMovementProps);
+                } else if (evt.component === 'sheet_error') {
+                  store.pushInlineSheetError(evt.props as any);
                 } else if (evt.component === 'SyllabusProgressTree') {
                   if (evt.props?.new_chapter) {
                     store.setActiveChapter(evt.props.new_chapter);
@@ -7612,6 +8193,8 @@ export function useLiveKit() {
                 store.pushInlineDispute(data.props);
               } else if (data.component === 'GrammarMovement') {
                 store.pushInlineMovement(data.props);
+              } else if (data.component === 'sheet_error') {
+                store.pushInlineSheetError(data.props || data);
               }
             } else if (topic === 'genui_token' || data.token) {
               store.appendStreamToken(data.token, data.role || 'llm');
@@ -7634,6 +8217,8 @@ export function useLiveKit() {
               store.pushInlineDispute(evt.props);
             } else if (evt.component === 'GrammarMovement') {
               store.pushInlineMovement(evt.props);
+            } else if (evt.component === 'sheet_error') {
+              store.pushInlineSheetError(evt.props || evt);
             }
             return JSON.stringify({ received: true });
           } catch (e) {
@@ -7651,17 +8236,21 @@ export function useLiveKit() {
           store.setLivekitConnected(true);
           store.setLivekitRoom(room);
           store.setSseConnected(true); // Signal online status to UI
-          // Hydrate syllabus immediately via LiveKit RPC
+          // Hydrate syllabus and in-flight last sheet immediately via LiveKit RPC
           store.fetchSyllabus().catch((err) => {
             console.warn('[LiveKit] Initial syllabus hydration notice:', err);
+          });
+          store.fetchLastSheet().catch((err) => {
+            console.warn('[LiveKit] Initial last sheet hydration notice:', err);
           });
         });
 
         room.on(RoomEvent.ParticipantConnected, (participant) => {
           const ident = participant.identity.toLowerCase();
           if (ident.includes('agent') || ident.includes('buddy') || participant.isAgent) {
-            console.log(`[LiveKit] Agent participant ${participant.identity} connected. Hydrating syllabus...`);
+            console.log(`[LiveKit] Agent participant ${participant.identity} connected. Hydrating syllabus and last sheet...`);
             useBuddyStore.getState().fetchSyllabus().catch(() => {});
+            useBuddyStore.getState().fetchLastSheet().catch(() => {});
           }
         });
 
@@ -7757,7 +8346,7 @@ export function bionicHtml(text: string, enabled: boolean): string {
 ================================================================================
 FILE: mvp_talker_offline/VisualsFrontend/src/App.tsx
 LANGUAGE: typescript
-LINES: 252
+LINES: 258
 PURPOSE: Conversational Live Stage: Timeline feed, top status bar, bottom audio dock, and slide-over drawer
 ================================================================================
 
@@ -7775,6 +8364,7 @@ import { InlineQuizCard } from './components/InlineQuizCard';
 import { InlineDisputeCard } from './components/InlineDisputeCard';
 import { InlineNotesCard } from './components/InlineNotesCard';
 import { InlineGrammarMovementCard } from './components/InlineGrammarMovementCard';
+import { InlineSheetErrorCard } from './components/InlineSheetErrorCard';
 import { StreamingCard } from './components/StreamingCard';
 
 export default function App() {
@@ -7996,6 +8586,11 @@ export default function App() {
               // ── Inline Syntactic Grammar Movement Card ──
               if (item.type === 'movement') {
                 return <InlineGrammarMovementCard key={item.id} data={item.data} />;
+              }
+
+              // ── Inline Sheet Error Card ──
+              if (item.type === 'sheet_error') {
+                return <InlineSheetErrorCard key={item.id} data={item.data} />;
               }
 
               return null;
@@ -10568,6 +11163,212 @@ export const InlineGrammarMovementCard: React.FC<InlineGrammarMovementCardProps>
     </motion.div>
   );
 };
+
+
+================================================================================
+FILE: mvp_talker_offline/VisualsFrontend/src/components/InlineSheetErrorCard.tsx
+LANGUAGE: typescript
+LINES: 197
+PURPOSE: Inline sheet error card with alert status, target component diagnostics, and interactive retry action
+================================================================================
+
+import { useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { AlertTriangle, RefreshCw, ChevronDown, ChevronUp, Terminal } from 'lucide-react';
+import type { SheetErrorProps } from '../types';
+import { useBuddyStore } from '../store';
+
+interface Props {
+  data: SheetErrorProps;
+}
+
+export function InlineSheetErrorCard({ data }: Props) {
+  const [expanded, setExpanded] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+  const { triggerLLMQuiz, triggerRevision, disputeAnswer, activeChapter } = useBuddyStore();
+
+  const handleRetry = async () => {
+    setRetrying(true);
+    try {
+      if (data.component_attempted === 'QuizCard') {
+        await triggerLLMQuiz(activeChapter);
+      } else if (data.component_attempted === 'BionicSketchNote') {
+        await triggerRevision(activeChapter);
+      } else if (data.component_attempted === 'ContentionResolver') {
+        await disputeAnswer('Retry contention verification');
+      } else {
+        await triggerLLMQuiz(activeChapter);
+      }
+    } catch (err) {
+      console.error('[InlineSheetErrorCard] Retry failed:', err);
+    } finally {
+      setRetrying(false);
+    }
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10, scale: 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{ duration: 0.25, ease: 'easeOut' }}
+      style={{
+        margin: '16px 0',
+        borderRadius: '16px',
+        border: '1px solid rgba(239, 68, 68, 0.25)',
+        background: 'linear-gradient(145deg, rgba(239, 68, 68, 0.05) 0%, rgba(20, 24, 39, 0.6) 100%)',
+        backdropFilter: 'blur(12px)',
+        overflow: 'hidden',
+        boxShadow: '0 8px 30px rgba(0, 0, 0, 0.35)',
+        color: 'var(--text-primary)'
+      }}
+    >
+      {/* Header bar */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '14px 18px',
+          borderBottom: '1px solid rgba(239, 68, 68, 0.12)',
+          background: 'rgba(239, 68, 68, 0.06)'
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div
+            style={{
+              width: '28px',
+              height: '28px',
+              borderRadius: '8px',
+              background: 'rgba(239, 68, 68, 0.15)',
+              border: '1px solid rgba(239, 68, 68, 0.3)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: '#ef4444'
+            }}
+          >
+            <AlertTriangle size={15} />
+          </div>
+          <div>
+            <div style={{ fontSize: '13.5px', fontWeight: 600, color: '#f87171' }}>
+              {data.title || 'Interactive Sheet Error'}
+            </div>
+            {data.component_attempted && (
+              <span
+                style={{
+                  fontSize: '11px',
+                  color: 'var(--text-tertiary)',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.04em'
+                }}
+              >
+                Target: {data.component_attempted}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {data.req_id && (
+          <div
+            style={{
+              fontSize: '10.5px',
+              fontFamily: 'monospace',
+              color: 'var(--text-tertiary)',
+              background: 'rgba(0, 0, 0, 0.3)',
+              padding: '2px 8px',
+              borderRadius: '6px',
+              border: '1px solid var(--border-subtle)'
+            }}
+          >
+            {data.req_id}
+          </div>
+        )}
+      </div>
+
+      {/* Body content */}
+      <div style={{ padding: '16px 18px' }}>
+        <p style={{ margin: 0, fontSize: '13.5px', lineHeight: 1.55, color: 'var(--text-secondary)' }}>
+          {data.message}
+        </p>
+
+        {/* Action button */}
+        {data.retryable !== false && (
+          <div style={{ marginTop: '14px', display: 'flex', gap: '10px', alignItems: 'center' }}>
+            <button
+              onClick={handleRetry}
+              disabled={retrying}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '7px 14px',
+                borderRadius: '8px',
+                background: 'rgba(239, 68, 68, 0.15)',
+                border: '1px solid rgba(239, 68, 68, 0.35)',
+                color: '#fca5a5',
+                fontSize: '12.5px',
+                fontWeight: 600,
+                cursor: retrying ? 'not-allowed' : 'pointer',
+                transition: 'all 0.2s ease'
+              }}
+            >
+              <RefreshCw size={13} className={retrying ? 'animate-spin' : ''} />
+              {retrying ? 'Retrying Generation...' : 'Retry Sheet Generation'}
+            </button>
+
+            <button
+              onClick={() => setExpanded(!expanded)}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+                padding: '7px 10px',
+                borderRadius: '8px',
+                background: 'transparent',
+                border: 'none',
+                color: 'var(--text-tertiary)',
+                fontSize: '12px',
+                cursor: 'pointer'
+              }}
+            >
+              <Terminal size={12} />
+              <span>{expanded ? 'Hide Details' : 'View Diagnostics'}</span>
+              {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+            </button>
+          </div>
+        )}
+
+        {/* Technical diagnostics accordion */}
+        <AnimatePresence>
+          {expanded && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              style={{
+                marginTop: '12px',
+                padding: '10px 12px',
+                borderRadius: '8px',
+                background: 'rgba(0, 0, 0, 0.45)',
+                border: '1px solid var(--border-subtle)',
+                fontFamily: 'monospace',
+                fontSize: '11.5px',
+                lineHeight: 1.5,
+                color: '#f87171',
+                overflowX: 'auto'
+              }}
+            >
+              <div><strong>Error Code:</strong> {data.error_code || 'GENUI_ERROR'}</div>
+              {data.details && <div><strong>Trace:</strong> {data.details}</div>}
+              {data.req_id && <div><strong>Req ID:</strong> {data.req_id}</div>}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    </motion.div>
+  );
+}
 
 
 ================================================================================

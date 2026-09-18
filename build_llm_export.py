@@ -74,6 +74,7 @@ FE_CHUNKS = {
         ("mvp_talker_offline/VisualsFrontend/src/components/InlineDisputeCard.tsx", "Inline dispute ruling card comparing formal grammar vs colloquial usage with citations", "typescript"),
         ("mvp_talker_offline/VisualsFrontend/src/components/InlineNotesCard.tsx", "Inline revision notes artifact card with bionic reading toggle and common traps", "typescript"),
         ("mvp_talker_offline/VisualsFrontend/src/components/InlineGrammarMovementCard.tsx", "Inline syntactic movement animation card with Framer Motion layoutId spring physics and role capsules", "typescript"),
+        ("mvp_talker_offline/VisualsFrontend/src/components/InlineSheetErrorCard.tsx", "Inline sheet error card with alert status, target component diagnostics, and interactive retry action", "typescript"),
         ("mvp_talker_offline/VisualsFrontend/src/components/StreamingCard.tsx", "Live LLM token synthesis card with typewriter animation and blinking cursor", "typescript"),
     ]
 }
@@ -143,6 +144,7 @@ mvp_talker_offline/
 BE_CHUNKS = {
     "01_BE_CORE_PIPELINE.txt": [
         ("mvp_talker_offline/backend/agent.py", "LiveKit voice AI agent entrypoint: Faster-Whisper STT, Silero VAD, Piper TTS, Ollama LLM, in-process function tools (with RunContext UI streaming), and LiveKit RPC handlers", "python"),
+        ("mvp_talker_offline/backend/structured_logger.py", "Localized structured logging subsystem with consistent session_id and sequential turn_id for STT, LLM, TTS, RAG, and GenUI", "python"),
         ("mvp_talker_offline/backend/audio_server.py", "Isolated FastAPI microservice serving local Piper neural TTS (/v1/audio/speech) and LiveKit JWT token minting (/api/token)", "python"),
         ("mvp_talker_offline/Modelfile", "Custom Ollama Modelfile configuring qwen2.5:3b with pedagogical teacher persona and grammar guidelines", "dockerfile"),
         ("mvp_talker_offline/requirements.txt", "Python backend requirements (livekit, faster-whisper, fastapi, uvicorn, rank-bm25, duckduckgo-search)", "text"),
@@ -160,6 +162,7 @@ BE_CHUNKS = {
         ("mvp_talker_offline/backend/verify_phase2.py", "Automated test suite verifying embedding outage fallback, offline dispute, SQLite isomorphic audits, and learner state sync", "python"),
         ("mvp_talker_offline/backend/verify_phase3.py", "Automated test suite verifying streaming STT capabilities, StreamingFasterWhisperAdapter, and VoiceTurnPriorityManager", "python"),
         ("mvp_talker_offline/backend/verify_phase4.py", "Automated test suite verifying versioned GenUI schema ('1.0'), demonstrate_grammar_movement tool, and frontend motion integration", "python"),
+        ("mvp_talker_offline/backend/verify_phase5.py", "Automated test suite verifying in-flight reconnects, SQLite sheet persistence, get_last_sheet RPC, structured logging, and sheet_error surfacing", "python"),
         ("mvp_talker_offline/data/curriculum.json", "Official 18-chapter English grammar curriculum definition with title, topics, rules, and coursework requirements", "json"),
         ("mvp_talker_offline/data/quiz_banks/chapter_01_bank.json", "Pre-verified milestone quiz bank schema for Chapter 1 (Present Simple & Continuous) with citations and explanations", "json"),
         ("mvp_talker_offline/data/stories/aesop_dilemmas.txt", "Sample narrative conversation scenario used by agent for conversational grammar practice", "text"),
