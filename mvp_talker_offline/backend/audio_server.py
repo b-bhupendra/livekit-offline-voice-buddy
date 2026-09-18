@@ -302,62 +302,40 @@ async def submit_quiz_answer(submission: QuizAnswerSubmission):
     eval_result = quizzer.evaluate_answer(target_q, submission.user_answer)
     return eval_result
 
-# ── MCP-Triggered LLM Generation Endpoints ─────────────────────────────────
-class TriggerQuizRequest(BaseModel):
-    chapter: int
-    mode: str = "milestone"
-
-@app.post("/api/trigger-quiz")
-async def trigger_quiz_generation(req: TriggerQuizRequest):
+# --- LiveKit Token Minting (Browser WebRTC Participant) ---
+@app.get("/api/token")
+async def get_livekit_token(identity: str = "web-user", room_name: str = "buddy-room"):
     """
-    UI-triggered quiz generation via MCP tool.
-    Runs Ollama generation in background thread.
-    Token stream appears in frontend AI panel via SSE.
-    Final QuizCard rendered when complete.
+    Mints a LiveKit JWT access token allowing the browser to join as a full WebRTC participant.
+    Grants room_join, audio publishing (mic), audio subscription (speaker), and data streams.
     """
-    if _mcp_generate_quiz is None:
-        # Fallback: return pre-verified bank questions via existing endpoint
-        qs = quizzer.get_milestone_quiz(req.chapter, count=5)
-        await broadcast_genui_event("QuizCard", {
-            "questions": qs, "chapter": req.chapter, "mode": req.mode, "source": "bank"
-        })
-        return {"status": "fallback", "source": "quiz_bank", "questions": len(qs)}
+    from livekit import api
+    api_key = os.getenv("LIVEKIT_API_KEY", "devkey")
+    api_secret = os.getenv("LIVEKIT_API_SECRET", "secret")
+    lk_url = os.getenv("LIVEKIT_URL", "ws://127.0.0.1:7880")
 
-    import threading
-    def _run():
-        try:
-            _mcp_generate_quiz(chapter=req.chapter, mode=req.mode)
-        except Exception as e:
-            print(f"[audio_server] Quiz generation error: {e}")
-
-    t = threading.Thread(target=_run, daemon=True)
-    t.start()
-    return {"status": "generating", "chapter": req.chapter, "mode": req.mode}
-
-class TriggerRevisionRequest(BaseModel):
-    chapter: int
-
-@app.post("/api/trigger-revision")
-async def trigger_revision_generation(req: TriggerRevisionRequest):
-    """
-    UI-triggered revision note generation via MCP tool.
-    Token stream appears in frontend AI panel via SSE.
-    BionicSketchNote rendered when complete.
-    """
-    if _mcp_generate_revision is None:
-        return JSONResponse(status_code=503, content={"error": "MCP revision tool not available"})
-
-    import threading
-    def _run():
-        try:
-            _mcp_generate_revision(chapter=req.chapter)
-        except Exception as e:
-            print(f"[audio_server] Revision generation error: {e}")
-
-    t = threading.Thread(target=_run, daemon=True)
-    t.start()
-    return {"status": "generating", "chapter": req.chapter}
+    token = (
+        api.AccessToken(api_key, api_secret)
+        .with_identity(identity)
+        .with_name(identity)
+        .with_grants(
+            api.VideoGrants(
+                room_join=True,
+                room=room_name,
+                can_publish=True,
+                can_subscribe=True,
+                can_publish_data=True,
+            )
+        )
+    )
+    return {
+        "token": token.to_jwt(),
+        "url": lk_url,
+        "room": room_name,
+        "identity": identity
+    }
 
 if __name__ == "__main__":
     uvicorn.run("audio_server:app", host="0.0.0.0", port=8880, reload=False)
+
 

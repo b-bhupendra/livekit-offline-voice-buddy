@@ -1,7 +1,7 @@
 ================================================================================
 FILE: mvp_talker_offline/backend/agent.py
 LANGUAGE: python
-LINES: 328
+LINES: 485
 PURPOSE: LiveKit voice AI agent entrypoint: Faster-Whisper STT, Silero VAD, Piper TTS, Ollama LLM, in-process function tools, and LiveKit text streams
 ================================================================================
 
@@ -177,7 +177,17 @@ def get_faster_whisper_stt(model_size="tiny.en") -> FasterWhisperSTT:
         _whisper_singleton = FasterWhisperSTT(model_size=model_size)
     return _whisper_singleton
 
-# ── IN-PROCESS NATIVE LIVEKIT FUNCTION TOOLS (ZERO LOOPBACK HTTP) ─────────────
+# ── IN-PROCESS NATIVE LIVEKIT FUNCTION TOOLS & TEXT STREAM BROADCASTS ────────
+
+_active_room: Optional[rtc.Room] = None
+
+async def broadcast_livekit_text(topic: str, payload_str: str):
+    global _active_room
+    if _active_room and _active_room.isconnected():
+        try:
+            await _active_room.local_participant.send_text(payload_str, topic=topic)
+        except Exception as e:
+            print(f"[LiveKit Text Stream] send_text({topic}) failed: {e}")
 
 @function_tool()
 async def query_grammar_rag(context: RunContext, query: str) -> str:
@@ -198,6 +208,20 @@ async def query_grammar_rag(context: RunContext, query: str) -> str:
 async def trigger_quiz(context: RunContext, chapter: int, mode: str = "milestone") -> str:
     """Generate or retrieve a grammar quiz for the active chapter and render it on the student's interface."""
     qs = quizzer.get_milestone_quiz(chapter, count=5) if mode == "milestone" else quizzer.get_checkpoint_quiz(chapter, count=3)
+    
+    # Broadcast native LiveKit GenUI artifact to browser timeline
+    payload = {
+        "type": "genui_render",
+        "component": "QuizCard",
+        "props": {
+            "questions": qs,
+            "chapter": chapter,
+            "mode": mode,
+            "source": "llm_generated"
+        }
+    }
+    await broadcast_livekit_text("genui", json.dumps(payload))
+    
     return json.dumps({
         "status": "quiz_prepared",
         "chapter": chapter,
@@ -210,6 +234,15 @@ async def trigger_quiz(context: RunContext, chapter: int, mode: str = "milestone
 async def dispute_answer(context: RunContext, user_claim: str) -> str:
     """Resolve a learner's dispute or contention regarding whether an answer is grammatically correct or acceptable."""
     ruling = simulation.handle_answer_contention(user_claim)
+    
+    # Broadcast native LiveKit GenUI artifact to browser timeline
+    payload = {
+        "type": "genui_render",
+        "component": "ContentionResolver",
+        "props": ruling
+    }
+    await broadcast_livekit_text("genui", json.dumps(payload))
+    
     return json.dumps(ruling, indent=2)
 
 @function_tool()
@@ -224,6 +257,29 @@ async def generate_revision_notes(context: RunContext, chapter: int) -> str:
     active_ch = tracker.get_active_chapter()
     rag_results = rag.hybrid_search(f"chapter {chapter} rules summary", top_k=4, chapter_filter=chapter)
     context_text = "\n\n".join([r["text"] for r in rag_results]) if rag_results else ""
+    
+    notes_payload = {
+        "title": f"Chapter {chapter}: Mastery & Structure Notes",
+        "chapter": chapter,
+        "overview": f"Synthesized revision summary for Chapter {chapter} based on Oxford Guide & Arihant references.",
+        "rules": [
+            {
+                "title": "Core Syntactic Concord",
+                "body": context_text[:350] if context_text else "Subject-verb agreement must be preserved across clauses.",
+                "citation": f"Oxford Guide Ch {chapter}"
+            }
+        ],
+        "pitfalls": [
+            "Avoid subject-verb discord across intervening prepositional phrases."
+        ]
+    }
+    payload = {
+        "type": "genui_render",
+        "component": "BionicSketchNote",
+        "props": {"notes": notes_payload}
+    }
+    await broadcast_livekit_text("genui", json.dumps(payload))
+    
     return json.dumps({
         "chapter": chapter,
         "title": f"Chapter {chapter} Revision",
@@ -240,6 +296,7 @@ server = AgentServer()
 @server.rtc_session(agent_name="offline-buddy")
 async def entrypoint(ctx: agents.JobContext):
     """Main LiveKit RTC Session entrypoint."""
+    global _active_room
     await ensure_audio_server_async()
 
     llm_provider = openai.LLM.with_ollama(
@@ -326,6 +383,106 @@ async def entrypoint(ctx: agents.JobContext):
 
     buddy = BuddyAgent()
     await session.start(agent=buddy, room=ctx.room)
+    _active_room = ctx.room
+
+    # ── LiveKit RPC Method Registrations on Agent Local Participant ──
+    @ctx.room.local_participant.register_rpc_method("submitQuizAnswer")
+    async def rpc_submit_quiz_answer(data: rtc.RpcInvocationData) -> str:
+        try:
+            params = json.loads(data.payload)
+            chapter_idx = int(params.get("chapter_idx", tracker.get_active_chapter()))
+            q_id = params.get("question_id")
+            user_ans = str(params.get("user_answer", ""))
+            
+            bank = quizzer.load_quiz_bank(chapter_idx)
+            target_q = next((q for q in bank if q.get("id") == q_id), None)
+            if not target_q and "question" in params:
+                target_q = params["question"]
+            
+            if not target_q:
+                target_q = {
+                    "id": q_id,
+                    "stem": params.get("stem", "Grammar Question"),
+                    "options": params.get("options", []),
+                    "correct_answer": params.get("correct_answer", "A"),
+                    "explanation": "Evaluated against Oxford Guide rules.",
+                    "rule_citation": "Oxford Guide"
+                }
+            
+            eval_result = quizzer.evaluate_answer(target_q, user_ans)
+            return json.dumps(eval_result)
+        except Exception as e:
+            return json.dumps({"error": str(e), "is_correct": False})
+
+    @ctx.room.local_participant.register_rpc_method("disputeAnswer")
+    async def rpc_dispute_answer(data: rtc.RpcInvocationData) -> str:
+        try:
+            params = json.loads(data.payload)
+            user_claim = params.get("user_claim", "")
+            ruling = simulation.handle_answer_contention(user_claim)
+            await broadcast_livekit_text("genui", json.dumps({
+                "type": "genui_render",
+                "component": "ContentionResolver",
+                "props": ruling
+            }))
+            return json.dumps(ruling)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @ctx.room.local_participant.register_rpc_method("triggerQuiz")
+    async def rpc_trigger_quiz(data: rtc.RpcInvocationData) -> str:
+        try:
+            params = json.loads(data.payload) if data.payload else {}
+            chapter = int(params.get("chapter", tracker.get_active_chapter()))
+            mode = params.get("mode", "milestone")
+            qs = quizzer.get_milestone_quiz(chapter, count=5) if mode == "milestone" else quizzer.get_checkpoint_quiz(chapter, count=3)
+            await broadcast_livekit_text("genui", json.dumps({
+                "type": "genui_render",
+                "component": "QuizCard",
+                "props": {"questions": qs, "chapter": chapter, "mode": mode, "source": "bank"}
+            }))
+            return json.dumps({"status": "ok", "questions": qs})
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @ctx.room.local_participant.register_rpc_method("triggerRevision")
+    async def rpc_trigger_revision(data: rtc.RpcInvocationData) -> str:
+        try:
+            params = json.loads(data.payload) if data.payload else {}
+            chapter = int(params.get("chapter", tracker.get_active_chapter()))
+            rag_results = rag.hybrid_search(f"chapter {chapter} rules summary", top_k=4, chapter_filter=chapter)
+            context_text = "\n\n".join([r["text"] for r in rag_results]) if rag_results else ""
+            notes_payload = {
+                "title": f"Chapter {chapter}: Mastery & Structure Notes",
+                "chapter": chapter,
+                "overview": f"Synthesized revision summary for Chapter {chapter}.",
+                "rules": [
+                    {"title": "Core Syntactic Concord", "body": context_text[:350] if context_text else "Subject-verb concord must be preserved.", "citation": f"Oxford Guide Ch {chapter}"}
+                ],
+                "pitfalls": ["Avoid subject-verb discord across intervening clauses."]
+            }
+            await broadcast_livekit_text("genui", json.dumps({
+                "type": "genui_render",
+                "component": "BionicSketchNote",
+                "props": {"notes": notes_payload}
+            }))
+            return json.dumps({"status": "ok", "notes": notes_payload})
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @ctx.room.local_participant.register_rpc_method("advanceChapter")
+    async def rpc_advance_chapter(data: rtc.RpcInvocationData) -> str:
+        can = tracker.can_advance()
+        if not can:
+            return json.dumps({"success": False, "message": "Cannot advance: coursework and milestone quiz must be completed."})
+        advanced = tracker.advance_to_next_chapter()
+        new_ch = tracker.get_active_chapter()
+        await broadcast_livekit_text("genui", json.dumps({
+            "type": "genui_render",
+            "component": "SyllabusProgressTree",
+            "props": {"new_chapter": new_ch}
+        }))
+        return json.dumps({"success": True, "active_chapter": new_ch})
 
     greeting = tracker.get_startup_greeting()
     print(f"\n[Agent]: Speaking initial greeting: \"{greeting}\"")
@@ -338,7 +495,7 @@ if __name__ == "__main__":
 ================================================================================
 FILE: mvp_talker_offline/backend/audio_server.py
 LANGUAGE: python
-LINES: 363
+LINES: 341
 PURPOSE: FastAPI server running Piper TTS audio synthesis (/v1/audio/speech), Faster-Whisper STT fallback, and curriculum/quiz REST endpoints
 ================================================================================
 
@@ -646,64 +803,42 @@ async def submit_quiz_answer(submission: QuizAnswerSubmission):
     eval_result = quizzer.evaluate_answer(target_q, submission.user_answer)
     return eval_result
 
-# ── MCP-Triggered LLM Generation Endpoints ─────────────────────────────────
-class TriggerQuizRequest(BaseModel):
-    chapter: int
-    mode: str = "milestone"
-
-@app.post("/api/trigger-quiz")
-async def trigger_quiz_generation(req: TriggerQuizRequest):
+# --- LiveKit Token Minting (Browser WebRTC Participant) ---
+@app.get("/api/token")
+async def get_livekit_token(identity: str = "web-user", room_name: str = "buddy-room"):
     """
-    UI-triggered quiz generation via MCP tool.
-    Runs Ollama generation in background thread.
-    Token stream appears in frontend AI panel via SSE.
-    Final QuizCard rendered when complete.
+    Mints a LiveKit JWT access token allowing the browser to join as a full WebRTC participant.
+    Grants room_join, audio publishing (mic), audio subscription (speaker), and data streams.
     """
-    if _mcp_generate_quiz is None:
-        # Fallback: return pre-verified bank questions via existing endpoint
-        qs = quizzer.get_milestone_quiz(req.chapter, count=5)
-        await broadcast_genui_event("QuizCard", {
-            "questions": qs, "chapter": req.chapter, "mode": req.mode, "source": "bank"
-        })
-        return {"status": "fallback", "source": "quiz_bank", "questions": len(qs)}
+    from livekit import api
+    api_key = os.getenv("LIVEKIT_API_KEY", "devkey")
+    api_secret = os.getenv("LIVEKIT_API_SECRET", "secret")
+    lk_url = os.getenv("LIVEKIT_URL", "ws://127.0.0.1:7880")
 
-    import threading
-    def _run():
-        try:
-            _mcp_generate_quiz(chapter=req.chapter, mode=req.mode)
-        except Exception as e:
-            print(f"[audio_server] Quiz generation error: {e}")
-
-    t = threading.Thread(target=_run, daemon=True)
-    t.start()
-    return {"status": "generating", "chapter": req.chapter, "mode": req.mode}
-
-class TriggerRevisionRequest(BaseModel):
-    chapter: int
-
-@app.post("/api/trigger-revision")
-async def trigger_revision_generation(req: TriggerRevisionRequest):
-    """
-    UI-triggered revision note generation via MCP tool.
-    Token stream appears in frontend AI panel via SSE.
-    BionicSketchNote rendered when complete.
-    """
-    if _mcp_generate_revision is None:
-        return JSONResponse(status_code=503, content={"error": "MCP revision tool not available"})
-
-    import threading
-    def _run():
-        try:
-            _mcp_generate_revision(chapter=req.chapter)
-        except Exception as e:
-            print(f"[audio_server] Revision generation error: {e}")
-
-    t = threading.Thread(target=_run, daemon=True)
-    t.start()
-    return {"status": "generating", "chapter": req.chapter}
+    token = (
+        api.AccessToken(api_key, api_secret)
+        .with_identity(identity)
+        .with_name(identity)
+        .with_grants(
+            api.VideoGrants(
+                room_join=True,
+                room=room_name,
+                can_publish=True,
+                can_subscribe=True,
+                can_publish_data=True,
+            )
+        )
+    )
+    return {
+        "token": token.to_jwt(),
+        "url": lk_url,
+        "room": room_name,
+        "identity": identity
+    }
 
 if __name__ == "__main__":
     uvicorn.run("audio_server:app", host="0.0.0.0", port=8880, reload=False)
+
 
 
 

@@ -56,8 +56,9 @@ FE_CHUNKS = {
     ],
     "02_FE_STATE_AND_SERVICES.txt": [
         ("VisualsFrontend/src/types.ts", "Central TypeScript interfaces (FeedItem, QuizQuestion, ContentionProps, SyllabusData)", "typescript"),
-        ("VisualsFrontend/src/store.ts", "Zustand state store managing sequential feed array, drawer state, and actions", "typescript"),
-        ("VisualsFrontend/src/hooks/useSSE.ts", "Server-Sent Events hook subscribing to /api/stream (genui, genui_token, transcript)", "typescript"),
+        ("VisualsFrontend/src/store.ts", "Zustand state store managing sequential feed array, LiveKit room instance, drawer state, and RPC actions", "typescript"),
+        ("VisualsFrontend/src/hooks/useLiveKit.ts", "LiveKit WebRTC transport hook: room joining (/api/token), speaker audio track playback, text stream handling, and client RPC", "typescript"),
+        ("VisualsFrontend/src/hooks/useSSE.ts", "Fallback Server-Sent Events hook subscribing to /api/stream (genui, genui_token, transcript)", "typescript"),
         ("VisualsFrontend/src/utils/bionic.ts", "Bionic reading text transformation algorithm bolding initial letters of words", "typescript"),
     ],
     "03_FE_CONVERSATIONAL_STAGE.txt": [

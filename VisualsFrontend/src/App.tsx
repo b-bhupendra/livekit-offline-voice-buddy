@@ -4,7 +4,7 @@ import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Sparkles } from 'lucide-react';
 import { useBuddyStore } from './store';
-import { useSSE } from './hooks/useSSE';
+import { useLiveKit } from './hooks/useLiveKit';
 import { Header } from './components/Header';
 import { AudioDock } from './components/AudioDock';
 import { SlideOverDrawer } from './components/SlideOverDrawer';
@@ -14,7 +14,7 @@ import { InlineNotesCard } from './components/InlineNotesCard';
 import { StreamingCard } from './components/StreamingCard';
 
 export default function App() {
-  useSSE();
+  useLiveKit();
   const { feed, fetchSyllabus } = useBuddyStore();
   const messagesEndRef = useRef<HTMLDivElement>(null);
 

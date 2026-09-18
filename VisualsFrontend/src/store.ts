@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import type { Room } from 'livekit-client';
 import type {
   SyllabusData,
   LearnerState,
@@ -72,6 +73,8 @@ export interface BuddyStore {
   // ── Unified Timeline Feed ────────────────────────────────
   feed: FeedItem[];
   sseConnected: boolean;
+  livekitConnected: boolean;
+  livekitRoom: Room | null;
   syllabus: SyllabusData | null;
   learnerState: LearnerState;
   activeChapter: number;
@@ -80,6 +83,8 @@ export interface BuddyStore {
   isVoiceActive: boolean;
 
   // ── Actions ──────────────────────────────────────────────
+  setLivekitRoom: (room: Room | null) => void;
+  setLivekitConnected: (connected: boolean) => void;
   toggleDrawer: (tab?: DrawerTab) => void;
   setDrawerOpen: (open: boolean) => void;
   setActiveDrawerTab: (tab: DrawerTab) => void;
@@ -106,6 +111,20 @@ export interface BuddyStore {
   sendUserMessage: (text: string) => Promise<void>;
 }
 
+function getAgentParticipantIdentity(room: Room | null): string {
+  if (!room) return '';
+  for (const p of room.remoteParticipants.values()) {
+    const ident = p.identity.toLowerCase();
+    if (ident.includes('agent') || ident.includes('buddy') || p.isAgent) {
+      return p.identity;
+    }
+  }
+  if (room.remoteParticipants.size > 0) {
+    return Array.from(room.remoteParticipants.values())[0].identity;
+  }
+  return '';
+}
+
 export const useBuddyStore = create<BuddyStore>((set, get) => ({
   feed: [
     {
@@ -124,6 +143,8 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
     }
   ],
   sseConnected: false,
+  livekitConnected: false,
+  livekitRoom: null,
   syllabus: {
     active_chapter: 1,
     learner_state: {
@@ -151,6 +172,8 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
   activeDrawerTab: 'syllabus',
   isVoiceActive: true,
 
+  setLivekitRoom: (room) => set({ livekitRoom: room }),
+  setLivekitConnected: (connected) => set({ livekitConnected: connected }),
   toggleDrawer: (tab) => set((s) => ({
     drawerOpen: tab ? true : !s.drawerOpen,
     activeDrawerTab: tab || s.activeDrawerTab,
@@ -242,6 +265,50 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
 
   submitAnswer: async (questionId, optionId, chapter, rawText) => {
     const chosenVal = rawText || optionId;
+    const room = get().livekitRoom;
+    const agentId = getAgentParticipantIdentity(room);
+
+    // 1. LiveKit Native RPC Call (Phase 0)
+    if (room && room.state === 'connected' && agentId) {
+      try {
+        console.log(`[LiveKit RPC] Invoking submitQuizAnswer on ${agentId}...`);
+        const rpcRes = await room.localParticipant.performRpc({
+          destinationIdentity: agentId,
+          method: 'submitQuizAnswer',
+          payload: JSON.stringify({
+            question_id: questionId,
+            user_answer: chosenVal,
+            chapter_idx: chapter
+          }),
+          responseTimeout: 4000
+        });
+        const data = JSON.parse(rpcRes);
+        const isCorrect = Boolean(data.is_correct);
+
+        set((s) => ({
+          learnerState: {
+            ...s.learnerState,
+            total_correct: isCorrect ? s.learnerState.total_correct + 1 : s.learnerState.total_correct,
+            total_errors: !isCorrect ? s.learnerState.total_errors + 1 : s.learnerState.total_errors,
+            failed_questions_queue: !isCorrect
+              ? Array.from(new Set([...(s.learnerState.failed_questions_queue || []), questionId]))
+              : (s.learnerState.failed_questions_queue || []).filter((id) => id !== questionId)
+          }
+        }));
+
+        return {
+          is_correct: isCorrect,
+          feedback: data.feedback,
+          explanation: data.explanation,
+          rule_citation: data.rule_citation,
+          isomorphic_question: data.isomorphic_question
+        };
+      } catch (rpcErr) {
+        console.warn('[LiveKit RPC] submitQuizAnswer failed, trying HTTP or local fallback:', rpcErr);
+      }
+    }
+
+    // 2. HTTP Endpoint Fallback
     try {
       const res = await fetch(`${API}/api/quiz/submit`, {
         method: 'POST',
@@ -256,7 +323,6 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
         const data = await res.json();
         const isCorrect = Boolean(data.is_correct);
 
-        // Update local stats
         set((s) => ({
           learnerState: {
             ...s.learnerState,
@@ -280,7 +346,7 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
       // Offline fallback: Check against initial sample
     }
 
-    // Local evaluation fallback
+    // 3. Local Evaluation Fallback
     const allQuizItems = get().feed.filter((i) => i.type === 'quiz') as { questions: QuizQuestion[] }[];
     const allQuestions = allQuizItems.flatMap((q) => q.questions);
     const target = allQuestions.find((q) => q.id === questionId);
@@ -322,19 +388,27 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
   },
 
   triggerLLMQuiz: async (chapter, mode = 'milestone') => {
-    get().appendStreamToken(`Synthesizing Chapter ${chapter} questions from RAG knowledge base... `, 'quiz');
-    try {
-      const res = await fetch(`${API}/api/trigger-quiz`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chapter, mode }),
-      });
-      if (res.ok) return;
-    } catch {
-      // Backend not running, run simulated streaming generation
+    get().appendStreamToken(`Synthesizing Chapter ${chapter} questions via LiveKit Agent... `, 'quiz');
+    const room = get().livekitRoom;
+    const agentId = getAgentParticipantIdentity(room);
+
+    // 1. LiveKit Native RPC (Phase 0 — Retired REST endpoint)
+    if (room && room.state === 'connected' && agentId) {
+      try {
+        console.log(`[LiveKit RPC] Invoking triggerQuiz on ${agentId}...`);
+        await room.localParticipant.performRpc({
+          destinationIdentity: agentId,
+          method: 'triggerQuiz',
+          payload: JSON.stringify({ chapter, mode }),
+          responseTimeout: 5000
+        });
+        return;
+      } catch (rpcErr) {
+        console.warn('[LiveKit RPC] triggerQuiz failed, falling back:', rpcErr);
+      }
     }
 
-    // Simulated streaming generation fallback
+    // 2. Simulated streaming generation fallback
     let progress = 0;
     const tokens = [
       'Analyzing curriculum topic...\n',
@@ -387,18 +461,27 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
   },
 
   triggerRevision: async (chapter) => {
-    get().appendStreamToken(`Synthesizing Chapter ${chapter} revision notes via MCP tools... `, 'revision');
-    try {
-      const res = await fetch(`${API}/api/trigger-revision`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chapter }),
-      });
-      if (res.ok) return;
-    } catch {
-      // Backend not running, simulated revision fallback
+    get().appendStreamToken(`Synthesizing Chapter ${chapter} revision notes via LiveKit Agent... `, 'revision');
+    const room = get().livekitRoom;
+    const agentId = getAgentParticipantIdentity(room);
+
+    // 1. LiveKit Native RPC (Phase 0 — Retired REST endpoint)
+    if (room && room.state === 'connected' && agentId) {
+      try {
+        console.log(`[LiveKit RPC] Invoking triggerRevision on ${agentId}...`);
+        await room.localParticipant.performRpc({
+          destinationIdentity: agentId,
+          method: 'triggerRevision',
+          payload: JSON.stringify({ chapter }),
+          responseTimeout: 5000
+        });
+        return;
+      } catch (rpcErr) {
+        console.warn('[LiveKit RPC] triggerRevision failed, falling back:', rpcErr);
+      }
     }
 
+    // 2. Simulated revision notes fallback
     setTimeout(() => {
       get().pushInlineNotes({
         title: `Chapter ${chapter}: Mastery & Structure Notes`,
@@ -424,10 +507,32 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
           "Formal: 'Neither of them is present.' -> Spoken: 'Neither of them showed up today.'"
         ]
       });
-    }, 1200);
+    }, 800);
   },
 
   disputeAnswer: async (claim, questionId) => {
+    const room = get().livekitRoom;
+    const agentId = getAgentParticipantIdentity(room);
+
+    // 1. LiveKit Native RPC (Phase 0)
+    if (room && room.state === 'connected' && agentId) {
+      try {
+        console.log(`[LiveKit RPC] Invoking disputeAnswer on ${agentId}...`);
+        const rpcRes = await room.localParticipant.performRpc({
+          destinationIdentity: agentId,
+          method: 'disputeAnswer',
+          payload: JSON.stringify({ user_claim: claim, question_id: questionId }),
+          responseTimeout: 5000
+        });
+        const ruling = JSON.parse(rpcRes);
+        get().pushInlineDispute(ruling);
+        return;
+      } catch (rpcErr) {
+        console.warn('[LiveKit RPC] disputeAnswer failed, falling back:', rpcErr);
+      }
+    }
+
+    // 2. HTTP Endpoint Fallback
     try {
       const res = await fetch(`${API}/api/dispute-answer`, {
         method: 'POST',
@@ -443,7 +548,7 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
       // Fallback local dispute resolution
     }
 
-    // Local simulated impartial arbitration
+    // 3. Local Simulated Impartial Arbitration
     const isNeitherContention = claim.toLowerCase().includes('neither') || claim.toLowerCase().includes('plural') || claim.toLowerCase().includes('were');
     get().pushInlineDispute({
       user_claim: claim,
@@ -499,6 +604,31 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
   },
 
   advanceChapter: async () => {
+    const room = get().livekitRoom;
+    const agentId = getAgentParticipantIdentity(room);
+
+    // 1. LiveKit Native RPC (Phase 0)
+    if (room && room.state === 'connected' && agentId) {
+      try {
+        console.log(`[LiveKit RPC] Invoking advanceChapter on ${agentId}...`);
+        const rpcRes = await room.localParticipant.performRpc({
+          destinationIdentity: agentId,
+          method: 'advanceChapter',
+          payload: JSON.stringify({}),
+          responseTimeout: 5000
+        });
+        const res = JSON.parse(rpcRes);
+        if (res.success && res.active_chapter) {
+          set({ activeChapter: res.active_chapter });
+          await get().fetchSyllabus();
+          return;
+        }
+      } catch (rpcErr) {
+        console.warn('[LiveKit RPC] advanceChapter failed, falling back:', rpcErr);
+      }
+    }
+
+    // 2. HTTP Endpoint Fallback
     try {
       const res = await fetch(`${API}/api/advance-chapter`, { method: 'POST' });
       if (res.ok) {

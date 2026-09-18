@@ -1,7 +1,7 @@
 ================================================================================
 FILE: VisualsFrontend/package.json
 LANGUAGE: json
-LINES: 33
+LINES: 34
 PURPOSE: Project dependencies (React 19, Framer Motion, Lucide, Inter), scripts, build configuration
 ================================================================================
 
@@ -19,6 +19,7 @@ PURPOSE: Project dependencies (React 19, Framer Motion, Lucide, Inter), scripts,
   "dependencies": {
     "@fontsource/inter": "^5.3.0",
     "framer-motion": "^13.4.0",
+    "livekit-client": "^2.22.3",
     "lucide-react": "^1.47.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
