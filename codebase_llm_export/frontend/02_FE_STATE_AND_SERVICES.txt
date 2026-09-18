@@ -1,5 +1,5 @@
 ================================================================================
-FILE: VisualsFrontend/src/types.ts
+FILE: mvp_talker_offline/VisualsFrontend/src/types.ts
 LANGUAGE: typescript
 LINES: 117
 PURPOSE: Central TypeScript interfaces (FeedItem, QuizQuestion, ContentionProps, SyllabusData)
@@ -125,7 +125,7 @@ export type DrawerTab = 'syllabus' | 'analytics' | 'remediation';
 
 
 ================================================================================
-FILE: VisualsFrontend/src/store.ts
+FILE: mvp_talker_offline/VisualsFrontend/src/store.ts
 LANGUAGE: typescript
 LINES: 653
 PURPOSE: Zustand state store managing sequential feed array, LiveKit room instance, drawer state, and LiveKit RPC actions
@@ -787,7 +787,7 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
 
 
 ================================================================================
-FILE: VisualsFrontend/src/hooks/useLiveKit.ts
+FILE: mvp_talker_offline/VisualsFrontend/src/hooks/useLiveKit.ts
 LANGUAGE: typescript
 LINES: 257
 PURPOSE: LiveKit WebRTC transport hook: room joining (/api/token), speaker audio track playback, text stream handling, and client RPC
@@ -1053,7 +1053,7 @@ export function useLiveKit() {
 
 
 ================================================================================
-FILE: VisualsFrontend/src/utils/bionic.ts
+FILE: mvp_talker_offline/VisualsFrontend/src/utils/bionic.ts
 LANGUAGE: typescript
 LINES: 26
 PURPOSE: Bionic reading text transformation algorithm bolding initial letters of words

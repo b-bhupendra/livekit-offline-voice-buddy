@@ -1,8 +1,8 @@
 ================================================================================
-FILE: VisualsFrontend/package.json
+FILE: mvp_talker_offline/VisualsFrontend/package.json
 LANGUAGE: json
 LINES: 34
-PURPOSE: Project dependencies (React 19, Framer Motion, Lucide, Inter), scripts, build configuration
+PURPOSE: Project dependencies (React 19, Framer Motion, Lucide, Inter, LiveKit Client), scripts, build configuration
 ================================================================================
 
 {
@@ -42,7 +42,7 @@ PURPOSE: Project dependencies (React 19, Framer Motion, Lucide, Inter), scripts,
 
 
 ================================================================================
-FILE: VisualsFrontend/vite.config.ts
+FILE: mvp_talker_offline/VisualsFrontend/vite.config.ts
 LANGUAGE: typescript
 LINES: 7
 PURPOSE: Vite build & dev server configuration with React plugin
@@ -58,7 +58,7 @@ export default defineConfig({
 
 
 ================================================================================
-FILE: VisualsFrontend/tsconfig.json
+FILE: mvp_talker_offline/VisualsFrontend/tsconfig.json
 LANGUAGE: json
 LINES: 7
 PURPOSE: Root TypeScript compiler options
@@ -74,7 +74,7 @@ PURPOSE: Root TypeScript compiler options
 
 
 ================================================================================
-FILE: VisualsFrontend/index.html
+FILE: mvp_talker_offline/VisualsFrontend/index.html
 LANGUAGE: html
 LINES: 17
 PURPOSE: HTML shell mounting root React container with Inter typography
@@ -100,7 +100,7 @@ PURPOSE: HTML shell mounting root React container with Inter typography
 
 
 ================================================================================
-FILE: VisualsFrontend/src/main.tsx
+FILE: mvp_talker_offline/VisualsFrontend/src/main.tsx
 LANGUAGE: typescript
 LINES: 11
 PURPOSE: React 19 entrypoint mounting App with @fontsource/inter
@@ -120,7 +120,7 @@ createRoot(document.getElementById('root')!).render(
 
 
 ================================================================================
-FILE: VisualsFrontend/src/index.css
+FILE: mvp_talker_offline/VisualsFrontend/src/index.css
 LANGUAGE: css
 LINES: 171
 PURPOSE: Design System: Dark surface tokens (--surface-0 to --surface-3), hairlines, and typography

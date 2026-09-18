@@ -13,36 +13,40 @@ It combines LiveKit Agents SDK, Faster-Whisper (CPU int8 STT), Piper (neural TTS
              │    - dispute_answer                            │
              │    - get_learner_progress                      │
              │    - generate_revision_notes                   │
+             │    - advance_chapter                           │
              │  • LiveKit text streams on room:               │
              │    - topic: 'transcript'                       │
              │    - topic: 'genui'                            │
+             │  • Native RPC Handlers:                        │
+             │    - getSyllabus, getQuiz, submitQuizAnswer,   │
+             │      disputeAnswer, advanceChapter             │
              └───────┬───────────────────────────────┬────────┘
-                     │ Direct python call            │ WebRTC Data
+                     │ Direct python call            │ WebRTC Data / Streams
                      ▼                               ▼
-       ┌───────────────────────────────┐     ┌───────────────────┐
-       │ In-Process Pedagogical Layer  │     │ WebRTC Frontend   │
-       │  - RAGStore (BM25 + vectors)  │     │ (VisualsFrontend) │
-       │  - QuizEngine (Banks + Iso)   │     └───────────────────┘
-       │  - SyllabusTracker (SQLite)   │
+       ┌───────────────────────────────┐     ┌───────────────────────────────┐
+       │ In-Process Pedagogical Layer  │     │ WebRTC Frontend               │
+       │  - RAGStore (BM25 + vectors)  │     │ (mvp_talker_offline/          │
+       │  - QuizEngine (Banks + Iso)   │     │  VisualsFrontend)             │
+       │  - SyllabusTracker (SQLite)   │     └───────────────────────────────┘
        │  - SimulationEngine           │
        └─────────────┬─────────────────┘
                      │ HTTP (Audio Only)
                      ▼
        ┌───────────────────────────────┐
-       │ audio_server.py               │
+       │ audio_server.py (port 8880)   │
        │  - /v1/audio/speech (Piper)   │
-       │  - /v1/audio/transcriptions   │
+       │  - /api/token (JWT minting)   │
        └───────────────────────────────┘
 ```
 
 ## 3. Key Subsystems
-1. **LiveKit Voice Agent (`agent.py`)**:
-   - Audio Pipeline: StreamAdapter wrapping in-memory Faster-Whisper `tiny.en`, Silero VAD, and local Audio Turn Detector `v1-mini`.
+1. **LiveKit Voice Agent (`backend/agent.py`)**:
+   - Audio Pipeline: StreamAdapter wrapping Faster-Whisper `tiny.en`, Silero VAD, and local Audio Turn Detector `v1-mini`.
    - TTS: HTTP OpenAI-compatible endpoint provided by `audio_server.py` invoking Piper ONNX model (`en_US-lessac-medium`).
-   - Hooks: Captures `user_input_transcribed` and `agent_speech_committed` and publishes directly via room text streams.
-2. **Audio Server (`audio_server.py`)**:
+   - In-Process Tools: Tools receive `RunContext` and push interactive GenUI cards (`QuizCard`, `BionicSketchNote`, `ContentionResolver`) directly to the WebRTC room via `send_room_text`.
+2. **Audio Server (`backend/audio_server.py`)**:
    - Runs FastAPI on port 8880.
-   - Dedicated audio processing: Piper TTS synthesis and Faster-Whisper transcription.
+   - Dedicated microservice: Piper TTS synthesis and LiveKit JWT access token minting.
 3. **Pedagogical Engines**:
    - **`quiz_engine.py`**: Linear chapter progression, error counting, isomorphic problem repetition with audit logging to SQLite (`isomorphic_mutation_audit`).
    - **`simulation_engine.py`**: Linguistic dispute resolution with offline local RAG fallback and dialect register analysis.

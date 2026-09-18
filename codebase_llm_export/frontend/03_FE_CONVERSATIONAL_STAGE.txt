@@ -1,5 +1,5 @@
 ================================================================================
-FILE: VisualsFrontend/src/App.tsx
+FILE: mvp_talker_offline/VisualsFrontend/src/App.tsx
 LANGUAGE: typescript
 LINES: 224
 PURPOSE: Conversational Live Stage: Timeline feed, top status bar, bottom audio dock, and slide-over drawer
@@ -232,7 +232,7 @@ export default function App() {
 
 
 ================================================================================
-FILE: VisualsFrontend/src/components/Header.tsx
+FILE: mvp_talker_offline/VisualsFrontend/src/components/Header.tsx
 LANGUAGE: typescript
 LINES: 179
 PURPOSE: Top navigation bar with engine status indicator, active chapter pill, and quick triggers
@@ -420,7 +420,7 @@ export const Header: React.FC = () => {
 
 
 ================================================================================
-FILE: VisualsFrontend/src/components/AudioDock.tsx
+FILE: mvp_talker_offline/VisualsFrontend/src/components/AudioDock.tsx
 LANGUAGE: typescript
 LINES: 259
 PURPOSE: Floating voice visualizer dock with active waveform, composer textarea, and action chips
@@ -688,7 +688,7 @@ export const AudioDock: React.FC = () => {
 
 
 ================================================================================
-FILE: VisualsFrontend/src/components/SlideOverDrawer.tsx
+FILE: mvp_talker_offline/VisualsFrontend/src/components/SlideOverDrawer.tsx
 LANGUAGE: typescript
 LINES: 518
 PURPOSE: Collapsible slide-over drawer with 18-chapter roadmap, analytics, and remediation queue
@@ -1215,7 +1215,7 @@ export const SlideOverDrawer: React.FC = () => {
 
 
 ================================================================================
-FILE: VisualsFrontend/src/components/InlineQuizCard.tsx
+FILE: mvp_talker_offline/VisualsFrontend/src/components/InlineQuizCard.tsx
 LANGUAGE: typescript
 LINES: 529
 PURPOSE: Inline generative quiz artifact card with feedback, rule citations, dispute handling, and isomorphic retry
@@ -1753,7 +1753,7 @@ export const InlineQuizCard: React.FC<InlineQuizCardProps> = ({
 
 
 ================================================================================
-FILE: VisualsFrontend/src/components/InlineDisputeCard.tsx
+FILE: mvp_talker_offline/VisualsFrontend/src/components/InlineDisputeCard.tsx
 LANGUAGE: typescript
 LINES: 221
 PURPOSE: Inline dispute ruling card comparing formal grammar vs colloquial usage with citations
@@ -1983,7 +1983,7 @@ export const InlineDisputeCard: React.FC<{ data: ContentionProps }> = ({ data })
 
 
 ================================================================================
-FILE: VisualsFrontend/src/components/InlineNotesCard.tsx
+FILE: mvp_talker_offline/VisualsFrontend/src/components/InlineNotesCard.tsx
 LANGUAGE: typescript
 LINES: 219
 PURPOSE: Inline revision notes artifact card with bionic reading toggle and common traps
@@ -2211,10 +2211,10 @@ export const InlineNotesCard: React.FC<InlineNotesCardProps> = ({ notes }) => {
 
 
 ================================================================================
-FILE: VisualsFrontend/src/components/StreamingCard.tsx
+FILE: mvp_talker_offline/VisualsFrontend/src/components/StreamingCard.tsx
 LANGUAGE: typescript
 LINES: 74
-PURPOSE: Live MCP/LLM token streaming card with typewriter animation and blinking cursor
+PURPOSE: Live LLM token synthesis card with typewriter animation and blinking cursor
 ================================================================================
 
 import React from 'react';

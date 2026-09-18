@@ -1,8 +1,8 @@
-# Frontend Architecture & Overview (VisualsFrontend)
+# Frontend Architecture & Overview (mvp_talker_offline/VisualsFrontend)
 
 ## 1. Executive Summary
 **VisualsFrontend** is a conversational generative UI modeled after **Gemini Live** and **ChatGPT Canvas**.
-Built with React 19, TypeScript, Vite, Framer Motion, and Zustand, it serves as the real-time visual companion to the **Buddy Offline Voice AI Agent**.
+Built with React 19, TypeScript, Vite, Framer Motion, and Zustand, it serves as the real-time visual companion to the **Buddy Offline Voice AI Agent**. It lives under `mvp_talker_offline/VisualsFrontend/`.
 
 ## 2. Key Architecture Patterns
 - **Event-Driven Conversation Timeline**:
@@ -22,29 +22,30 @@ Built with React 19, TypeScript, Vite, Framer Motion, and Zustand, it serves as 
 
 ## 3. Directory Tree
 ```
-VisualsFrontend/
-├── package.json               # React 19, Vite, Zustand, Framer-Motion, Lucide
-├── vite.config.ts            # Vite config
-├── tsconfig.json             # TypeScript config
-├── index.html                # HTML entrypoint
-└── src/
-    ├── main.tsx              # React DOM render with Inter font
-    ├── index.css             # Minimalist surface tokens & typography
-    ├── types.ts              # FeedItem, QuizQuestion, ContentionProps
-    ├── store.ts              # Unified timeline Zustand store with LiveKit RPC
-    ├── App.tsx               # Conversational Live Stage
-    ├── hooks/
-    │   └── useLiveKit.ts     # LiveKit WebRTC transport & RPC hook
-    ├── utils/
-    │   └── bionic.ts         # Bionic reading algorithm
-    └── components/
-        ├── Header.tsx        # Top status bar & chapter display
-        ├── AudioDock.tsx     # Floating voice dock & waveform
-        ├── SlideOverDrawer.tsx # 18-chapter roadmap & analytics drawer
-        ├── InlineQuizCard.tsx# Inline interactive quiz card artifact
-        ├── InlineDisputeCard.tsx # Inline linguistic dispute ruling artifact
-        ├── InlineNotesCard.tsx # Inline study notes with Bionic reading
-        └── StreamingCard.tsx # Live LLM token synthesis typewriter
+mvp_talker_offline/
+└── VisualsFrontend/
+    ├── package.json               # React 19, Vite, Zustand, Framer-Motion, Lucide, LiveKit Client
+    ├── vite.config.ts            # Vite config
+    ├── tsconfig.json             # TypeScript config
+    ├── index.html                # HTML entrypoint
+    └── src/
+        ├── main.tsx              # React DOM render with Inter font
+        ├── index.css             # Minimalist surface tokens & typography
+        ├── types.ts              # FeedItem, QuizQuestion, ContentionProps
+        ├── store.ts              # Unified timeline Zustand store with LiveKit RPC
+        ├── App.tsx               # Conversational Live Stage
+        ├── hooks/
+        │   └── useLiveKit.ts     # LiveKit WebRTC transport & RPC hook
+        ├── utils/
+        │   └── bionic.ts         # Bionic reading algorithm
+        └── components/
+            ├── Header.tsx        # Top status bar & chapter display
+            ├── AudioDock.tsx     # Floating voice dock & waveform
+            ├── SlideOverDrawer.tsx # 18-chapter roadmap & analytics drawer
+            ├── InlineQuizCard.tsx# Inline interactive quiz card artifact
+            ├── InlineDisputeCard.tsx # Inline linguistic dispute ruling artifact
+            ├── InlineNotesCard.tsx # Inline study notes with Bionic reading
+            └── StreamingCard.tsx # Live LLM token synthesis typewriter
 ```
 
 ## 4. Chunk Guide for LLMs

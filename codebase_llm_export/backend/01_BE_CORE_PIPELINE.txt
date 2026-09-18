@@ -790,7 +790,7 @@ CORE TEACHING & CONVERSATIONAL RULES:
 FILE: mvp_talker_offline/requirements.txt
 LANGUAGE: text
 LINES: 22
-PURPOSE: Python backend requirements (livekit, faster-whisper, mcp, fastapi, uvicorn, rank-bm25, duckduckgo-search)
+PURPOSE: Python backend requirements (livekit, faster-whisper, fastapi, uvicorn, rank-bm25, duckduckgo-search)
 ================================================================================
 
 # Core LiveKit Agents SDK + plugins used by agent.py

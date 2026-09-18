@@ -5,6 +5,7 @@ Provides:
 - Directory trees & manifests
 - Logically chunked text files (< 20K tokens each) for targeted LLM prompts
 - Single full-codebase bundle text files for large-context models
+- Unified master project export (FULL_PROJECT_CODEBASE.txt) combining BE and FE together
 - Delimiters and metadata headers formatted for zero-ambiguity parsing by any LLM
 """
 
@@ -14,7 +15,7 @@ import json
 import shutil
 from pathlib import Path
 
-BASE_DIR = Path("/home/bhupendra/Videos/livekit guides")
+BASE_DIR = Path(__file__).resolve().parent
 EXPORT_DIR = BASE_DIR / "codebase_llm_export"
 FE_DIR = EXPORT_DIR / "frontend"
 BE_DIR = EXPORT_DIR / "backend"
@@ -42,41 +43,41 @@ def format_file_block(rel_path: str, purpose: str, language: str) -> str:
     return f"{header}\n{content}\n\n"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# FRONTEND DEFINITIONS (Conversational Generative UI — Gemini Live / Canvas)
+# FRONTEND DEFINITIONS (mvp_talker_offline/VisualsFrontend)
 # ─────────────────────────────────────────────────────────────────────────────
 
 FE_CHUNKS = {
     "01_FE_CORE_AND_CONFIG.txt": [
-        ("VisualsFrontend/package.json", "Project dependencies (React 19, Framer Motion, Lucide, Inter), scripts, build configuration", "json"),
-        ("VisualsFrontend/vite.config.ts", "Vite build & dev server configuration with React plugin", "typescript"),
-        ("VisualsFrontend/tsconfig.json", "Root TypeScript compiler options", "json"),
-        ("VisualsFrontend/index.html", "HTML shell mounting root React container with Inter typography", "html"),
-        ("VisualsFrontend/src/main.tsx", "React 19 entrypoint mounting App with @fontsource/inter", "typescript"),
-        ("VisualsFrontend/src/index.css", "Design System: Dark surface tokens (--surface-0 to --surface-3), hairlines, and typography", "css"),
+        ("mvp_talker_offline/VisualsFrontend/package.json", "Project dependencies (React 19, Framer Motion, Lucide, Inter, LiveKit Client), scripts, build configuration", "json"),
+        ("mvp_talker_offline/VisualsFrontend/vite.config.ts", "Vite build & dev server configuration with React plugin", "typescript"),
+        ("mvp_talker_offline/VisualsFrontend/tsconfig.json", "Root TypeScript compiler options", "json"),
+        ("mvp_talker_offline/VisualsFrontend/index.html", "HTML shell mounting root React container with Inter typography", "html"),
+        ("mvp_talker_offline/VisualsFrontend/src/main.tsx", "React 19 entrypoint mounting App with @fontsource/inter", "typescript"),
+        ("mvp_talker_offline/VisualsFrontend/src/index.css", "Design System: Dark surface tokens (--surface-0 to --surface-3), hairlines, and typography", "css"),
     ],
     "02_FE_STATE_AND_SERVICES.txt": [
-        ("VisualsFrontend/src/types.ts", "Central TypeScript interfaces (FeedItem, QuizQuestion, ContentionProps, SyllabusData)", "typescript"),
-        ("VisualsFrontend/src/store.ts", "Zustand state store managing sequential feed array, LiveKit room instance, drawer state, and LiveKit RPC actions", "typescript"),
-        ("VisualsFrontend/src/hooks/useLiveKit.ts", "LiveKit WebRTC transport hook: room joining (/api/token), speaker audio track playback, text stream handling, and client RPC", "typescript"),
-        ("VisualsFrontend/src/utils/bionic.ts", "Bionic reading text transformation algorithm bolding initial letters of words", "typescript"),
+        ("mvp_talker_offline/VisualsFrontend/src/types.ts", "Central TypeScript interfaces (FeedItem, QuizQuestion, ContentionProps, SyllabusData)", "typescript"),
+        ("mvp_talker_offline/VisualsFrontend/src/store.ts", "Zustand state store managing sequential feed array, LiveKit room instance, drawer state, and LiveKit RPC actions", "typescript"),
+        ("mvp_talker_offline/VisualsFrontend/src/hooks/useLiveKit.ts", "LiveKit WebRTC transport hook: room joining (/api/token), speaker audio track playback, text stream handling, and client RPC", "typescript"),
+        ("mvp_talker_offline/VisualsFrontend/src/utils/bionic.ts", "Bionic reading text transformation algorithm bolding initial letters of words", "typescript"),
     ],
     "03_FE_CONVERSATIONAL_STAGE.txt": [
-        ("VisualsFrontend/src/App.tsx", "Conversational Live Stage: Timeline feed, top status bar, bottom audio dock, and slide-over drawer", "typescript"),
-        ("VisualsFrontend/src/components/Header.tsx", "Top navigation bar with engine status indicator, active chapter pill, and quick triggers", "typescript"),
-        ("VisualsFrontend/src/components/AudioDock.tsx", "Floating voice visualizer dock with active waveform, composer textarea, and action chips", "typescript"),
-        ("VisualsFrontend/src/components/SlideOverDrawer.tsx", "Collapsible slide-over drawer with 18-chapter roadmap, analytics, and remediation queue", "typescript"),
-        ("VisualsFrontend/src/components/InlineQuizCard.tsx", "Inline generative quiz artifact card with feedback, rule citations, dispute handling, and isomorphic retry", "typescript"),
-        ("VisualsFrontend/src/components/InlineDisputeCard.tsx", "Inline dispute ruling card comparing formal grammar vs colloquial usage with citations", "typescript"),
-        ("VisualsFrontend/src/components/InlineNotesCard.tsx", "Inline revision notes artifact card with bionic reading toggle and common traps", "typescript"),
-        ("VisualsFrontend/src/components/StreamingCard.tsx", "Live MCP/LLM token streaming card with typewriter animation and blinking cursor", "typescript"),
+        ("mvp_talker_offline/VisualsFrontend/src/App.tsx", "Conversational Live Stage: Timeline feed, top status bar, bottom audio dock, and slide-over drawer", "typescript"),
+        ("mvp_talker_offline/VisualsFrontend/src/components/Header.tsx", "Top navigation bar with engine status indicator, active chapter pill, and quick triggers", "typescript"),
+        ("mvp_talker_offline/VisualsFrontend/src/components/AudioDock.tsx", "Floating voice visualizer dock with active waveform, composer textarea, and action chips", "typescript"),
+        ("mvp_talker_offline/VisualsFrontend/src/components/SlideOverDrawer.tsx", "Collapsible slide-over drawer with 18-chapter roadmap, analytics, and remediation queue", "typescript"),
+        ("mvp_talker_offline/VisualsFrontend/src/components/InlineQuizCard.tsx", "Inline generative quiz artifact card with feedback, rule citations, dispute handling, and isomorphic retry", "typescript"),
+        ("mvp_talker_offline/VisualsFrontend/src/components/InlineDisputeCard.tsx", "Inline dispute ruling card comparing formal grammar vs colloquial usage with citations", "typescript"),
+        ("mvp_talker_offline/VisualsFrontend/src/components/InlineNotesCard.tsx", "Inline revision notes artifact card with bionic reading toggle and common traps", "typescript"),
+        ("mvp_talker_offline/VisualsFrontend/src/components/StreamingCard.tsx", "Live LLM token synthesis card with typewriter animation and blinking cursor", "typescript"),
     ]
 }
 
-FE_OVERVIEW_MD = """# Frontend Architecture & Overview (VisualsFrontend)
+FE_OVERVIEW_MD = """# Frontend Architecture & Overview (mvp_talker_offline/VisualsFrontend)
 
 ## 1. Executive Summary
 **VisualsFrontend** is a conversational generative UI modeled after **Gemini Live** and **ChatGPT Canvas**.
-Built with React 19, TypeScript, Vite, Framer Motion, and Zustand, it serves as the real-time visual companion to the **Buddy Offline Voice AI Agent**.
+Built with React 19, TypeScript, Vite, Framer Motion, and Zustand, it serves as the real-time visual companion to the **Buddy Offline Voice AI Agent**. It lives under `mvp_talker_offline/VisualsFrontend/`.
 
 ## 2. Key Architecture Patterns
 - **Event-Driven Conversation Timeline**:
@@ -96,29 +97,30 @@ Built with React 19, TypeScript, Vite, Framer Motion, and Zustand, it serves as 
 
 ## 3. Directory Tree
 ```
-VisualsFrontend/
-├── package.json               # React 19, Vite, Zustand, Framer-Motion, Lucide
-├── vite.config.ts            # Vite config
-├── tsconfig.json             # TypeScript config
-├── index.html                # HTML entrypoint
-└── src/
-    ├── main.tsx              # React DOM render with Inter font
-    ├── index.css             # Minimalist surface tokens & typography
-    ├── types.ts              # FeedItem, QuizQuestion, ContentionProps
-    ├── store.ts              # Unified timeline Zustand store with LiveKit RPC
-    ├── App.tsx               # Conversational Live Stage
-    ├── hooks/
-    │   └── useLiveKit.ts     # LiveKit WebRTC transport & RPC hook
-    ├── utils/
-    │   └── bionic.ts         # Bionic reading algorithm
-    └── components/
-        ├── Header.tsx        # Top status bar & chapter display
-        ├── AudioDock.tsx     # Floating voice dock & waveform
-        ├── SlideOverDrawer.tsx # 18-chapter roadmap & analytics drawer
-        ├── InlineQuizCard.tsx# Inline interactive quiz card artifact
-        ├── InlineDisputeCard.tsx # Inline linguistic dispute ruling artifact
-        ├── InlineNotesCard.tsx # Inline study notes with Bionic reading
-        └── StreamingCard.tsx # Live LLM token synthesis typewriter
+mvp_talker_offline/
+└── VisualsFrontend/
+    ├── package.json               # React 19, Vite, Zustand, Framer-Motion, Lucide, LiveKit Client
+    ├── vite.config.ts            # Vite config
+    ├── tsconfig.json             # TypeScript config
+    ├── index.html                # HTML entrypoint
+    └── src/
+        ├── main.tsx              # React DOM render with Inter font
+        ├── index.css             # Minimalist surface tokens & typography
+        ├── types.ts              # FeedItem, QuizQuestion, ContentionProps
+        ├── store.ts              # Unified timeline Zustand store with LiveKit RPC
+        ├── App.tsx               # Conversational Live Stage
+        ├── hooks/
+        │   └── useLiveKit.ts     # LiveKit WebRTC transport & RPC hook
+        ├── utils/
+        │   └── bionic.ts         # Bionic reading algorithm
+        └── components/
+            ├── Header.tsx        # Top status bar & chapter display
+            ├── AudioDock.tsx     # Floating voice dock & waveform
+            ├── SlideOverDrawer.tsx # 18-chapter roadmap & analytics drawer
+            ├── InlineQuizCard.tsx# Inline interactive quiz card artifact
+            ├── InlineDisputeCard.tsx # Inline linguistic dispute ruling artifact
+            ├── InlineNotesCard.tsx # Inline study notes with Bionic reading
+            └── StreamingCard.tsx # Live LLM token synthesis typewriter
 ```
 
 ## 4. Chunk Guide for LLMs
@@ -129,7 +131,7 @@ VisualsFrontend/
 """
 
 # ─────────────────────────────────────────────────────────────────────────────
-# BACKEND DEFINITIONS
+# BACKEND DEFINITIONS (mvp_talker_offline/backend)
 # ─────────────────────────────────────────────────────────────────────────────
 
 BE_CHUNKS = {
@@ -137,7 +139,7 @@ BE_CHUNKS = {
         ("mvp_talker_offline/backend/agent.py", "LiveKit voice AI agent entrypoint: Faster-Whisper STT, Silero VAD, Piper TTS, Ollama LLM, in-process function tools (with RunContext UI streaming), and LiveKit RPC handlers", "python"),
         ("mvp_talker_offline/backend/audio_server.py", "Isolated FastAPI microservice serving local Piper neural TTS (/v1/audio/speech) and LiveKit JWT token minting (/api/token)", "python"),
         ("mvp_talker_offline/Modelfile", "Custom Ollama Modelfile configuring qwen2.5:3b with pedagogical teacher persona and grammar guidelines", "dockerfile"),
-        ("mvp_talker_offline/requirements.txt", "Python backend requirements (livekit, faster-whisper, mcp, fastapi, uvicorn, rank-bm25, duckduckgo-search)", "text"),
+        ("mvp_talker_offline/requirements.txt", "Python backend requirements (livekit, faster-whisper, fastapi, uvicorn, rank-bm25, duckduckgo-search)", "text"),
         ("mvp_talker_offline/.env.example", "Environment variable documentation (LiveKit keys, Ollama URL, Piper voice model path)", "ini"),
     ],
     "02_BE_ENGINES.txt": [
@@ -170,36 +172,40 @@ It combines LiveKit Agents SDK, Faster-Whisper (CPU int8 STT), Piper (neural TTS
              │    - dispute_answer                            │
              │    - get_learner_progress                      │
              │    - generate_revision_notes                   │
+             │    - advance_chapter                           │
              │  • LiveKit text streams on room:               │
              │    - topic: 'transcript'                       │
              │    - topic: 'genui'                            │
+             │  • Native RPC Handlers:                        │
+             │    - getSyllabus, getQuiz, submitQuizAnswer,   │
+             │      disputeAnswer, advanceChapter             │
              └───────┬───────────────────────────────┬────────┘
-                     │ Direct python call            │ WebRTC Data
+                     │ Direct python call            │ WebRTC Data / Streams
                      ▼                               ▼
-       ┌───────────────────────────────┐     ┌───────────────────┐
-       │ In-Process Pedagogical Layer  │     │ WebRTC Frontend   │
-       │  - RAGStore (BM25 + vectors)  │     │ (VisualsFrontend) │
-       │  - QuizEngine (Banks + Iso)   │     └───────────────────┘
-       │  - SyllabusTracker (SQLite)   │
+       ┌───────────────────────────────┐     ┌───────────────────────────────┐
+       │ In-Process Pedagogical Layer  │     │ WebRTC Frontend               │
+       │  - RAGStore (BM25 + vectors)  │     │ (mvp_talker_offline/          │
+       │  - QuizEngine (Banks + Iso)   │     │  VisualsFrontend)             │
+       │  - SyllabusTracker (SQLite)   │     └───────────────────────────────┘
        │  - SimulationEngine           │
        └─────────────┬─────────────────┘
                      │ HTTP (Audio Only)
                      ▼
        ┌───────────────────────────────┐
-       │ audio_server.py               │
+       │ audio_server.py (port 8880)   │
        │  - /v1/audio/speech (Piper)   │
-       │  - /v1/audio/transcriptions   │
+       │  - /api/token (JWT minting)   │
        └───────────────────────────────┘
 ```
 
 ## 3. Key Subsystems
-1. **LiveKit Voice Agent (`agent.py`)**:
-   - Audio Pipeline: StreamAdapter wrapping in-memory Faster-Whisper `tiny.en`, Silero VAD, and local Audio Turn Detector `v1-mini`.
+1. **LiveKit Voice Agent (`backend/agent.py`)**:
+   - Audio Pipeline: StreamAdapter wrapping Faster-Whisper `tiny.en`, Silero VAD, and local Audio Turn Detector `v1-mini`.
    - TTS: HTTP OpenAI-compatible endpoint provided by `audio_server.py` invoking Piper ONNX model (`en_US-lessac-medium`).
-   - Hooks: Captures `user_input_transcribed` and `agent_speech_committed` and publishes directly via room text streams.
-2. **Audio Server (`audio_server.py`)**:
+   - In-Process Tools: Tools receive `RunContext` and push interactive GenUI cards (`QuizCard`, `BionicSketchNote`, `ContentionResolver`) directly to the WebRTC room via `send_room_text`.
+2. **Audio Server (`backend/audio_server.py`)**:
    - Runs FastAPI on port 8880.
-   - Dedicated audio processing: Piper TTS synthesis and Faster-Whisper transcription.
+   - Dedicated microservice: Piper TTS synthesis and LiveKit JWT access token minting.
 3. **Pedagogical Engines**:
    - **`quiz_engine.py`**: Linear chapter progression, error counting, isomorphic problem repetition with audit logging to SQLite (`isomorphic_mutation_audit`).
    - **`simulation_engine.py`**: Linguistic dispute resolution with offline local RAG fallback and dialect register analysis.
@@ -215,10 +221,29 @@ MASTER_README_MD = """# Codebase Context Export for LLMs
 
 This directory contains clean, structured, and chunked exports of the entire codebase for **Buddy — The Offline Voice AI English Grammar Coach**.
 
+The project is organized under the monorepo folder **`mvp_talker_offline/`**:
+- **`mvp_talker_offline/backend/`**: Python LiveKit Voice Agent, pedagogical engines, and audio microservice.
+- **`mvp_talker_offline/VisualsFrontend/`**: React 19 / TypeScript / Vite / Zustand conversational UI.
+- **`mvp_talker_offline/data/`**: Curriculum schema, quiz banks, and narrative practice stories.
+- **`mvp_talker_offline/models/`**: Offline neural Piper TTS voice model.
+
+## Available Export Modes
+
+1. **Combined Full Project Bundle (Frontend + Backend Together)**:
+   - **`FULL_PROJECT_CODEBASE.txt`**: The entire codebase (Backend + Frontend) concatenated in a single file for large-context models (Claude 3.5 Sonnet, GPT-4o, Gemini 1.5/2.0 Pro).
+
+2. **Separated Full Stacks**:
+   - **`frontend/FULL_FRONTEND_CODEBASE.txt`**: All frontend files bundled together.
+   - **`backend/FULL_BACKEND_CODEBASE.txt`**: All backend files bundled together.
+
+3. **Separated Logical Chunks (< 20K tokens each)**:
+   - For smaller context windows or targeted tasks (editing UI, tuning prompts, adjusting STT/TTS).
+
 ## Structure
 ```
 codebase_llm_export/
 ├── README.md                      # This guide
+├── FULL_PROJECT_CODEBASE.txt      # Combined Backend & Frontend in a single master bundle
 ├── frontend/                      # VisualsFrontend (React 19, TypeScript, Zustand, Vite)
 │   ├── 00_FRONTEND_OVERVIEW.md    # Architecture overview, component tree, state diagram
 │   ├── 01_FE_CORE_AND_CONFIG.txt  # package.json, vite.config.ts, tsconfig.json, index.html, main.tsx, index.css
@@ -234,16 +259,12 @@ codebase_llm_export/
 ```
 
 ## How to Feed this to an LLM
-1. **For Large-Context Models (Claude 3.5 Sonnet, GPT-4o, Gemini 1.5/2.0)**:
-   - Provide `frontend/FULL_FRONTEND_CODEBASE.txt` for frontend tasks or refactoring.
-   - Provide `backend/FULL_BACKEND_CODEBASE.txt` for backend tasks or agent logic.
-2. **For Smaller-Context or Local Models (8k – 32k tokens)**:
-   - Start by reading `00_FRONTEND_OVERVIEW.md` or `00_BACKEND_OVERVIEW.md`.
-   - Select only the relevant chunk:
-     - To edit state: Load `02_FE_STATE_AND_SERVICES.txt`.
-     - To edit UI components: Load `03_FE_CONVERSATIONAL_STAGE.txt`.
-     - To modify core configs: Load `01_FE_CORE_AND_CONFIG.txt`.
-     - To modify LiveKit audio: Load `01_BE_CORE_PIPELINE.txt`.
+1. **For End-to-End Architectural Tasks**:
+   - Load **`FULL_PROJECT_CODEBASE.txt`**.
+2. **For Frontend-Specific Tasks**:
+   - Load **`frontend/FULL_FRONTEND_CODEBASE.txt`** (or specific chunks `01` to `03`).
+3. **For Backend-Specific Tasks**:
+   - Load **`backend/FULL_BACKEND_CODEBASE.txt`** (or specific chunks `01` to `03`).
 """
 
 def generate_exports():
@@ -289,6 +310,17 @@ def generate_exports():
 
     (BE_DIR / "FULL_BACKEND_CODEBASE.txt").write_text("".join(full_be_content), encoding="utf-8")
     print(f"  [BE Bundle] Wrote FULL_BACKEND_CODEBASE.txt ({len(full_be_content)} files total)")
+
+    # Combined Master Bundle (BE + FE Together)
+    combined_project_header = (
+        "=" * 80 + "\n"
+        "BUDDY CONVERSATIONAL VOICE AI & GENERATIVE UI — COMPLETE PROJECT EXPORT\n"
+        "INCLUDES: BACKEND (LiveKit Agent, Engines, Pipeline) & FRONTEND (React 19 Canvas UI)\n"
+        "=" * 80 + "\n\n"
+    )
+    combined_project_content = combined_project_header + "".join(full_be_content) + "".join(full_fe_content)
+    (EXPORT_DIR / "FULL_PROJECT_CODEBASE.txt").write_text(combined_project_content, encoding="utf-8")
+    print(f"  [Combined Project Bundle] Wrote FULL_PROJECT_CODEBASE.txt ({len(full_be_content) + len(full_fe_content)} files total)")
 
     print(f"\nExport complete! Files written to:\n  {EXPORT_DIR}")
 

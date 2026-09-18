@@ -1,8 +1,8 @@
 ================================================================================
-FILE: VisualsFrontend/package.json
+FILE: mvp_talker_offline/VisualsFrontend/package.json
 LANGUAGE: json
 LINES: 34
-PURPOSE: Project dependencies (React 19, Framer Motion, Lucide, Inter), scripts, build configuration
+PURPOSE: Project dependencies (React 19, Framer Motion, Lucide, Inter, LiveKit Client), scripts, build configuration
 ================================================================================
 
 {
@@ -42,7 +42,7 @@ PURPOSE: Project dependencies (React 19, Framer Motion, Lucide, Inter), scripts,
 
 
 ================================================================================
-FILE: VisualsFrontend/vite.config.ts
+FILE: mvp_talker_offline/VisualsFrontend/vite.config.ts
 LANGUAGE: typescript
 LINES: 7
 PURPOSE: Vite build & dev server configuration with React plugin
@@ -58,7 +58,7 @@ export default defineConfig({
 
 
 ================================================================================
-FILE: VisualsFrontend/tsconfig.json
+FILE: mvp_talker_offline/VisualsFrontend/tsconfig.json
 LANGUAGE: json
 LINES: 7
 PURPOSE: Root TypeScript compiler options
@@ -74,7 +74,7 @@ PURPOSE: Root TypeScript compiler options
 
 
 ================================================================================
-FILE: VisualsFrontend/index.html
+FILE: mvp_talker_offline/VisualsFrontend/index.html
 LANGUAGE: html
 LINES: 17
 PURPOSE: HTML shell mounting root React container with Inter typography
@@ -100,7 +100,7 @@ PURPOSE: HTML shell mounting root React container with Inter typography
 
 
 ================================================================================
-FILE: VisualsFrontend/src/main.tsx
+FILE: mvp_talker_offline/VisualsFrontend/src/main.tsx
 LANGUAGE: typescript
 LINES: 11
 PURPOSE: React 19 entrypoint mounting App with @fontsource/inter
@@ -120,7 +120,7 @@ createRoot(document.getElementById('root')!).render(
 
 
 ================================================================================
-FILE: VisualsFrontend/src/index.css
+FILE: mvp_talker_offline/VisualsFrontend/src/index.css
 LANGUAGE: css
 LINES: 171
 PURPOSE: Design System: Dark surface tokens (--surface-0 to --surface-3), hairlines, and typography
@@ -300,7 +300,7 @@ button {
 
 
 ================================================================================
-FILE: VisualsFrontend/src/types.ts
+FILE: mvp_talker_offline/VisualsFrontend/src/types.ts
 LANGUAGE: typescript
 LINES: 117
 PURPOSE: Central TypeScript interfaces (FeedItem, QuizQuestion, ContentionProps, SyllabusData)
@@ -426,7 +426,7 @@ export type DrawerTab = 'syllabus' | 'analytics' | 'remediation';
 
 
 ================================================================================
-FILE: VisualsFrontend/src/store.ts
+FILE: mvp_talker_offline/VisualsFrontend/src/store.ts
 LANGUAGE: typescript
 LINES: 653
 PURPOSE: Zustand state store managing sequential feed array, LiveKit room instance, drawer state, and LiveKit RPC actions
@@ -1088,7 +1088,7 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
 
 
 ================================================================================
-FILE: VisualsFrontend/src/hooks/useLiveKit.ts
+FILE: mvp_talker_offline/VisualsFrontend/src/hooks/useLiveKit.ts
 LANGUAGE: typescript
 LINES: 257
 PURPOSE: LiveKit WebRTC transport hook: room joining (/api/token), speaker audio track playback, text stream handling, and client RPC
@@ -1354,7 +1354,7 @@ export function useLiveKit() {
 
 
 ================================================================================
-FILE: VisualsFrontend/src/utils/bionic.ts
+FILE: mvp_talker_offline/VisualsFrontend/src/utils/bionic.ts
 LANGUAGE: typescript
 LINES: 26
 PURPOSE: Bionic reading text transformation algorithm bolding initial letters of words
@@ -1389,7 +1389,7 @@ export function bionicHtml(text: string, enabled: boolean): string {
 
 
 ================================================================================
-FILE: VisualsFrontend/src/App.tsx
+FILE: mvp_talker_offline/VisualsFrontend/src/App.tsx
 LANGUAGE: typescript
 LINES: 224
 PURPOSE: Conversational Live Stage: Timeline feed, top status bar, bottom audio dock, and slide-over drawer
@@ -1622,7 +1622,7 @@ export default function App() {
 
 
 ================================================================================
-FILE: VisualsFrontend/src/components/Header.tsx
+FILE: mvp_talker_offline/VisualsFrontend/src/components/Header.tsx
 LANGUAGE: typescript
 LINES: 179
 PURPOSE: Top navigation bar with engine status indicator, active chapter pill, and quick triggers
@@ -1810,7 +1810,7 @@ export const Header: React.FC = () => {
 
 
 ================================================================================
-FILE: VisualsFrontend/src/components/AudioDock.tsx
+FILE: mvp_talker_offline/VisualsFrontend/src/components/AudioDock.tsx
 LANGUAGE: typescript
 LINES: 259
 PURPOSE: Floating voice visualizer dock with active waveform, composer textarea, and action chips
@@ -2078,7 +2078,7 @@ export const AudioDock: React.FC = () => {
 
 
 ================================================================================
-FILE: VisualsFrontend/src/components/SlideOverDrawer.tsx
+FILE: mvp_talker_offline/VisualsFrontend/src/components/SlideOverDrawer.tsx
 LANGUAGE: typescript
 LINES: 518
 PURPOSE: Collapsible slide-over drawer with 18-chapter roadmap, analytics, and remediation queue
@@ -2605,7 +2605,7 @@ export const SlideOverDrawer: React.FC = () => {
 
 
 ================================================================================
-FILE: VisualsFrontend/src/components/InlineQuizCard.tsx
+FILE: mvp_talker_offline/VisualsFrontend/src/components/InlineQuizCard.tsx
 LANGUAGE: typescript
 LINES: 529
 PURPOSE: Inline generative quiz artifact card with feedback, rule citations, dispute handling, and isomorphic retry
@@ -3143,7 +3143,7 @@ export const InlineQuizCard: React.FC<InlineQuizCardProps> = ({
 
 
 ================================================================================
-FILE: VisualsFrontend/src/components/InlineDisputeCard.tsx
+FILE: mvp_talker_offline/VisualsFrontend/src/components/InlineDisputeCard.tsx
 LANGUAGE: typescript
 LINES: 221
 PURPOSE: Inline dispute ruling card comparing formal grammar vs colloquial usage with citations
@@ -3373,7 +3373,7 @@ export const InlineDisputeCard: React.FC<{ data: ContentionProps }> = ({ data })
 
 
 ================================================================================
-FILE: VisualsFrontend/src/components/InlineNotesCard.tsx
+FILE: mvp_talker_offline/VisualsFrontend/src/components/InlineNotesCard.tsx
 LANGUAGE: typescript
 LINES: 219
 PURPOSE: Inline revision notes artifact card with bionic reading toggle and common traps
@@ -3601,10 +3601,10 @@ export const InlineNotesCard: React.FC<InlineNotesCardProps> = ({ notes }) => {
 
 
 ================================================================================
-FILE: VisualsFrontend/src/components/StreamingCard.tsx
+FILE: mvp_talker_offline/VisualsFrontend/src/components/StreamingCard.tsx
 LANGUAGE: typescript
 LINES: 74
-PURPOSE: Live MCP/LLM token streaming card with typewriter animation and blinking cursor
+PURPOSE: Live LLM token synthesis card with typewriter animation and blinking cursor
 ================================================================================
 
 import React from 'react';
