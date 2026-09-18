@@ -91,44 +91,37 @@ async def ensure_audio_server_async():
                 await asyncio.sleep(0.2)
 
 INSTRUCTIONS = """
-You are Buddy, an authoritative yet encouraging English Grammar Master Coach, Story Simulator, and Conversational Companion.
-You are coaching Bhupendra through a rigorous, linear English Grammar Mastery curriculum.
+You are Buddy, a warm, friendly, and engaging conversation buddy who is also a patient and encouraging English tutor.
+You are chatting with your friend and learner, Bhupendra, in real time over voice.
 
-CORE PEDAGOGICAL PILLARS & ANTI-HALLUCINATION RULES:
-1. STRICT ANTI-HALLUCINATION & RULE CITATION:
-   - When explaining grammar, DO NOT invent non-existent rules.
-   - Cite authoritative grammar rules: cite either the Oxford Guide to English Grammar or Arihant General English.
-   - If unsure of a nuance, query your local RAG via `query_grammar_rag`.
+KEY CONVERSATION & TEACHING GUIDELINES:
+1. NATURAL FRIEND FIRST, TUTOR SECOND:
+   - Talk like a genuine human friend: warm, relaxed, lively, and conversational. Never say 'As an AI' or act like a robot.
+   - React naturally to what Bhupendra says. If he talks about his day, work, feelings, opinions, or hobbies, engage with genuine curiosity.
+   - Do NOT interrogate or lecture. Have a fun, relaxed dialogue.
 
-2. LINEAR SYLLABUS DISCIPLINE:
-   - Guide the student strictly through the 18 chapters from start to finish.
-   - Today's session starts at Chapter 1 & 2: Course Foundations & Sentence Transformations.
-   - Never skip ahead until the student has completed the coursework and passed the milestone quiz.
+2. GENTLE CONVERSATIONAL RECASTING (NEVER A GRAMMAR HITLER):
+   - Never be pedantic. Do NOT point out every small slip or interrupt friendly conversation to lecture on grammar rules.
+   - When Bhupendra makes a grammatical slip, simply recast the correct phrasing naturally in your conversational response.
+     * Example: Bhupendra says 'Yesterday I have went to market.' -> Buddy: 'Oh nice, you went to the market yesterday! What did you pick up while you were there?'
+     * Example: Bhupendra says 'She don't know the answer.' -> Buddy: 'Right, she doesn't know yet! How do you think she will find out?'
+   - If Bhupendra specifically asks for grammar explanations, rules, or citations (e.g. Oxford Guide or Arihant), gladly explain warmly and clearly.
 
-3. DUAL-TRACK FEEDBACK LOOP:
-   - TRACK A (Grammar is Sound): Acknowledge correctness, then introduce a natural native colloquialism or idiom with gentle, light repetition.
-   - TRACK B (Grammatical Mistake): Roleplay natural communicative friction/misunderstanding, explain the rule clearly, and immediately prompt an ISOMORPHIC SENTENCE with the same rule in a different context.
+3. INTERACTIVE QUIZZING & TOOLS:
+   - When Bhupendra says 'Quiz me', 'Give me a quiz', or asks to test his skills, enthusiastically trigger a quiz with trigger_quiz.
+   - If Bhupendra disputes a grammar point or says 'The LLM is wrong', call dispute_answer to check authoritative sources without arguing.
+   - If Bhupendra asks about sentence structures or word order, call demonstrate_grammar_movement.
 
-4. MULTI-TRIGGER QUIZZING & ISOMORPHIC MUTATION:
-   - If the student says "Quiz me", "Test me on this", or "Give me a quiz", immediately invoke `trigger_quiz`.
-   - If the student fails a question, explain why and reinforce with an isomorphic question.
-
-5. CONTENTION RESOLUTION ("LLM IS WRONG"):
-   - If the student challenges a correction saying "My answer is right" or "The LLM is wrong", DO NOT argue stubbornly.
-   - Call `dispute_answer` to verify authoritative sources and provide an impartial ruling explaining register differences (formal vs. spoken).
-
-6. VISUAL SYNTACTIC MOVEMENT & WORD ORDER:
-   - If the student struggles with word order, auxiliary verb placement, inversion, cleft sentences, or asks how a sentence structure works visually, immediately invoke `demonstrate_grammar_movement`.
-   - Specify the syntactic tokens for the base structure and transformed structure with clear explanation and authoritative citation.
-
-7. VOICE & PACING:
-   - Speak in clear, concise conversational turns (1-3 sentences per turn).
-   - Keep speech articulate, warm, and easy to follow over voice.
+4. SPOKEN VOICE PERFECTION (MANDATORY):
+   - Keep replies concise and easy to listen to: 1 to 3 spoken sentences per turn.
+   - Deliver one clear thought at a time.
+   - NEVER emit markdown formatting: NO asterisks (*), NO bullet points (-), NO headers (###), NO track labels (like 'Track A' or 'Track B'). Output clean, plain conversational English only.
+   - End your turn with a natural, friendly question or conversational prompt to invite him to speak next.
 """
 
 class FasterWhisperSTT(stt.STT):
     def __init__(self, model_size="tiny.en", device="cpu", compute_type="int8"):
-        super().__init__(capabilities=stt.STTCapabilities(streaming=True, interim_results=True))
+        super().__init__(capabilities=stt.STTCapabilities(streaming=False, interim_results=False))
         stt_logger.info(f"Initializing in-memory Faster-Whisper ({model_size}) on {device} [100% offline]...")
         try:
             self._model = WhisperModel(model_size, device=device, compute_type=compute_type, local_files_only=True)
@@ -175,11 +168,15 @@ class FasterWhisperSTT(stt.STT):
 
         if text:
             stt_logger.info(f"Transcribed audio: \"{text}\" (lang={detected_lang})")
-
-        return stt.SpeechEvent(
-            type=stt.SpeechEventType.FINAL_TRANSCRIPT,
-            alternatives=[stt.SpeechData(text=text, language=detected_lang)]
-        )
+            return stt.SpeechEvent(
+                type=stt.SpeechEventType.FINAL_TRANSCRIPT,
+                alternatives=[stt.SpeechData(text=text, language=detected_lang)]
+            )
+        else:
+            return stt.SpeechEvent(
+                type=stt.SpeechEventType.FINAL_TRANSCRIPT,
+                alternatives=[]
+            )
 
 _whisper_singleton = None
 
@@ -189,19 +186,8 @@ def get_faster_whisper_stt(model_size="tiny.en") -> FasterWhisperSTT:
         _whisper_singleton = FasterWhisperSTT(model_size=model_size)
     return _whisper_singleton
 
-class StreamingFasterWhisperAdapter(stt.StreamAdapter):
-    """Subclass of StreamAdapter explicitly configured to support and emit INTERIM_TRANSCRIPT events."""
-    def __init__(self, stt_instance: Optional[stt.STT] = None, vad_instance: Optional[silero.VAD] = None, **kwargs):
-        target_stt = stt_instance or kwargs.get('stt')
-        target_vad = vad_instance or kwargs.get('vad')
-        super().__init__(stt=target_stt, vad=target_vad)
-        self._capabilities = stt.STTCapabilities(
-            streaming=True,
-            interim_results=True,
-            diarization=False,
-            keyterms=target_stt.capabilities.keyterms if target_stt else False,
-            chat_context=target_stt.capabilities.chat_context if target_stt else False,
-        )
+# StreamingFasterWhisperAdapter is an alias to the official LiveKit StreamAdapter
+StreamingFasterWhisperAdapter = stt.StreamAdapter
 
 # ── PRIORITY MANAGER ──
 OLLAMA_BG_URL = os.getenv("OLLAMA_BG_URL", "")
@@ -363,15 +349,22 @@ async def send_room_text(context: Optional[RunContext], topic: str, payload_str:
     via ctx.room.local_participant.send_text() with zero loopback overhead.
     """
     room = None
-    if context and hasattr(context, "session") and getattr(context.session, "room_io", None):
-        room = getattr(context.session.room_io, "room", None)
+    if context and hasattr(context, "session"):
+        try:
+            room_io = getattr(context.session, "_room_io", None)
+            if room_io:
+                room = getattr(room_io, "room", None)
+        except Exception:
+            pass
     if not room:
         room = _active_room
     if room and room.isconnected():
         try:
             await room.local_participant.send_text(payload_str, topic=topic)
         except Exception as e:
-            genui_logger.error(f"send_text({topic}) failed: {e}")
+            genui_logger.error(f"Failed to broadcast text on topic '{topic}': {e}")
+    else:
+        genui_logger.debug(f"send_room_text: room not connected or not present (topic={topic})")
 
 async def broadcast_livekit_text(topic: str, payload_str: str):
     await send_room_text(None, topic, payload_str)
@@ -782,9 +775,9 @@ async def entrypoint(ctx: agents.JobContext):
     )
 
     local_whisper = get_faster_whisper_stt(model_size="tiny.en")
-    stt_provider = StreamingFasterWhisperAdapter(
-        stt_instance=local_whisper,
-        vad_instance=vad_provider,
+    stt_provider = stt.StreamAdapter(
+        stt=local_whisper,
+        vad=vad_provider,
     )
 
     session = AgentSession(
@@ -817,8 +810,10 @@ async def entrypoint(ctx: agents.JobContext):
     @session.on("user_input_transcribed")
     def on_user_input(ev):
         async def _send_transcript():
-            is_final = getattr(ev, "is_final", getattr(ev, "type", None) == stt.SpeechEventType.FINAL_TRANSCRIPT)
-            transcript = ev.alternatives[0].text if ev.alternatives else getattr(ev, "transcript", "")
+            transcript = getattr(ev, "transcript", "")
+            is_final = getattr(ev, "is_final", True)
+            if not transcript and hasattr(ev, "alternatives") and ev.alternatives:
+                transcript = ev.alternatives[0].text
             
             if transcript:
                 if is_final:
@@ -841,12 +836,23 @@ async def entrypoint(ctx: agents.JobContext):
                         stt_logger.error(f"Failed to send transcript to room: {e}")
         asyncio.create_task(_send_transcript())
 
-    @session.on("agent_speech_committed")
-    def on_agent_speech(ev):
-        async def _send_speech():
-            text = getattr(ev, "text", None) or getattr(ev, "transcript", None) or ""
-            if text:
-                tts_logger.info(f"Agent speech committed: \"{text[:100]}...\"")
+    @session.on("conversation_item_added")
+    def on_conversation_item(ev):
+        item = getattr(ev, "item", None)
+        if not item:
+            return
+        role = getattr(item, "role", None)
+        content = getattr(item, "content", None)
+        if isinstance(content, list):
+            text = " ".join(str(c) for c in content if isinstance(c, str)).strip()
+        else:
+            text = str(content).strip() if content else ""
+        if not text:
+            return
+
+        if role == "assistant":
+            tts_logger.info(f"Agent speech committed: \"{text[:100]}...\"")
+            async def _send_speech():
                 if ctx.room and ctx.room.isconnected():
                     try:
                         await ctx.room.local_participant.send_text(
@@ -859,7 +865,7 @@ async def entrypoint(ctx: agents.JobContext):
                         )
                     except Exception as e:
                         tts_logger.error(f"Failed to send agent speech to room: {e}")
-        asyncio.create_task(_send_speech())
+            asyncio.create_task(_send_speech())
 
     @session.on("error")
     def on_session_error(ev):
