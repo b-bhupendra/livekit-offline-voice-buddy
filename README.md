@@ -10,7 +10,7 @@ Designed according to the **Master Voice AI Agents LiveKit Full Course** and the
 
 - **English Conversational Coaching**: Real-time spoken dialogue practice with gentle conversational recasting (correcting grammar and tense slips naturally without lecturing).
 - **Persistent Memory & RAG**: Remembers past topics, session summaries, and grammar focus areas across restarts using SQLite.
-- **Model Context Protocol (MCP)**: Native `MCPToolset` integration hosting `memory_mcp_server.py` for stdio-based tool discovery (`get_last_conversation_state`, `search_past_topics_and_notes`, `get_grammar_progress_report`).
+- **In-Process LiveKit Tools**: Native `@function_tool` methods (`query_grammar_rag`, `trigger_quiz`, `dispute_answer`, `advance_chapter`, `generate_revision_notes`) running directly within `agent.py` and pushing GenUI artifacts over WebRTC text streams (`send_room_text`).
 - **Context-Aware Continuity**: Buddy speaks first and references what you practiced in your previous session so you always know where to begin.
 - **Zero Cloud Dependencies**: 100% local STT, LLM, Turn Detection, and TTS.
 - **In-Memory Streaming STT**: Uses an in-process `FasterWhisperSTT` directly on PCM16 audio buffers via LiveKit's `stt.StreamAdapter`, bypassing disk I/O and HTTP microservice socket overhead.
@@ -22,14 +22,14 @@ Designed according to the **Master Voice AI Agents LiveKit Full Course** and the
 User Voice / Mic / WebRTC
           │
           ▼
-    LiveKit Agent (`agent.py`)
+    LiveKit Agent (`backend/agent.py`)
     ├── VAD: Silero VAD (`silero.VAD.load()`)
     ├── Turn Detector: Local Audio Turn Detector (`v1-mini`) [VAD mode interruption]
     ├── STT: In-Memory Faster-Whisper (`tiny.en`) on CPU int8
     ├── LLM: Local Ollama Qwen (`qwen-buddy` / `qwen2.5:7b`) via `openai.LLM.with_ollama`
-    ├── MCP Tools: `memory_mcp_server.py` via `mcp.MCPToolset`
-    ├── Memory & RAG: SQLite Persistent Context (`memory_store.py`)
-    └── TTS: Local Piper Neural TTS (`audio_server.py`) via `openai.TTS`
+    ├── In-Process Tools: LiveKit native `@function_tool` with WebRTC GenUI streaming
+    ├── Memory & RAG: Hybrid BM25 + Vector SQLite RAG Store (`rag_store.py`)
+    └── TTS: Local Piper Neural TTS (`backend/audio_server.py`) via `openai.TTS`
 ```
 
 ---
