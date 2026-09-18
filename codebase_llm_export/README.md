@@ -8,41 +8,59 @@ The project is organized under the monorepo folder **`mvp_talker_offline/`**:
 - **`mvp_talker_offline/data/`**: Curriculum schema, quiz banks, and narrative practice stories.
 - **`mvp_talker_offline/models/`**: Offline neural Piper TTS voice model.
 
-## Available Export Modes
+---
 
-1. **Combined Full Project Bundle (Frontend + Backend Together)**:
-   - **`FULL_PROJECT_CODEBASE.txt`**: The entire codebase (Backend + Frontend) concatenated in a single file for large-context models (Claude 3.5 Sonnet, GPT-4o, Gemini 1.5/2.0 Pro).
+## 1. ALL 3 FULL CODEBASE BUNDLES (Root Level)
 
-2. **Separated Full Stacks**:
-   - **`frontend/FULL_FRONTEND_CODEBASE.txt`**: All frontend files bundled together.
-   - **`backend/FULL_BACKEND_CODEBASE.txt`**: All backend files bundled together.
+For zero-navigation feeding into large-context LLMs (Claude 3.5 Sonnet, GPT-4o, Gemini 1.5/2.0 Pro):
 
-3. **Separated Logical Chunks (< 20K tokens each)**:
-   - For smaller context windows or targeted tasks (editing UI, tuning prompts, adjusting STT/TTS).
+| Bundle File | Scope | Description |
+|---|---|---|
+| **`FULL_PROJECT_CODEBASE.txt`** | **Complete Project (BE + FE)** | All 32 source files across the entire backend and frontend in one file |
+| **`FULL_FRONTEND_CODEBASE.txt`** | **Full Frontend Stack** | All 18 frontend files (React 19, Zustand, LiveKit WebRTC, components) |
+| **`FULL_BACKEND_CODEBASE.txt`** | **Full Backend Stack** | All 14 backend files (LiveKit Agent, FastAPI audio, engines, data) |
 
-## Structure
+---
+
+## 2. ALL CHUNKS IN A SINGLE FOLDER (`chunks/`)
+
+For smaller context models (8k – 32k tokens) or targeted subagent prompts, all 6 chunks are unified in one directory:
+
+```
+codebase_llm_export/chunks/
+├── 01_BE_CORE_PIPELINE.txt          # agent.py, audio_server.py, Modelfile, requirements
+├── 02_BE_ENGINES.txt                # simulation_engine, quiz_engine, syllabus_tracker, rag_store
+├── 03_BE_INGESTION_AND_DATA.txt     # knowledge_ingestor, curriculum.json, chapter_01_bank
+├── 04_FE_CORE_AND_CONFIG.txt        # package.json, vite.config, tsconfig, index.html, index.css
+├── 05_FE_STATE_AND_SERVICES.txt     # types.ts, store.ts, useLiveKit.ts, bionic.ts
+└── 06_FE_CONVERSATIONAL_STAGE.txt   # App.tsx, Header, AudioDock, SlideOverDrawer, cards
+```
+
+---
+
+## 3. SEPARATED STACK DIRECTORIES (`frontend/` and `backend/`)
+
+For domain-specific development and targeted reviews:
+
 ```
 codebase_llm_export/
-├── README.md                      # This guide
-├── FULL_PROJECT_CODEBASE.txt      # Combined Backend & Frontend in a single master bundle
-├── frontend/                      # VisualsFrontend (React 19, TypeScript, Zustand, Vite)
-│   ├── 00_FRONTEND_OVERVIEW.md    # Architecture overview, component tree, state diagram
-│   ├── 01_FE_CORE_AND_CONFIG.txt  # package.json, vite.config.ts, tsconfig.json, index.html, main.tsx, index.css
-│   ├── 02_FE_STATE_AND_SERVICES.txt # types.ts, store.ts, useLiveKit.ts, bionic.ts
-│   ├── 03_FE_CONVERSATIONAL_STAGE.txt # App.tsx, Header, AudioDock, Drawer, and inline artifact cards
-│   └── FULL_FRONTEND_CODEBASE.txt # Single bundle of all frontend source files
-└── backend/                       # mvp_talker_offline (Python, LiveKit, FastAPI, SQLite)
-    ├── 00_BACKEND_OVERVIEW.md     # Architecture overview, voice pipeline, and in-process tools
-    ├── 01_BE_CORE_PIPELINE.txt    # agent.py, audio_server.py, Modelfile, requirements
-    ├── 02_BE_ENGINES.txt          # simulation, quiz, syllabus, rag_store
-    ├── 03_BE_INGESTION_AND_DATA.txt # knowledge_ingestor.py, curriculum.json, sample quiz banks
-    └── FULL_BACKEND_CODEBASE.txt  # Single bundle of all backend source files
+├── frontend/
+│   ├── 00_FRONTEND_OVERVIEW.md      # UI architecture, state model, component tree
+│   ├── 01_FE_CORE_AND_CONFIG.txt
+│   ├── 02_FE_STATE_AND_SERVICES.txt
+│   ├── 03_FE_CONVERSATIONAL_STAGE.txt
+│   └── FULL_FRONTEND_CODEBASE.txt
+└── backend/
+    ├── 00_BACKEND_OVERVIEW.md       # Agent pipeline, in-process tools, audio microservice
+    ├── 01_BE_CORE_PIPELINE.txt
+    ├── 02_BE_ENGINES.txt
+    ├── 03_BE_INGESTION_AND_DATA.txt
+    └── FULL_BACKEND_CODEBASE.txt
 ```
 
+---
+
 ## How to Feed this to an LLM
-1. **For End-to-End Architectural Tasks**:
-   - Load **`FULL_PROJECT_CODEBASE.txt`**.
-2. **For Frontend-Specific Tasks**:
-   - Load **`frontend/FULL_FRONTEND_CODEBASE.txt`** (or specific chunks `01` to `03`).
-3. **For Backend-Specific Tasks**:
-   - Load **`backend/FULL_BACKEND_CODEBASE.txt`** (or specific chunks `01` to `03`).
+1. **End-to-End Tasks**: Load **`FULL_PROJECT_CODEBASE.txt`**.
+2. **Frontend Tasks**: Load **`FULL_FRONTEND_CODEBASE.txt`** (or chunks `04`, `05`, `06` in `chunks/`).
+3. **Backend Tasks**: Load **`FULL_BACKEND_CODEBASE.txt`** (or chunks `01`, `02`, `03` in `chunks/`).

@@ -1,0 +1,301 @@
+================================================================================
+FILE: mvp_talker_offline/VisualsFrontend/package.json
+LANGUAGE: json
+LINES: 34
+PURPOSE: Project dependencies (React 19, Framer Motion, Lucide, Inter, LiveKit Client), scripts, build configuration
+================================================================================
+
+{
+  "name": "visualsfrontend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "oxlint",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@fontsource/inter": "^5.3.0",
+    "framer-motion": "^13.4.0",
+    "livekit-client": "^2.22.3",
+    "lucide-react": "^1.47.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-hot-toast": "^2.6.1",
+    "react-markdown": "^10.1.0",
+    "react-textarea-autosize": "^8.5.9",
+    "remark-gfm": "^4.0.1",
+    "zustand": "^5.0.15"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@vitejs/plugin-react": "^6.1.1",
+    "oxlint": "^1.81.0",
+    "typescript": "~6.0.2",
+    "vite": "^8.3.0"
+  }
+}
+
+
+================================================================================
+FILE: mvp_talker_offline/VisualsFrontend/vite.config.ts
+LANGUAGE: typescript
+LINES: 7
+PURPOSE: Vite build & dev server configuration with React plugin
+================================================================================
+
+import react from '@vitejs/plugin-react'
+import { defineConfig } from 'vite'
+
+// https://vite.dev/config/
+export default defineConfig({
+  plugins: [react()],
+})
+
+
+================================================================================
+FILE: mvp_talker_offline/VisualsFrontend/tsconfig.json
+LANGUAGE: json
+LINES: 7
+PURPOSE: Root TypeScript compiler options
+================================================================================
+
+{
+  "files": [],
+  "references": [
+    { "path": "./tsconfig.app.json" },
+    { "path": "./tsconfig.node.json" }
+  ]
+}
+
+
+================================================================================
+FILE: mvp_talker_offline/VisualsFrontend/index.html
+LANGUAGE: html
+LINES: 17
+PURPOSE: HTML shell mounting root React container with Inter typography
+================================================================================
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Buddy — Your AI-powered English Grammar Mastery companion. Voice-first learning with Generative UI, live quizzes, and smart progress tracking." />
+    <title>Buddy — English Grammar Mastery</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Outfit:wght@400;600;700&family=Inter:wght@400;500;700&family=Caveat:wght@500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
+
+================================================================================
+FILE: mvp_talker_offline/VisualsFrontend/src/main.tsx
+LANGUAGE: typescript
+LINES: 11
+PURPOSE: React 19 entrypoint mounting App with @fontsource/inter
+================================================================================
+
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import '@fontsource/inter'
+import './index.css'
+import App from './App.tsx'
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+)
+
+
+================================================================================
+FILE: mvp_talker_offline/VisualsFrontend/src/index.css
+LANGUAGE: css
+LINES: 171
+PURPOSE: Design System: Dark surface tokens (--surface-0 to --surface-3), hairlines, and typography
+================================================================================
+
+/* =========================================================
+   BUDDY — Generative Conversational AI Design System
+   Inspired by Gemini Live, ChatGPT Canvas & Linear
+   ========================================================= */
+
+@import '@fontsource/inter/400.css';
+@import '@fontsource/inter/500.css';
+@import '@fontsource/inter/600.css';
+@import '@fontsource/inter/700.css';
+
+:root {
+  /* ── Deep Obsidian / Neutral Palette ── */
+  --surface-0: #09090b;       /* App Canvas */
+  --surface-1: #111114;       /* Sidebar, Slide-over, Dock */
+  --surface-2: #18181b;       /* Cards & Elevated Bubbles */
+  --surface-3: #27272a;       /* Input & Hover States */
+  --surface-elevated: #222226;
+
+  /* ── Hairlines & Borders ── */
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --border-focus: #3b82f6;
+
+  /* ── Typography ── */
+  --text-primary: #fafafa;
+  --text-secondary: #a1a1aa;
+  --text-tertiary: #71717a;
+  --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  /* ── Accent & Status Tints ── */
+  --accent: #3b82f6;
+  --accent-hover: #2563eb;
+  --accent-soft: rgba(59, 130, 246, 0.12);
+  --success: #10b981;
+  --success-soft: rgba(16, 185, 129, 0.12);
+  --danger: #ef4444;
+  --danger-soft: rgba(239, 68, 68, 0.12);
+  --warning: #f59e0b;
+  --warning-soft: rgba(245, 158, 11, 0.12);
+
+  /* ── Geometry ── */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-full: 9999px;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+  width: 100%;
+  background-color: var(--surface-0);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  line-height: 1.5;
+  overflow: hidden;
+  user-select: text;
+}
+
+pre, code {
+  font-family: var(--font-mono);
+}
+
+/* ── Minimalist Scrollbar ── */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--surface-3);
+  border-radius: var(--radius-full);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+/* ── Bionic Reading Fixation ── */
+.bionic-fixation {
+  font-weight: 700;
+  color: #ffffff;
+}
+
+/* ── Markdown Content Typography in Chat ── */
+.markdown-content {
+  font-size: 14.5px;
+  line-height: 1.65;
+  color: var(--text-primary);
+}
+
+.markdown-content p {
+  margin-bottom: 8px;
+}
+.markdown-content p:last-child {
+  margin-bottom: 0;
+}
+
+.markdown-content strong {
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.markdown-content em {
+  font-style: italic;
+  color: var(--text-secondary);
+}
+
+.markdown-content code {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  background: var(--surface-3);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  color: #93c5fd;
+}
+
+.markdown-content ul, .markdown-content ol {
+  padding-left: 20px;
+  margin-bottom: 8px;
+}
+
+.markdown-content li {
+  margin-bottom: 4px;
+}
+
+/* ── Shimmer & Pulse Animations ── */
+@keyframes pulseGlow {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(0.96);
+  }
+}
+
+.pulse-beacon {
+  animation: pulseGlow 2s infinite ease-in-out;
+}
+
+@keyframes cursorBlink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.cursor-blink {
+  display: inline-block;
+  width: 7px;
+  height: 14px;
+  background-color: var(--accent);
+  margin-left: 4px;
+  vertical-align: middle;
+  animation: cursorBlink 0.9s infinite;
+}
+
+/* Button & Interactive Resets */
+button {
+  font-family: inherit;
+}
+
+
