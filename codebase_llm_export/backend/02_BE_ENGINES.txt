@@ -1,7 +1,7 @@
 ================================================================================
 FILE: mvp_talker_offline/backend/simulation_engine.py
 LANGUAGE: python
-LINES: 233
+LINES: 234
 PURPOSE: Pedagogical simulation engine handling error detection, dispute resolution via local RAG & DuckDuckGo, and colloquial recasts
 ================================================================================
 
@@ -9,6 +9,7 @@ import os
 import json
 from typing import Dict, Any, List, Optional
 from rag_store import RAGStore
+from structured_logger import rag_logger
 
 try:
     from ddgs import DDGS
@@ -174,7 +175,7 @@ class SimulationEngine:
             except Exception as e:
                 is_offline = True
                 ddgs_error = str(e)
-                print(f"[SimulationEngine] Warning: DuckDuckGo search failed ({e}). Activating offline dispute arbitration via local RAG.")
+                rag_logger.warning(f"DuckDuckGo search failed ({e}). Activating offline dispute arbitration via local RAG.")
         else:
             is_offline = True
 
@@ -243,7 +244,7 @@ class SimulationEngine:
 ================================================================================
 FILE: mvp_talker_offline/backend/quiz_engine.py
 LANGUAGE: python
-LINES: 228
+LINES: 229
 PURPOSE: Quiz state machine managing chapter banks, answer verification, error tracking, and isomorphic repeat questions with SQLite audit logging
 ================================================================================
 
@@ -252,6 +253,7 @@ import json
 import random
 from typing import Dict, Any, List, Optional
 from syllabus_tracker import SyllabusTracker
+from structured_logger import genui_logger
 
 WORKSPACE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(WORKSPACE_ROOT, "data")
@@ -346,7 +348,7 @@ class QuizEngine:
             with open(bank_path, "r", encoding="utf-8") as f:
                 return json.load(f)
         except Exception as e:
-            print(f"Error reading quiz bank for chapter {chapter_idx}: {e}")
+            genui_logger.error(f"Error reading quiz bank for chapter {chapter_idx}: {e}")
             return []
 
     def get_milestone_quiz(self, chapter_idx: int, count: int = 10) -> List[Dict[str, Any]]:
@@ -480,7 +482,7 @@ class QuizEngine:
 ================================================================================
 FILE: mvp_talker_offline/backend/syllabus_tracker.py
 LANGUAGE: python
-LINES: 364
+LINES: 365
 PURPOSE: 18-chapter linear progression tracker backed by SQLite database (memory.db) tracking coursework, mastery, and isomorphic audits
 ================================================================================
 
@@ -489,6 +491,7 @@ import json
 import sqlite3
 import contextlib
 from typing import Dict, Any, List, Optional
+from structured_logger import system_logger
 
 WORKSPACE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(WORKSPACE_ROOT, "data")
@@ -771,7 +774,7 @@ class SyllabusTracker:
                 """, (self.user_id, original_q_id, mutated_q_id, original_text, mutated_text, rule_citation, int(student_pass)))
                 conn.commit()
         except Exception as e:
-            print(f"[SyllabusTracker] Warning: Failed to log isomorphic audit: {e}")
+            system_logger.warning(f"Failed to log isomorphic audit: {e}")
 
     def get_isomorphic_audits(self, limit: int = 50) -> List[Dict[str, Any]]:
         """Retrieve logged (original_question, mutated_question, student_pass/fail) triples from SQLite."""
@@ -801,7 +804,7 @@ class SyllabusTracker:
                     for r in rows
                 ]
         except Exception as e:
-            print(f"[SyllabusTracker] Error retrieving isomorphic audits: {e}")
+            system_logger.error(f"Error retrieving isomorphic audits: {e}")
             return []
 
     def audit_mutation_drift(self) -> Dict[str, Any]:
@@ -853,7 +856,7 @@ class SyllabusTracker:
 ================================================================================
 FILE: mvp_talker_offline/backend/rag_store.py
 LANGUAGE: python
-LINES: 319
+LINES: 320
 PURPOSE: Hybrid retrieval store combining BM25 keyword matching and dense embeddings over textbook chunks with distinct outage logging
 ================================================================================
 
@@ -865,6 +868,7 @@ import urllib.request
 import urllib.error
 import numpy as np
 from typing import List, Dict, Any, Optional
+from structured_logger import rag_logger
 
 DEFAULT_DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "memory.db")
 OLLAMA_EMBED_URL = os.getenv("OLLAMA_EMBED_URL", "http://127.0.0.1:11434/api/embeddings")
@@ -967,7 +971,7 @@ class RAGStore:
             self.is_embedding_available = False
             self.last_embedding_error = str(e)
             self.embedding_status = "unreachable"
-            print(f"[RAGStore] Warning: Embedding service unreachable ({e}). Dense search degraded, falling back to BM25/FTS.")
+            rag_logger.warning(f"Embedding service unreachable ({e}). Dense search degraded, falling back to BM25/FTS.")
             if raise_on_error:
                 raise EmbeddingServiceUnavailable(
                     f"Local embedding service at {OLLAMA_EMBED_URL} is down: {e}"

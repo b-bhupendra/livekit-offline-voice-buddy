@@ -3,6 +3,7 @@ import json
 import sqlite3
 import contextlib
 from typing import Dict, Any, List, Optional
+from structured_logger import system_logger
 
 WORKSPACE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(WORKSPACE_ROOT, "data")
@@ -285,7 +286,7 @@ class SyllabusTracker:
                 """, (self.user_id, original_q_id, mutated_q_id, original_text, mutated_text, rule_citation, int(student_pass)))
                 conn.commit()
         except Exception as e:
-            print(f"[SyllabusTracker] Warning: Failed to log isomorphic audit: {e}")
+            system_logger.warning(f"Failed to log isomorphic audit: {e}")
 
     def get_isomorphic_audits(self, limit: int = 50) -> List[Dict[str, Any]]:
         """Retrieve logged (original_question, mutated_question, student_pass/fail) triples from SQLite."""
@@ -315,7 +316,7 @@ class SyllabusTracker:
                     for r in rows
                 ]
         except Exception as e:
-            print(f"[SyllabusTracker] Error retrieving isomorphic audits: {e}")
+            system_logger.error(f"Error retrieving isomorphic audits: {e}")
             return []
 
     def audit_mutation_drift(self) -> Dict[str, Any]:

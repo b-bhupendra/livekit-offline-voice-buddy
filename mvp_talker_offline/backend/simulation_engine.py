@@ -2,6 +2,7 @@ import os
 import json
 from typing import Dict, Any, List, Optional
 from rag_store import RAGStore
+from structured_logger import rag_logger
 
 try:
     from ddgs import DDGS
@@ -167,7 +168,7 @@ class SimulationEngine:
             except Exception as e:
                 is_offline = True
                 ddgs_error = str(e)
-                print(f"[SimulationEngine] Warning: DuckDuckGo search failed ({e}). Activating offline dispute arbitration via local RAG.")
+                rag_logger.warning(f"DuckDuckGo search failed ({e}). Activating offline dispute arbitration via local RAG.")
         else:
             is_offline = True
 

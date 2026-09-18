@@ -6,6 +6,7 @@ import urllib.request
 import urllib.error
 import numpy as np
 from typing import List, Dict, Any, Optional
+from structured_logger import rag_logger
 
 DEFAULT_DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "memory.db")
 OLLAMA_EMBED_URL = os.getenv("OLLAMA_EMBED_URL", "http://127.0.0.1:11434/api/embeddings")
@@ -108,7 +109,7 @@ class RAGStore:
             self.is_embedding_available = False
             self.last_embedding_error = str(e)
             self.embedding_status = "unreachable"
-            print(f"[RAGStore] Warning: Embedding service unreachable ({e}). Dense search degraded, falling back to BM25/FTS.")
+            rag_logger.warning(f"Embedding service unreachable ({e}). Dense search degraded, falling back to BM25/FTS.")
             if raise_on_error:
                 raise EmbeddingServiceUnavailable(
                     f"Local embedding service at {OLLAMA_EMBED_URL} is down: {e}"

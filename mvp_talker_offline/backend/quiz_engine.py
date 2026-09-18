@@ -3,6 +3,7 @@ import json
 import random
 from typing import Dict, Any, List, Optional
 from syllabus_tracker import SyllabusTracker
+from structured_logger import genui_logger
 
 WORKSPACE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(WORKSPACE_ROOT, "data")
@@ -97,7 +98,7 @@ class QuizEngine:
             with open(bank_path, "r", encoding="utf-8") as f:
                 return json.load(f)
         except Exception as e:
-            print(f"Error reading quiz bank for chapter {chapter_idx}: {e}")
+            genui_logger.error(f"Error reading quiz bank for chapter {chapter_idx}: {e}")
             return []
 
     def get_milestone_quiz(self, chapter_idx: int, count: int = 10) -> List[Dict[str, Any]]:

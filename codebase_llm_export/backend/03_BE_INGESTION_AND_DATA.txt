@@ -1,7 +1,7 @@
 ================================================================================
 FILE: mvp_talker_offline/backend/knowledge_ingestor.py
 LANGUAGE: python
-LINES: 397
+LINES: 398
 PURPOSE: Textbook & PDF ingestion pipeline indexing Oxford Guide, Arihant Grammar, Espresso English, and narrative stories into SQLite & RAG
 ================================================================================
 
@@ -13,6 +13,7 @@ import sqlite3
 import pypdf
 from typing import List, Dict, Any, Optional
 from rag_store import RAGStore
+from structured_logger import rag_logger, system_logger
 
 WORKSPACE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(WORKSPACE_ROOT, "data")
@@ -47,7 +48,7 @@ class KnowledgeIngestor:
         """Ingest all 18 Udemy course chapters from subtitles and slides."""
         curriculum = {}
         if not os.path.exists(UDEMY_DIR):
-            print(f"Warning: Udemy directory not found at {UDEMY_DIR}")
+            rag_logger.warning(f"Udemy directory not found at {UDEMY_DIR}")
             return curriculum
 
         section_dirs = sorted([
@@ -55,7 +56,7 @@ class KnowledgeIngestor:
             if os.path.isdir(os.path.join(UDEMY_DIR, d)) and not d.startswith(".")
         ])
 
-        print(f"Found {len(section_dirs)} Udemy sections. Parsing subtitles...")
+        rag_logger.info(f"Found {len(section_dirs)} Udemy sections. Parsing subtitles...")
         for sec_name in section_dirs:
             # Extract section index (e.g. '1. Course Overview' or '1 - Introduction')
             m = re.match(r"^(\d+)[.\s-]+(.+)$", sec_name)
@@ -113,7 +114,7 @@ class KnowledgeIngestor:
         curriculum_file = os.path.join(DATA_DIR, "curriculum.json")
         with open(curriculum_file, "w", encoding="utf-8") as f:
             json.dump(curriculum, f, indent=2)
-        print(f"Ingested {len(curriculum)} chapters into {curriculum_file}")
+        rag_logger.info(f"Ingested {len(curriculum)} chapters into {curriculum_file}")
         return curriculum
 
     def ingest_reference_books(self, max_pages_per_book: int = 50):
@@ -130,7 +131,7 @@ class KnowledgeIngestor:
             if not os.path.exists(fpath):
                 continue
 
-            print(f"Ingesting reference book: {title}...")
+            rag_logger.info(f"Ingesting reference book: {title}...")
             try:
                 reader = pypdf.PdfReader(fpath)
                 total_pages = len(reader.pages)
@@ -166,12 +167,12 @@ class KnowledgeIngestor:
                         metadata={"book": title, "page": p_num + 1, "category": cat}
                     )
             except Exception as e:
-                print(f"Error parsing {fname}: {e}")
+                rag_logger.error(f"Error parsing {fname}: {e}")
 
     def ingest_stories(self):
         """Ingest classic dialogue-rich public domain stories for scenario roleplays."""
         story_files = glob.glob(os.path.join(STORIES_DIR, "*.txt"))
-        print(f"Ingesting {len(story_files)} story collections...")
+        rag_logger.info(f"Ingesting {len(story_files)} story collections...")
         for spath in story_files:
             bname = os.path.basename(spath)
             try:
@@ -193,7 +194,7 @@ class KnowledgeIngestor:
                         metadata={"story": bname, "excerpt": idx + 1}
                     )
             except Exception as e:
-                print(f"Error reading story {bname}: {e}")
+                rag_logger.error(f"Error reading story {bname}: {e}")
 
     def generate_verified_quiz_banks(self):
         """
@@ -313,7 +314,7 @@ class KnowledgeIngestor:
         ch1_bank_path = os.path.join(BANKS_DIR, "chapter_01_bank.json")
         with open(ch1_bank_path, "w", encoding="utf-8") as f:
             json.dump(ch1_questions, f, indent=2)
-        print(f"Generated {len(ch1_questions)} pre-verified questions in {ch1_bank_path}")
+        rag_logger.info(f"Generated {len(ch1_questions)} pre-verified questions in {ch1_bank_path}")
 
         # Similarly generate for Chapters 2 through 18
         for c_idx in range(2, 19):
@@ -323,7 +324,7 @@ class KnowledgeIngestor:
                 ch_qs = self._generate_chapter_bank(c_idx)
                 with open(bank_path, "w", encoding="utf-8") as f:
                     json.dump(ch_qs, f, indent=2)
-                print(f"Generated {len(ch_qs)} pre-verified questions in {bank_path}")
+                rag_logger.info(f"Generated {len(ch_qs)} pre-verified questions in {bank_path}")
 
     def _generate_chapter_bank(self, chapter_idx: int) -> List[Dict[str, Any]]:
         """Generate 40-50 structured questions for a given chapter."""
@@ -369,22 +370,22 @@ class KnowledgeIngestor:
 
     def run_full_ingestion(self):
         """Execute complete ingestion pipeline."""
-        print("=== Step 1: Ingesting Udemy Curriculum ===")
+        rag_logger.info("=== Step 1: Ingesting Udemy Curriculum ===")
         self.ingest_udemy_curriculum()
 
-        print("\n=== Step 2: Ingesting Reference Books ===")
+        rag_logger.info("=== Step 2: Ingesting Reference Books ===")
         self.ingest_reference_books(max_pages_per_book=40)
 
-        print("\n=== Step 3: Ingesting Story Scenarios ===")
+        rag_logger.info("=== Step 3: Ingesting Story Scenarios ===")
         self.ingest_stories()
 
-        print("\n=== Step 4: Generating Pre-Verified 40-50 Question Quiz Banks ===")
+        rag_logger.info("=== Step 4: Generating Pre-Verified 40-50 Question Quiz Banks ===")
         self.generate_verified_quiz_banks()
 
         counts = self.rag.count_chunks()
-        print("\n=== Ingestion Complete! Summary of RAG Chunks ===")
+        rag_logger.info("=== Ingestion Complete! Summary of RAG Chunks ===")
         for stype, cnt in counts.items():
-            print(f"  - {stype}: {cnt} chunks")
+            rag_logger.info(f"  - {stype}: {cnt} chunks")
 
 if __name__ == "__main__":
     import argparse
@@ -395,11 +396,11 @@ if __name__ == "__main__":
     ingestor = KnowledgeIngestor()
     if args.inspect:
         counts = ingestor.rag.count_chunks()
-        print("Current RAG Store Summary:")
+        rag_logger.info("Current RAG Store Summary:")
         for stype, cnt in counts.items():
-            print(f"  {stype}: {cnt} chunks")
+            rag_logger.info(f"  {stype}: {cnt} chunks")
         banks = glob.glob(os.path.join(BANKS_DIR, "*.json"))
-        print(f"Quiz banks available: {len(banks)} files")
+        rag_logger.info(f"Quiz banks available: {len(banks)} files")
     else:
         ingestor.run_full_ingestion()
 

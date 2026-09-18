@@ -12,6 +12,7 @@ os.environ["HF_HUB_OFFLINE"] = "1"
 from fastapi import FastAPI, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
+from structured_logger import tts_logger
 
 app = FastAPI(title="Buddy Offline Piper TTS & Audio Server")
 
@@ -40,7 +41,7 @@ try:
     from piper import PiperVoice
     if os.path.exists(PIPER_VOICE_PATH):
         piper_voice = PiperVoice.load(PIPER_VOICE_PATH)
-        print(f"Piper TTS ready (voice: {PIPER_VOICE_PATH}, length_scale: {PIPER_LENGTH_SCALE}).")
+        tts_logger.info(f"Piper TTS ready (voice: {PIPER_VOICE_PATH}, length_scale: {PIPER_LENGTH_SCALE}).")
 except ImportError:
     pass
 
