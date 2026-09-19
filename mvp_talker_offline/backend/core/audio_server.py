@@ -47,22 +47,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from core.config import (
+    KOKORO_MODEL_PATH,
+    KOKORO_VOICES_PATH,
+    KOKORO_VOICE,
+    KOKORO_SPEED,
+    PIPER_VOICE_PATH,
+    PIPER_LENGTH_SCALE,
+    PIPER_NOISE_SCALE,
+    PIPER_NOISE_W_SCALE,
+)
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Kokoro-82M ONNX — Tier 1 (warm, expressive, ~80-150ms)
 # ─────────────────────────────────────────────────────────────────────────────
-MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
-
-KOKORO_MODEL_PATH = os.getenv(
-    "KOKORO_MODEL_PATH",
-    str(MODELS_DIR / "kokoro-v1.0.onnx"),
-)
-KOKORO_VOICES_PATH = os.getenv(
-    "KOKORO_VOICES_PATH",
-    str(MODELS_DIR / "voices-v1.0.bin"),
-)
-KOKORO_VOICE = os.getenv("KOKORO_VOICE", "af_heart")   # warm sweet American female
-KOKORO_SPEED = float(os.getenv("KOKORO_SPEED", "1.0"))
-
 kokoro_tts = None
 
 try:
@@ -80,8 +78,6 @@ try:
             f"Kokoro model files not found — Tier 1 unavailable.\n"
             f"  Expected: {KOKORO_MODEL_PATH}\n"
             f"  Expected: {KOKORO_VOICES_PATH}\n"
-            f"  Download: wget https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx\n"
-            f"            wget https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin"
         )
 except ImportError:
     tts_logger.warning("kokoro-onnx not installed. Run: pip install kokoro-onnx soundfile")
@@ -89,14 +85,6 @@ except ImportError:
 # ─────────────────────────────────────────────────────────────────────────────
 # Piper ONNX — Tier 2 (fallback)
 # ─────────────────────────────────────────────────────────────────────────────
-PIPER_VOICE_PATH = os.getenv(
-    "PIPER_VOICE_PATH",
-    str(MODELS_DIR / "en_US-lessac-medium.onnx"),
-)
-PIPER_LENGTH_SCALE  = float(os.getenv("PIPER_LENGTH_SCALE",  "1.05"))
-PIPER_NOISE_SCALE   = float(os.getenv("PIPER_NOISE_SCALE",   "0.667"))
-PIPER_NOISE_W_SCALE = float(os.getenv("PIPER_NOISE_W_SCALE", "0.8"))
-
 piper_voice = None
 if kokoro_tts is None:   # only load Piper when Kokoro is unavailable
     try:
@@ -253,11 +241,6 @@ async def get_livekit_token(identity: str = "web-user", room_name: str = "buddy-
                 can_publish=True,
                 can_subscribe=True,
                 can_publish_data=True,
-            )
-        )
-        .with_room_config(
-            api.RoomConfiguration(
-                agents=[api.RoomAgentDispatch(agent_name="offline-buddy")]
             )
         )
     )

@@ -904,7 +904,7 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
     get().appendTranscript('user', text);
     const lower = text.toLowerCase().trim();
 
-    // Check if user is triggering an action via prompt
+    // Check if user is triggering a specialized action via prompt
     if (lower.includes('quiz') || lower.includes('test me')) {
       await get().triggerLLMQuiz(get().activeChapter);
       return;
@@ -921,15 +921,64 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
       return;
     }
 
-    // Default conversational AI coaching response
-    get().appendStreamToken('Buddy is analyzing your input...', 'coach');
-    setTimeout(() => {
-      get().finalizeStreamCard();
-      get().appendTranscript(
-        'agent',
-        `Understood! Regarding "${text}": In standard English, precision hinges on maintaining clear subject-verb agreement and logical tense aspect. Let me know if you'd like an interactive quiz or study notes on this chapter!`
-      );
-    }, 600);
+    // ── Real Bidirectional Conversational AI Integration ───────────
+    const room = get().livekitRoom;
+    if (room && room.state === 'connected') {
+      const agentParticipant = Array.from(room.remoteParticipants.values()).find(
+        (p) => p.isAgent || p.identity.toLowerCase().includes('agent') || p.identity.toLowerCase().includes('buddy')
+      ) || Array.from(room.remoteParticipants.values())[0];
+
+      if (agentParticipant) {
+        try {
+          await room.localParticipant.performRpc({
+            destinationIdentity: agentParticipant.identity,
+            method: 'sendChatMessage',
+            payload: JSON.stringify({ message: text })
+          });
+          return;
+        } catch (rpcErr) {
+          console.warn('[Chat RPC] sendChatMessage failed, falling back to data packet:', rpcErr);
+        }
+      }
+
+      // Fallback: send text packet over LiveKit DataChannel on topic 'chat'
+      try {
+        const payload = new TextEncoder().encode(JSON.stringify({ speaker: 'user', message: text, text }));
+        await room.localParticipant.publishData(payload, { topic: 'chat' });
+        return;
+      } catch (pubErr) {
+        console.warn('[Chat Data] publishData failed:', pubErr);
+      }
+    }
+
+    // ── Offline Ollama Direct Fallback ──────────────────────────────
+    try {
+      const res = await fetch('http://localhost:11434/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'qwen-buddy',
+          messages: [
+            {
+              role: 'system',
+              content: 'You are Buddy, an encouraging, witty, and deeply knowledgeable English Grammar Master Coach. Answer the learner directly in 1-2 natural, spoken sentences.'
+            },
+            { role: 'user', content: text }
+          ],
+          stream: false
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const reply = data.message?.content || "I'm here! What grammar challenge are we tackling next?";
+        get().appendTranscript('agent', reply, true);
+        return;
+      }
+    } catch (ollamaErr) {
+      console.warn('[Chat Ollama Fallback] Error:', ollamaErr);
+    }
+
+    get().appendTranscript('agent', "I'm listening! Make sure the agent is connected in the room so we can talk.", true);
   },
 
   setSseConnected: (v) => set({ sseConnected: v }),

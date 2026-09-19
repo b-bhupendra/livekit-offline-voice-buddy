@@ -72,12 +72,35 @@ export function useLiveKit() {
         roomRef.current = room;
 
         // ── Remote Track Subscriptions (WebRTC Audio Playback) ────────
+        const unlockAudio = () => {
+          if (room && !room.canPlaybackAudio) {
+            room.startAudio().catch(() => {});
+          }
+        };
+        window.addEventListener('click', unlockAudio);
+        window.addEventListener('keydown', unlockAudio);
+        window.addEventListener('touchstart', unlockAudio);
+
+        room.on(RoomEvent.AudioPlaybackStatusChanged, () => {
+          if (room && !room.canPlaybackAudio) {
+            console.warn('[LiveKit Audio] Playback suspended by browser policy. Interaction needed.');
+          } else {
+            console.log('[LiveKit Audio] Playback enabled.');
+          }
+        });
+
         room.on(RoomEvent.TrackSubscribed, (track, _publication, participant) => {
           if (track.kind === Track.Kind.Audio) {
             console.log(`[LiveKit] Subscribed to audio track from ${participant.identity}`);
             const el = track.attach();
             el.id = `livekit-audio-${participant.identity}`;
+            (el as HTMLAudioElement).autoplay = true;
             document.body.appendChild(el);
+            if (room && !room.canPlaybackAudio) {
+              room.startAudio().catch((err) => {
+                console.warn('[LiveKit Audio] Initial startAudio notice:', err);
+              });
+            }
           }
         });
 

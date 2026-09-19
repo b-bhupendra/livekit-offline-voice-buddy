@@ -1137,7 +1137,7 @@ class BuddyAgent(Agent):
 
 server = AgentServer()
 
-@server.rtc_session(agent_name="offline-buddy")
+@server.rtc_session()
 async def entrypoint(ctx: agents.JobContext):
     """Main LiveKit RTC Session entrypoint."""
     global _active_room
@@ -1221,7 +1221,10 @@ async def entrypoint(ctx: agents.JobContext):
             pending = flush_pending_announcements()
             if pending and hasattr(session, "generate_reply"):
                 stt_logger.info(f"Delivering pending curriculum announcement: {pending.get('title')}")
-                asyncio.create_task(session.generate_reply())
+                try:
+                    session.generate_reply()
+                except Exception as e:
+                    llm_logger.error(f"Error delivering announcement reply: {e}")
 
     @session.on("user_input_transcribed")
     def on_user_input(ev):
@@ -1314,11 +1317,98 @@ async def entrypoint(ctx: agents.JobContext):
         metrics = getattr(ev, "metrics", ev)
         system_logger.debug(f"Metrics collected: {metrics}")
 
+    from livekit.agents.voice.room_io import RoomInputOptions
     buddy = BuddyAgent()
-    await session.start(agent=buddy, room=ctx.room)
+    await session.start(
+        agent=buddy,
+        room=ctx.room,
+        room_input_options=RoomInputOptions(close_on_disconnect=False)
+    )
     _active_room = ctx.room
 
     # ── LiveKit RPC Method Registrations on Agent Local Participant ──
+    @ctx.room.local_participant.register_rpc_method("sendChatMessage")
+    async def rpc_send_chat_message(data: rtc.RpcInvocationData) -> str:
+        """Handle incoming typed text chat message from user client."""
+        try:
+            params = json.loads(data.payload) if data.payload else {}
+            user_msg = str(params.get("message", "") or params.get("text", "")).strip()
+            if not user_msg:
+                return json.dumps({"error": "Empty message"})
+            
+            turn = next_turn()
+            stt_logger.info(f"User chat message received via RPC: \"{user_msg}\" (turn={turn})")
+
+            # Check dynamic tool triggers for fastpath
+            lower = user_msg.lower()
+            tutor_triggers = (
+                "teach me", "tutor mode", "start lesson", "start lecture",
+                "learn grammar", "practice grammar", "workplace practice",
+                "scenario mode", "study mode", "let's learn", "teach about"
+            )
+            exit_triggers = (
+                "back to buddy", "let's just chat", "exit tutor",
+                "stop lesson", "casual chat", "buddy mode", "just talk"
+            )
+            current_tools_count = len(getattr(session, "tools", []))
+            if any(trig in lower for trig in tutor_triggers) and current_tools_count == 0:
+                mount_tutor_tools(session)
+            elif any(trig in lower for trig in exit_triggers) and current_tools_count > 0:
+                unmount_tools_to_fastpath(session)
+
+            # Echo transcript back so all participants share consistent chat history
+            if ctx.room and ctx.room.isconnected():
+                try:
+                    await ctx.room.local_participant.send_text(
+                        json.dumps({"speaker": "user", "text": user_msg, "is_final": True}),
+                        topic="transcript"
+                    )
+                except Exception as e:
+                    stt_logger.debug(f"Failed to echo user chat transcript: {e}")
+
+            # Generate conversational reply via Ollama LLM + Kokoro TTS
+            try:
+                session.generate_reply(user_input=user_msg, allow_interruptions=True)
+            except Exception as gen_err:
+                llm_logger.error(f"Error calling session.generate_reply: {gen_err}")
+            return json.dumps({"status": "ok", "message": user_msg})
+        except Exception as e:
+            system_logger.error(f"rpc_send_chat_message error: {e}")
+            return json.dumps({"error": str(e)})
+
+    @ctx.room.on("data_received")
+    def on_room_data_received(dp: rtc.DataPacket):
+        """Fallback listener for user chat messages delivered over DataChannel."""
+        if dp.topic == "chat":
+            try:
+                raw = dp.data.decode("utf-8")
+                parsed = json.loads(raw) if raw.startswith("{") else {"message": raw}
+                user_msg = str(parsed.get("message", "") or parsed.get("text", "")).strip()
+                if user_msg:
+                    turn = next_turn()
+                    stt_logger.info(f"User chat message received via DataPacket: \"{user_msg}\" (turn={turn})")
+                    lower = user_msg.lower()
+                    tutor_triggers = (
+                        "teach me", "tutor mode", "start lesson", "start lecture",
+                        "learn grammar", "practice grammar", "workplace practice",
+                        "scenario mode", "study mode", "let's learn", "teach about"
+                    )
+                    exit_triggers = (
+                        "back to buddy", "let's just chat", "exit tutor",
+                        "stop lesson", "casual chat", "buddy mode", "just talk"
+                    )
+                    current_tools_count = len(getattr(session, "tools", []))
+                    if any(trig in lower for trig in tutor_triggers) and current_tools_count == 0:
+                        mount_tutor_tools(session)
+                    elif any(trig in lower for trig in exit_triggers) and current_tools_count > 0:
+                        unmount_tools_to_fastpath(session)
+                    try:
+                        session.generate_reply(user_input=user_msg, allow_interruptions=True)
+                    except Exception as gen_err:
+                        llm_logger.error(f"Error calling session.generate_reply from DataPacket: {gen_err}")
+            except Exception as e:
+                system_logger.error(f"on_room_data_received error: {e}")
+
     @ctx.room.local_participant.register_rpc_method("get_last_sheet")
     async def rpc_get_last_sheet(data: rtc.RpcInvocationData) -> str:
         genui_logger.info("Client invoked get_last_sheet RPC on mount/reconnect")
@@ -1682,13 +1772,19 @@ async def entrypoint(ctx: agents.JobContext):
                 await push_ready_event(fake_state)
                 spoken = existing.get("spoken_summary", "")
                 if spoken and session:
-                    asyncio.create_task(session.say(f"Here is how to think about this in a {style_hint} context: {spoken}", allow_interruptions=True))
+                    try:
+                        session.say(f"Here is how to think about this in a {style_hint} context: {spoken}", allow_interruptions=True)
+                    except Exception as say_err:
+                        tts_logger.error(f"session.say error: {say_err}")
                 return json.dumps({"status": "loaded", "variant": existing})
             else:
                 enqueue_reconsider(node_id=node_id, style_hint=style_hint, complaint=complaint, request_id=req_id)
                 voice_msg = f"Got it! I am switching to a {style_hint} analogy for {node_id.replace('_', ' ')}."
                 if session:
-                    asyncio.create_task(session.say(voice_msg, allow_interruptions=True))
+                    try:
+                        session.say(voice_msg, allow_interruptions=True)
+                    except Exception as say_err:
+                        tts_logger.error(f"session.say error: {say_err}")
                 return json.dumps({"status": "enqueued", "style_hint": style_hint, "node_id": node_id})
         except Exception as e:
             genui_logger.error(f"rpc_request_reinterpretation error: {e}")
@@ -1708,7 +1804,9 @@ async def entrypoint(ctx: agents.JobContext):
                 genui_logger.debug(f"Periodic progress broadcast notice: {e}")
 
     progress_task = asyncio.create_task(push_periodic_progress())
-    ctx.add_shutdown_callback(lambda: progress_task.cancel())
+    async def _cancel_progress():
+        progress_task.cancel()
+    ctx.add_shutdown_callback(_cancel_progress)
 
     # Broadcast initial state immediately to room
     try:
