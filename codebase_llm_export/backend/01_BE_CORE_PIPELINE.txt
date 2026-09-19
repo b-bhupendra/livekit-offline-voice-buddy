@@ -2496,7 +2496,7 @@ LINES: 34 | EST_TOKENS: ~572
 PURPOSE: Custom Ollama Modelfile configuring qwen2.5:7b with pedagogical teacher persona and grammar guidelines
 ================================================================================
 
-FROM qwen2.5:7b
+FROM qwen2.5:3b
 
 # Conversational Voice Parameters
 PARAMETER temperature 0.65

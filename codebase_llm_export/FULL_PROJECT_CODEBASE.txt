@@ -2738,7 +2738,7 @@ LINES: 34 | EST_TOKENS: ~572
 PURPOSE: Custom Ollama Modelfile configuring qwen2.5:7b with pedagogical teacher persona and grammar guidelines
 ================================================================================
 
-FROM qwen2.5:7b
+FROM qwen2.5:3b
 
 # Conversational Voice Parameters
 PARAMETER temperature 0.65
@@ -5671,7 +5671,7 @@ from core.structured_logger import rag_logger, genui_logger
 T = TypeVar("T", bound=BaseModel)
 
 # Default model identifiers
-AUTHOR_MODEL = os.getenv("OLLAMA_AUTHOR_MODEL", "qwen2.5:7b")
+AUTHOR_MODEL = os.getenv("OLLAMA_AUTHOR_MODEL", OLLAMA_MODEL)
 CRITIC_MODEL = os.getenv("OLLAMA_CRITIC_MODEL", "llama3.2:latest")
 
 _client: Optional[AsyncOpenAI] = None

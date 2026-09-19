@@ -13,7 +13,7 @@ User Voice / Mic / WebRTC
     LiveKit Agent (`agent.py`)
     ├── VAD: Silero VAD (`silero.VAD.load()`)
     ├── Turn Detector: Local Audio Turn Detector (`v1-mini`)
-    ├── LLM: Ollama Qwen (`qwen-buddy` / `qwen2.5:7b`) via `openai.LLM.with_ollama`
+    ├── LLM: Ollama Qwen (`qwen-buddy` / `qwen2.5:3b`) via `openai.LLM.with_ollama`
     ├── STT: Local Faster-Whisper via `stt.StreamAdapter`
     └── TTS: Local Audio Synthesizer via `openai.TTS`
 ```
