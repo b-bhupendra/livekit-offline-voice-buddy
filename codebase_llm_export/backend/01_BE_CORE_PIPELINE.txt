@@ -1,8 +1,8 @@
 ================================================================================
 FILE: mvp_talker_offline/backend/agent.py
 LANGUAGE: python
-LINES: 1553
-PURPOSE: LiveKit voice AI agent entrypoint: Faster-Whisper STT, Silero VAD, Piper TTS, Ollama LLM, in-process function tools (with RunContext UI streaming), and LiveKit RPC handlers
+LINES: 1676 | EST_TOKENS: ~19428
+PURPOSE: LiveKit voice AI agent entrypoint: Faster-Whisper STT, Silero VAD, Kokoro TTS, Ollama LLM, in-process function tools, and LiveKit RPC handlers (including requestReinterpretation)
 ================================================================================
 
 """LiveKit Offline Voice AI Agent — English Grammar Master Coach & Simulator.
@@ -26,12 +26,13 @@ import json
 import sqlite3
 import aiohttp
 import contextlib
+import subprocess
 from typing import Optional, List, Dict, Any, Union
 import numpy as np
 from pathlib import Path
 from dotenv import load_dotenv
 
-from structured_logger import (
+from core.structured_logger import (
     stt_logger, llm_logger, tts_logger, rag_logger, genui_logger, system_logger,
     next_turn, set_session_id, get_session_id, get_turn_id
 )
@@ -56,19 +57,28 @@ from livekit.agents import (
 )
 from livekit.plugins import openai, silero
 
-from syllabus_tracker import SyllabusTracker
-from simulation_engine import SimulationEngine
-from quiz_engine import QuizEngine
-from rag_store import RAGStore
+from engines.syllabus_tracker import SyllabusTracker
+from engines.simulation_engine import SimulationEngine
+from engines.quiz_engine import QuizEngine
+from engines.rag_store import RAGStore
 try:
-    from langgraph_tutor_graph import langgraph_engine
+    from tutor.langgraph_tutor_graph import langgraph_engine
 except Exception:
     langgraph_engine = None
+
+from core.gpu_arbiter import gpu_arbiter
+from tutor.curriculum_notify import (
+    register_active_session, flush_pending_announcements, push_ready_event, get_active_session
+)
+from tutor.curriculum_jobs import enqueue_reconsider, enqueue_build, enqueue_refine
+from engines import curriculum_store
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen-buddy")
 AUDIO_SERVER_URL = os.getenv("AUDIO_SERVER_URL", "http://127.0.0.1:8880/v1")
 LIVEKIT_TRANSPORT_MODE = os.getenv("LIVEKIT_TRANSPORT_MODE", "webrtc")
+
+_audio_server_proc: Optional[subprocess.Popen] = None
 
 tracker = SyllabusTracker()
 rag = RAGStore()
@@ -1005,11 +1015,63 @@ async def switch_to_tutor_mode(context: RunContext, topic: str = "Nouns", sessio
     return f"[TUTOR MODE ACTIVATED] Master Tutor active for '{topic}' ({session_type}). Ready to deliver lecture via deliver_canvas_lecture!"
 
 @function_tool()
+async def request_reinterpretation(
+    context: RunContext,
+    node_id: Optional[str] = None,
+    style_hint: str = "everyday",
+    learner_complaint: str = ""
+) -> str:
+    """Requests an alternative pedagogical explanation or analogy for a grammar/fluency concept node (e.g., everyday life, software engineering, workplace office, or sports).
+    If a pre-compiled visual variant exists in SQLite, it loads immediately onto the user's screen.
+    Otherwise, an async background authoring task is enqueued without blocking conversation.
+    """
+    if not node_id or node_id in ("current", "none", ""):
+        state = tracker.get_state()
+        curr_topic = state.get("current_topic", "Nouns")
+        node_id = curr_topic.lower().replace(" ", "_").replace("-", "_")
+
+    req_id = curriculum_store.log_reconsideration_request(
+        node_id=node_id,
+        style_hint=style_hint,
+        complaint=learner_complaint
+    )
+
+    # Check if an alternative variant already exists in curriculum_store
+    existing = curriculum_store.get_variant(node_id, style_hint)
+    if existing:
+        curriculum_store.resolve_reconsideration_request(req_id, existing.get("id"))
+        draft_payload = {
+            "title": f"{node_id.replace('_', ' ').title()} ({style_hint.title()})",
+            "core_concept": existing.get("spoken_summary", ""),
+            "canvas_type": existing.get("canvas_type", "classifier"),
+            "canvas_config": existing.get("canvas_config", {}),
+            "lecture_paragraphs": existing.get("lecture_paragraphs", []),
+            "citations": existing.get("citations", []),
+        }
+        fake_state = {
+            "node_id": node_id,
+            "job_type": "reconsider",
+            "result_id": existing.get("id"),
+            "draft": draft_payload
+        }
+        await push_ready_event(fake_state)
+        return (
+            f"[RE-INTERPRETATION LOADED] Delivered pre-compiled {style_hint} visual for '{node_id}'. "
+            f"Intuition: {existing.get('spoken_summary', '')}. "
+            f"Explain this concept to Bhupendra in 2 spoken sentences using the {style_hint} analogy."
+        )
+
+    # If not yet generated, launch background job via arbiter and return immediate spoken response instructions
+    enqueue_reconsider(node_id=node_id, style_hint=style_hint, complaint=learner_complaint, request_id=req_id)
+    return (
+        f"[RE-INTERPRETATION REQUESTED] Scheduled background authoring of a tailored {style_hint} visual for '{node_id}'. "
+        f"Right now in voice, explain this concept directly to Bhupendra using a relatable {style_hint} analogy in 2-3 warm, conversational sentences."
+    )
+
+@function_tool()
 async def renarrate_lecture(context: RunContext, analogy_style: Optional[str] = "everyday") -> str:
     """Re-narrates the current topic using alternative analogies (software engineering, business, or everyday life)."""
-    if analogy_style:
-        tracker.update_learner_preferences({"analogy_style": analogy_style})
-    return f"[RE-NARRATION ACTIVATED] Re-explain the current concept clearly using fresh {analogy_style} analogies in 2-3 spoken sentences."
+    return await request_reinterpretation(context=context, node_id="current", style_hint=analogy_style or "everyday")
 
 @function_tool()
 async def exit_tutor_mode(context: RunContext) -> str:
@@ -1028,6 +1090,7 @@ IN_PROCESS_TOOLS = [
     switch_to_tutor_mode,
     switch_to_buddy_mode,
     deliver_canvas_lecture,
+    request_reinterpretation,
     renarrate_lecture,
     complete_homework,
     assign_homework,
@@ -1086,15 +1149,10 @@ async def entrypoint(ctx: agents.JobContext):
         interruption={"mode": "vad"},
     )
 
-    # Kokoro-82M via official LiveKit openai.TTS pattern:
-    # openai.TTS(model="kokoro", voice="af_heart", base_url=...) per LiveKit docs.
-    tts_provider = openai.TTS(
-        model="kokoro",
-        voice=os.getenv("KOKORO_VOICE", "af_heart"),
-        base_url=AUDIO_SERVER_URL,
-        api_key="offline",
-        response_format="wav",
-    )
+    # Native in-process Kokoro-82M ONNX streaming TTS plugin:
+    # Sub-300ms latency, clause-boundary streaming directly to AudioEmitter
+    from core.kokoro_tts import KokoroTTS
+    tts_provider = KokoroTTS()
 
     local_whisper = get_faster_whisper_stt(model_size="tiny.en")
     stt_provider = stt.StreamAdapter(
@@ -1111,6 +1169,8 @@ async def entrypoint(ctx: agents.JobContext):
         tools=IN_PROCESS_TOOLS,
     )
 
+    register_active_session(session, None)
+
     set_session_id(ctx.room.name if ctx.room else f"session_{int(time.time())}")
     system_logger.info(f"RTC session initialized for room: {get_session_id()}")
     system_logger.info(f"Active transport mode: {LIVEKIT_TRANSPORT_MODE} (LiveKit WebRTC active, legacy SSE bridge retired)")
@@ -1119,15 +1179,28 @@ async def entrypoint(ctx: agents.JobContext):
     def on_user_state(ev):
         if ev.new_state == "speaking":
             voice_priority_lock.user_speaking = True
+            gpu_arbiter.set_voice_active(True)
             stt_logger.info("User started speaking")
         elif ev.new_state == "listening":
             voice_priority_lock.user_speaking = False
+            if voice_priority_lock.agent_state == "listening":
+                gpu_arbiter.set_voice_active(False)
             stt_logger.info("User stopped speaking, processing utterance...")
 
     @session.on("agent_state_changed")
     def on_agent_state(ev):
-        voice_priority_lock.agent_state = str(ev.new_state).split('.')[-1].lower()
+        new_state_str = str(ev.new_state).split('.')[-1].lower()
+        voice_priority_lock.agent_state = new_state_str
         llm_logger.info(f"Agent state changed to: {ev.new_state}")
+        if new_state_str in ("speaking", "thinking"):
+            gpu_arbiter.set_voice_active(True)
+        elif new_state_str == "listening":
+            if not voice_priority_lock.user_speaking:
+                gpu_arbiter.set_voice_active(False)
+            pending = flush_pending_announcements()
+            if pending and hasattr(session, "generate_reply"):
+                stt_logger.info(f"Delivering pending curriculum announcement: {pending.get('title')}")
+                asyncio.create_task(session.generate_reply())
 
     @session.on("user_input_transcribed")
     def on_user_input(ev):
@@ -1530,6 +1603,56 @@ async def entrypoint(ctx: agents.JobContext):
             genui_logger.error(f"rpc_deliver_canvas_lecture error: {e}")
             return json.dumps({"error": str(e)})
 
+    @ctx.room.local_participant.register_rpc_method("requestReinterpretation")
+    async def rpc_request_reinterpretation(data: rtc.RpcInvocationData) -> str:
+        try:
+            params = json.loads(data.payload) if data.payload else {}
+            style_hint = params.get("style_hint", "everyday")
+            node_id = params.get("node_id", "current")
+            complaint = params.get("complaint", "")
+            if not node_id or node_id in ("current", "none", ""):
+                state = tracker.get_state()
+                curr_topic = state.get("current_topic", "Nouns")
+                node_id = curr_topic.lower().replace(" ", "_").replace("-", "_")
+
+            req_id = curriculum_store.log_reconsideration_request(
+                node_id=node_id,
+                style_hint=style_hint,
+                complaint=complaint
+            )
+
+            existing = curriculum_store.get_variant(node_id, style_hint)
+            if existing:
+                curriculum_store.resolve_reconsideration_request(req_id, existing.get("id"))
+                draft_payload = {
+                    "title": f"{node_id.replace('_', ' ').title()} ({style_hint.title()})",
+                    "core_concept": existing.get("spoken_summary", ""),
+                    "canvas_type": existing.get("canvas_type", "classifier"),
+                    "canvas_config": existing.get("canvas_config", {}),
+                    "lecture_paragraphs": existing.get("lecture_paragraphs", []),
+                    "citations": existing.get("citations", []),
+                }
+                fake_state = {
+                    "node_id": node_id,
+                    "job_type": "reconsider",
+                    "result_id": existing.get("id"),
+                    "draft": draft_payload
+                }
+                await push_ready_event(fake_state)
+                spoken = existing.get("spoken_summary", "")
+                if spoken and session:
+                    asyncio.create_task(session.say(f"Here is how to think about this in a {style_hint} context: {spoken}", allow_interruptions=True))
+                return json.dumps({"status": "loaded", "variant": existing})
+            else:
+                enqueue_reconsider(node_id=node_id, style_hint=style_hint, complaint=complaint, request_id=req_id)
+                voice_msg = f"Got it! I am switching to a {style_hint} analogy for {node_id.replace('_', ' ')}."
+                if session:
+                    asyncio.create_task(session.say(voice_msg, allow_interruptions=True))
+                return json.dumps({"status": "enqueued", "style_hint": style_hint, "node_id": node_id})
+        except Exception as e:
+            genui_logger.error(f"rpc_request_reinterpretation error: {e}")
+            return json.dumps({"error": str(e)})
+
     # ── Periodic Authoritative Learner State Sync Loop ───────────────
     async def push_periodic_progress():
         """Periodically pushes authoritative learner summary to room on topic 'progress'."""
@@ -1561,9 +1684,356 @@ if __name__ == "__main__":
 
 
 ================================================================================
-FILE: mvp_talker_offline/backend/structured_logger.py
+FILE: mvp_talker_offline/backend/core/kokoro_tts.py
 LANGUAGE: python
-LINES: 94
+LINES: 252 | EST_TOKENS: ~2453
+PURPOSE: Native in-process Kokoro-82M ONNX streaming TTS plugin implementing tts.TTS and tts.SynthesizeStream with clause boundary splitting and direct 24kHz int16 PCM streaming to AudioEmitter
+================================================================================
+
+"""
+kokoro_tts.py — Native LiveKit Streaming TTS Plugin for Kokoro-82M ONNX.
+
+Implements LiveKit Agents' official tts.TTS and tts.SynthesizeStream interfaces:
+  - Sub-300ms Time-To-First-Audio (TTFA) via clause-boundary streaming
+  - Emits raw 24kHz int16 PCM bytes directly to tts.AudioEmitter
+  - Eliminates the HTTP round-trip, WAV header overhead, and sentence-buffering latency
+  - Fallback to Piper ONNX or silence buffer if Kokoro model files are unavailable
+"""
+
+import os
+import re
+import asyncio
+import time
+from pathlib import Path
+from typing import Optional, List, Tuple
+import numpy as np
+
+from livekit.agents import tts, utils
+from livekit.agents.types import DEFAULT_API_CONNECT_OPTIONS, APIConnectOptions
+from core.config import (
+    KOKORO_MODEL_PATH,
+    KOKORO_VOICES_PATH,
+    KOKORO_VOICE,
+    KOKORO_SPEED,
+    PIPER_VOICE_PATH,
+    PIPER_LENGTH_SCALE,
+    PIPER_NOISE_SCALE,
+    PIPER_NOISE_W_SCALE,
+)
+from core.structured_logger import tts_logger
+
+CLAUSE_BOUNDARY_REGEX = re.compile(r'([,.;:!?\n]+)')
+
+
+def clean_tts_text(text: str) -> str:
+    """Strip emoji, non-ASCII decoration, and normalize whitespace for TTS."""
+    cleaned = re.sub(r'[\U00010000-\U0010ffff]', '', text)
+    cleaned = re.sub(r'[^\w\s.,!?;:\'\"-]', ' ', cleaned)
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    return cleaned
+
+
+class KokoroSynthesizeStream(tts.SynthesizeStream):
+    """
+    LiveKit SynthesizeStream subclass that consumes LLM tokens and synthesizes
+    audio on clause boundaries (commas, periods, question marks) for sub-300ms TTFA.
+    """
+
+    def __init__(self, *, tts_instance: "KokoroTTS", conn_options: APIConnectOptions):
+        super().__init__(tts=tts_instance, conn_options=conn_options)
+        self._tts_instance: "KokoroTTS" = tts_instance
+
+    async def _run(self, output_emitter: tts.AudioEmitter) -> None:
+        output_emitter.initialize(
+            request_id=utils.shortuuid(),
+            sample_rate=self._tts_instance.sample_rate,
+            num_channels=self._tts_instance.num_channels,
+            mime_type="audio/pcm",
+            stream=True,
+        )
+
+        buffer = ""
+        current_segment_id: Optional[str] = None
+
+        async def _synthesize_and_push(text_to_speak: str):
+            nonlocal current_segment_id
+            clean = clean_tts_text(text_to_speak)
+            if not clean:
+                return
+
+            pcm_bytes = await self._tts_instance.synthesize_pcm_async(clean)
+            if not pcm_bytes:
+                return
+
+            if not current_segment_id:
+                current_segment_id = utils.shortuuid()
+                output_emitter.start_segment(segment_id=current_segment_id)
+
+            output_emitter.push(pcm_bytes)
+            output_emitter.flush()
+
+        try:
+            async for data in self._input_ch:
+                if isinstance(data, str):
+                    buffer += data
+                    # Check for clause boundaries
+                    parts = CLAUSE_BOUNDARY_REGEX.split(buffer)
+                    # If we have at least 1 boundary (parts has at least: [before, boundary, after])
+                    if len(parts) >= 3:
+                        # Extract the first chunk (text + boundary)
+                        chunk_text = parts[0] + parts[1]
+                        words = chunk_text.strip().split()
+                        # Emit if word count is >= 3 or ends with terminal punctuation (. ? ! \n)
+                        is_terminal = any(parts[1].endswith(p) for p in [".", "?", "!", "\n"])
+                        if len(words) >= 3 or is_terminal:
+                            buffer = "".join(parts[2:])
+                            await _synthesize_and_push(chunk_text)
+
+                elif isinstance(data, tts.SynthesizeStream._FlushSentinel):
+                    if buffer.strip():
+                        await _synthesize_and_push(buffer.strip())
+                        buffer = ""
+
+                    if current_segment_id:
+                        output_emitter.end_segment()
+                        current_segment_id = None
+
+            # End of input channel
+            if buffer.strip():
+                await _synthesize_and_push(buffer.strip())
+                buffer = ""
+
+            if current_segment_id:
+                output_emitter.end_segment()
+                current_segment_id = None
+
+        except Exception as e:
+            tts_logger.error(f"Error in KokoroSynthesizeStream._run: {e}")
+            raise
+
+
+class KokoroChunkedStream(tts.ChunkedStream):
+    """Fallback non-streaming chunked stream."""
+
+    def __init__(self, *, tts_instance: "KokoroTTS", input_text: str, conn_options: APIConnectOptions):
+        super().__init__(tts=tts_instance, input_text=input_text, conn_options=conn_options)
+        self._tts_instance: "KokoroTTS" = tts_instance
+
+    async def _run(self, output_emitter: tts.AudioEmitter) -> None:
+        output_emitter.initialize(
+            request_id=utils.shortuuid(),
+            sample_rate=self._tts_instance.sample_rate,
+            num_channels=self._tts_instance.num_channels,
+            mime_type="audio/pcm",
+            stream=False,
+        )
+        clean = clean_tts_text(self._input_text)
+        if clean:
+            pcm_bytes = await self._tts_instance.synthesize_pcm_async(clean)
+            if pcm_bytes:
+                output_emitter.push(pcm_bytes)
+                output_emitter.flush()
+
+
+class KokoroTTS(tts.TTS):
+    """
+    Native LiveKit Agents TTS plugin running Kokoro-82M ONNX in-process.
+    Provides clause-boundary streaming without any external HTTP microservice hop.
+    """
+
+    def __init__(
+        self,
+        voice: Optional[str] = None,
+        speed: Optional[float] = None,
+        model_path: Optional[str] = None,
+        voices_path: Optional[str] = None,
+        sample_rate: int = 24000,
+    ):
+        super().__init__(
+            capabilities=tts.TTSCapabilities(streaming=True),
+            sample_rate=sample_rate,
+            num_channels=1,
+        )
+        self._voice = voice or KOKORO_VOICE
+        self._speed = speed if speed is not None else KOKORO_SPEED
+        self._model_path = model_path or str(KOKORO_MODEL_PATH)
+        self._voices_path = voices_path or str(KOKORO_VOICES_PATH)
+        self._kokoro = None
+        self._piper = None
+
+        self._init_engine()
+
+    def _init_engine(self) -> None:
+        """Initialize Kokoro-82M ONNX or fallback to Piper ONNX."""
+        try:
+            from kokoro_onnx import Kokoro as KokoroOnnx
+            if os.path.exists(self._model_path) and os.path.exists(self._voices_path):
+                self._kokoro = KokoroOnnx(self._model_path, self._voices_path)
+                tts_logger.info(
+                    f"KokoroTTS native plugin ready | voice={self._voice} | "
+                    f"speed={self._speed} | rate={self.sample_rate}Hz [100% in-process]"
+                )
+                return
+            else:
+                tts_logger.warning(
+                    f"Kokoro model files missing ({self._model_path}). Checking Piper fallback..."
+                )
+        except Exception as e:
+            tts_logger.warning(f"Failed to load Kokoro ONNX: {e}")
+
+        # Piper fallback
+        piper_path = str(PIPER_VOICE_PATH)
+        if os.path.exists(piper_path):
+            try:
+                from piper import PiperVoice
+                self._piper = PiperVoice.load(piper_path)
+                tts_logger.info(f"Piper TTS loaded as fallback | voice={piper_path}")
+            except Exception as e:
+                tts_logger.warning(f"Failed to load Piper fallback: {e}")
+
+    def synthesize_pcm(self, text: str) -> bytes:
+        """Synchronously synthesize text to int16 PCM bytes."""
+        if not text:
+            return b""
+
+        # Tier 1: Kokoro ONNX
+        if self._kokoro is not None:
+            try:
+                samples, sr = self._kokoro.create(
+                    text,
+                    voice=self._voice,
+                    speed=self._speed,
+                    lang="en-us",
+                )
+                # Convert float32 [-1.0, 1.0] to int16 PCM bytes
+                int16_samples = (np.clip(samples, -1.0, 1.0) * 32767.0).astype(np.int16)
+                return int16_samples.tobytes()
+            except Exception as e:
+                tts_logger.warning(f"Kokoro synthesis failed for '{text[:40]}...': {e}")
+
+        # Tier 2: Piper ONNX fallback
+        if self._piper is not None:
+            try:
+                import io, wave
+                buf = io.BytesIO()
+                with wave.open(buf, "wb") as wf:
+                    self._piper.synthesize(text, wf)
+                # Read raw PCM from WAV buffer
+                buf.seek(0)
+                with wave.open(buf, "rb") as wf:
+                    return wf.readframes(wf.getnframes())
+            except Exception as e:
+                tts_logger.warning(f"Piper synthesis fallback failed: {e}")
+
+        # Tier 3: Silence fallback (100ms) to prevent audio pipeline crash
+        silence_samples = int(self.sample_rate * 0.1)
+        return np.zeros(silence_samples, dtype=np.int16).tobytes()
+
+    async def synthesize_pcm_async(self, text: str) -> bytes:
+        """Asynchronously synthesize text on a worker thread to avoid blocking asyncio loop."""
+        return await asyncio.to_thread(self.synthesize_pcm, text)
+
+    def synthesize(
+        self, text: str, *, conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS
+    ) -> tts.ChunkedStream:
+        return KokoroChunkedStream(tts_instance=self, input_text=text, conn_options=conn_options)
+
+    def stream(
+        self, *, conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS
+    ) -> tts.SynthesizeStream:
+        return KokoroSynthesizeStream(tts_instance=self, conn_options=conn_options)
+
+
+================================================================================
+FILE: mvp_talker_offline/backend/core/gpu_arbiter.py
+LANGUAGE: python
+LINES: 77 | EST_TOKENS: ~699
+PURPOSE: Application-level GPU Session Mutex & VRAM Arbiter enforcing strict voice-call priority and pausing Tier 2 LangGraph jobs to protect 8GB VRAM
+================================================================================
+
+"""
+gpu_arbiter.py — Application-Level GPU Session Mutex & VRAM Arbiter.
+
+Solves GPU Thrashing on 8GB Hardware (buddy.md Critique #4):
+  - On 8GB GPUs, keeping both the 3B conversational model and 7B authoring model
+    resident simultaneously causes continuous Ollama VRAM swapping, introducing
+    10+ second speech delays and GPU thermal spikes.
+  - This arbiter enforces strict voice-call priority:
+    When an active WebRTC session is running or the learner is speaking,
+    background Tier 2 LangGraph compilation jobs pause at node boundaries.
+  - Tier 2 compilation only resumes when the live audio call is idle or disconnected.
+"""
+
+import asyncio
+from typing import Optional
+from core.structured_logger import system_logger
+
+
+class GPUSessionArbiter:
+    """
+    Coordinates GPU execution between the live Tier 1 conversational voice loop
+    and the asynchronous Tier 2 authoring pipeline.
+    """
+
+    def __init__(self):
+        self._voice_active: bool = False
+        self._idle_event: asyncio.Event = asyncio.Event()
+        self._idle_event.set()  # Initially idle / unlocked
+
+    @property
+    def is_voice_active(self) -> bool:
+        return self._voice_active
+
+    @property
+    def is_idle(self) -> bool:
+        return not self._voice_active
+
+    def set_voice_active(self, active: bool) -> None:
+        """Called by LiveKit session lifecycle and turn events."""
+        if self._voice_active != active:
+            self._voice_active = active
+            if active:
+                self._idle_event.clear()
+                system_logger.info("[GPU Arbiter] Live voice session ACTIVE -> Tier 2 compilation paused to preserve VRAM.")
+            else:
+                self._idle_event.set()
+                system_logger.info("[GPU Arbiter] Live voice session IDLE -> Tier 2 compilation unlocked.")
+
+    async def wait_for_idle(self, timeout: Optional[float] = None) -> bool:
+        """Wait until no active voice session is utilizing the GPU."""
+        try:
+            if timeout:
+                await asyncio.wait_for(self._idle_event.wait(), timeout=timeout)
+            else:
+                await self._idle_event.wait()
+            return True
+        except asyncio.TimeoutError:
+            return False
+
+    async def tier2_slot(self):
+        """Context manager used by Tier 2 tasks to gate LLM execution on voice session inactivity."""
+        class _SlotContext:
+            def __init__(self, arbiter: GPUSessionArbiter):
+                self.arbiter = arbiter
+
+            async def __aenter__(self):
+                await self.arbiter.wait_for_idle()
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                pass
+
+        return _SlotContext(self)
+
+
+# Global singleton arbiter
+gpu_arbiter = GPUSessionArbiter()
+
+
+================================================================================
+FILE: mvp_talker_offline/backend/core/structured_logger.py
+LANGUAGE: python
+LINES: 94 | EST_TOKENS: ~901
 PURPOSE: Localized structured logging subsystem with consistent session_id and sequential turn_id for STT, LLM, TTS, RAG, and GenUI
 ================================================================================
 
@@ -1664,10 +2134,84 @@ system_logger = get_logger("SYSTEM")
 
 
 ================================================================================
-FILE: mvp_talker_offline/backend/audio_server.py
+FILE: mvp_talker_offline/backend/core/config.py
 LANGUAGE: python
-LINES: 268
-PURPOSE: Isolated FastAPI microservice serving local Piper neural TTS (/v1/audio/speech) and LiveKit JWT token minting (/api/token)
+LINES: 65 | EST_TOKENS: ~740
+PURPOSE: Centralized environment configuration: all env vars (LiveKit, Ollama, TTS, data paths) loaded from .env via dotenv
+================================================================================
+
+"""Centralized environment configuration for the Buddy Voice AI Agent.
+
+Loads .env from the workspace root (mvp_talker_offline/.env) and exposes
+all configuration values as module-level constants. Import this module
+instead of scattering os.getenv() calls across files.
+"""
+
+import os
+from pathlib import Path
+from dotenv import load_dotenv
+
+# ── Locate workspace root (mvp_talker_offline/) ─────────────────────────────
+BACKEND_DIR = Path(__file__).resolve().parent.parent          # backend/
+WORKSPACE_ROOT = BACKEND_DIR.parent                           # mvp_talker_offline/
+
+# ── Load environment variables ───────────────────────────────────────────────
+_env_path = WORKSPACE_ROOT / ".env"
+if _env_path.exists():
+    load_dotenv(dotenv_path=_env_path)
+else:
+    load_dotenv()
+
+# ── LiveKit ──────────────────────────────────────────────────────────────────
+LIVEKIT_URL = os.getenv("LIVEKIT_URL", "ws://127.0.0.1:7880")
+LIVEKIT_API_KEY = os.getenv("LIVEKIT_API_KEY", "devkey")
+LIVEKIT_API_SECRET = os.getenv("LIVEKIT_API_SECRET", "secret")
+LIVEKIT_TRANSPORT_MODE = os.getenv("LIVEKIT_TRANSPORT_MODE", "webrtc")
+
+# ── Ollama LLM ───────────────────────────────────────────────────────────────
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen-buddy")
+
+# ── Audio Server ─────────────────────────────────────────────────────────────
+AUDIO_SERVER_PORT = int(os.getenv("AUDIO_SERVER_PORT", "8880"))
+AUDIO_SERVER_URL = os.getenv("AUDIO_SERVER_URL", "http://127.0.0.1:8880/v1")
+
+# ── TTS — Kokoro (Tier 1) ───────────────────────────────────────────────────
+MODELS_DIR = WORKSPACE_ROOT / "models"
+KOKORO_MODEL_PATH = os.getenv("KOKORO_MODEL_PATH", str(MODELS_DIR / "kokoro-v1.0.onnx"))
+KOKORO_VOICES_PATH = os.getenv("KOKORO_VOICES_PATH", str(MODELS_DIR / "voices-v1.0.bin"))
+KOKORO_VOICE = os.getenv("KOKORO_VOICE", "af_heart")
+KOKORO_SPEED = float(os.getenv("KOKORO_SPEED", "1.0"))
+
+# ── TTS — Piper (Tier 2 fallback) ───────────────────────────────────────────
+PIPER_VOICE_PATH = os.getenv(
+    "PIPER_VOICE_PATH",
+    str(MODELS_DIR / "en_US-lessac-medium.onnx"),
+)
+PIPER_LENGTH_SCALE = float(os.getenv("PIPER_LENGTH_SCALE", "1.05"))
+PIPER_NOISE_SCALE = float(os.getenv("PIPER_NOISE_SCALE", "0.667"))
+PIPER_NOISE_W_SCALE = float(os.getenv("PIPER_NOISE_W_SCALE", "0.8"))
+
+# ── Data Paths ───────────────────────────────────────────────────────────────
+DATA_DIR = WORKSPACE_ROOT / "data"
+DB_PATH = DATA_DIR / "memory.db"
+CURRICULUM_FILE = DATA_DIR / "curriculum.json"
+CURRICULUM_DB_PATH = DATA_DIR / "curriculum.db"
+BANKS_DIR = DATA_DIR / "quiz_banks"
+STORIES_DIR = DATA_DIR / "stories"
+CHROMA_DB_DIR = DATA_DIR / "chroma_db"
+CHECKPOINT_DB_PATH = DATA_DIR / "langgraph_checkpoints.db"
+LECTURE_AUDIO_DIR = DATA_DIR / "lecture_audio"
+
+# ── External Books ───────────────────────────────────────────────────────────
+BOOKS_DIR = os.getenv("BOOKS_DIR", str(Path.home() / "buddy_reference_books"))
+
+
+================================================================================
+FILE: mvp_talker_offline/backend/core/audio_server.py
+LANGUAGE: python
+LINES: 268 | EST_TOKENS: ~2475
+PURPOSE: Isolated FastAPI microservice serving local Kokoro/Piper neural TTS (/v1/audio/speech) and LiveKit JWT token minting (/api/token)
 ================================================================================
 
 """
@@ -1702,7 +2246,7 @@ os.environ["HF_HUB_OFFLINE"] = "1"
 from fastapi import FastAPI, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
-from structured_logger import tts_logger
+from core.structured_logger import tts_logger
 
 app = FastAPI(title="Buddy Offline Kokoro TTS & Audio Server")
 
@@ -1937,14 +2481,14 @@ async def get_livekit_token(identity: str = "web-user", room_name: str = "buddy-
 
 
 if __name__ == "__main__":
-    uvicorn.run("audio_server:app", host="0.0.0.0", port=8880, reload=False)
+    uvicorn.run(app, host="0.0.0.0", port=8880)
 
 
 ================================================================================
 FILE: mvp_talker_offline/Modelfile
 LANGUAGE: dockerfile
-LINES: 34
-PURPOSE: Custom Ollama Modelfile configuring qwen2.5:3b with pedagogical teacher persona and grammar guidelines
+LINES: 34 | EST_TOKENS: ~572
+PURPOSE: Custom Ollama Modelfile configuring qwen2.5:7b with pedagogical teacher persona and grammar guidelines
 ================================================================================
 
 FROM qwen2.5:7b
@@ -1986,7 +2530,7 @@ CORE TEACHING & CONVERSATIONAL RULES:
 ================================================================================
 FILE: mvp_talker_offline/requirements.txt
 LANGUAGE: text
-LINES: 36
+LINES: 36 | EST_TOKENS: ~200
 PURPOSE: Python backend requirements (livekit, faster-whisper, fastapi, uvicorn, rank-bm25, duckduckgo-search)
 ================================================================================
 
@@ -2031,7 +2575,7 @@ soundfile>=0.12.0
 ================================================================================
 FILE: mvp_talker_offline/.env.example
 LANGUAGE: ini
-LINES: 31
+LINES: 31 | EST_TOKENS: ~196
 PURPOSE: Environment variable documentation (LiveKit keys, Ollama URL, Piper voice model path)
 ================================================================================
 

@@ -1,23 +1,17 @@
 #!/usr/bin/env python3
 """
 Generates high-fidelity, LLM-optimized codebase exports for both Frontend and Backend.
+
 Provides:
-- All 3 full codebase bundles at root level:
-    1. FULL_PROJECT_CODEBASE.txt (Combined BE + FE)
+- 4 Full Codebase Bundles at root level:
+    1. FULL_PROJECT_CODEBASE.txt (Combined Architecture, BE, and FE)
     2. FULL_FRONTEND_CODEBASE.txt (All FE files)
     3. FULL_BACKEND_CODEBASE.txt (All BE files)
-- Single consolidated 'chunks/' directory containing all logical chunks (< 20K tokens each)
-- Separated 'frontend/' and 'backend/' directories with architectural overviews and dedicated chunks
+    4. FULL_SPECS_AND_ARCHITECTURE.txt (All design docs and plans)
+- Single consolidated 'chunks/' directory containing 9 logical chunks (< 25K tokens each)
+- Separated 'frontend/' and 'backend/' directories with architectural overviews
+- Automated codebase audit verifying zero untracked source files
 - Delimiters and metadata headers formatted for zero-ambiguity parsing by any LLM
-
-Data Storage Note:
-  Raw PDF reference books live in data/reference_books/ as the source-of-truth archive.
-  At ingest time, knowledge_ingestor.py chunks + vectorises every book into memory.db (SQLite)
-  using an FTS5 full-text index and a dense embedding table (rag_chunks).  On every cold start
-  the agent hot-loads data/preindexed_reference_corpus.json — a portable snapshot of all 833
-  pre-vectorised chunks — so PDF re-parsing never blocks startup.  PDFs are therefore kept
-  only as the authoritative source for future re-ingestion or curriculum audits, not for
-  runtime retrieval.
 """
 
 import os
@@ -44,15 +38,32 @@ def read_file(rel_path: str) -> str:
 def format_file_block(rel_path: str, purpose: str, language: str) -> str:
     content = read_file(rel_path)
     lines = len(content.splitlines())
+    tokens = len(content) // 4
     header = (
         "=" * 80 + "\n"
         f"FILE: {rel_path}\n"
         f"LANGUAGE: {language}\n"
-        f"LINES: {lines}\n"
+        f"LINES: {lines} | EST_TOKENS: ~{tokens}\n"
         f"PURPOSE: {purpose}\n"
         + "=" * 80 + "\n"
     )
     return f"{header}\n{content}\n\n"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ARCHITECTURE & DESIGN SPECS DEFINITIONS
+# ─────────────────────────────────────────────────────────────────────────────
+
+SPEC_CHUNKS = {
+    "00_ARCHITECTURE_AND_SPECS.txt": [
+        ("buddy.md", "Core design doctrine: Voice-first buddy persona, offline-first philosophy, reactive GenUI, and turn-taking rules", "markdown"),
+        ("buddy-implementation-plan.md", "Comprehensive two-tier architectural plan: LiveKit agent loop, GPU arbiter, in-process Kokoro TTS, and SQLite curriculum store", "markdown"),
+        ("buddy-implementation-plan (1).md", "Deep curriculum engine coding plan: LangGraph 8-node DAG, reconsideration request logging, and dynamic course sessions", "markdown"),
+        ("README.md", "Monorepo root README with fast startup guide and architectural overview", "markdown"),
+        ("mvp_talker_offline/README.md", "Backend package README with console and server run commands", "markdown"),
+        ("agent.py", "Root-level launcher delegating directly to mvp_talker_offline/backend/agent.py", "python"),
+        ("pyproject.toml", "Root Python project configuration and dependency metadata", "toml"),
+    ]
+}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # FRONTEND DEFINITIONS (mvp_talker_offline/VisualsFrontend)
@@ -65,27 +76,29 @@ FE_CHUNKS = {
         ("mvp_talker_offline/VisualsFrontend/tsconfig.json", "Root TypeScript compiler options", "json"),
         ("mvp_talker_offline/VisualsFrontend/index.html", "HTML shell mounting root React container with Inter typography", "html"),
         ("mvp_talker_offline/VisualsFrontend/src/main.tsx", "React 19 entrypoint mounting App with @fontsource/inter", "typescript"),
-        ("mvp_talker_offline/VisualsFrontend/src/index.css", "Design System: Dark surface tokens (--surface-0 to --surface-3), hairlines, and typography", "css"),
+        ("mvp_talker_offline/VisualsFrontend/src/index.css", "Design System: Dark surface tokens (--surface-0 to --surface-3), ambient mesh background, voice halo, and typography", "css"),
+        (".mcp.json", "Workspace MCP configuration for frontend design, React, and UI component servers (shadcn, shadcn-ui, tailgrids)", "json"),
     ],
     "02_FE_STATE_AND_SERVICES.txt": [
-        ("mvp_talker_offline/VisualsFrontend/src/types.ts", "Central TypeScript interfaces (FeedItem, QuizQuestion, ContentionProps, SyllabusData)", "typescript"),
+        ("mvp_talker_offline/VisualsFrontend/src/types.ts", "Central TypeScript interfaces (FeedItem, QuizQuestion, ContentionProps, CanvasLectureProps, SyllabusData)", "typescript"),
         ("mvp_talker_offline/VisualsFrontend/src/config/transport.ts", "Transport configuration establishing LiveKit WebRTC as authoritative transport and formally deprecating legacy SSE/stdio bridges", "typescript"),
-        ("mvp_talker_offline/VisualsFrontend/src/store.ts", "Zustand state store managing sequential feed array, LiveKit room instance, drawer state, and LiveKit RPC actions", "typescript"),
+        ("mvp_talker_offline/VisualsFrontend/src/store.ts", "Zustand state store managing sequential feed array, LiveKit room instance, drawer state, and LiveKit RPC actions (including requestReinterpretation)", "typescript"),
         ("mvp_talker_offline/VisualsFrontend/src/hooks/useLiveKit.ts", "LiveKit WebRTC transport hook: room joining (/api/token), speaker audio track playback, text stream handling, and client RPC", "typescript"),
         ("mvp_talker_offline/VisualsFrontend/src/utils/bionic.ts", "Bionic reading text transformation algorithm bolding initial letters of words", "typescript"),
     ],
     "03_FE_CONVERSATIONAL_STAGE.txt": [
-        ("mvp_talker_offline/VisualsFrontend/src/App.tsx", "Conversational Live Stage: Timeline feed, top status bar, bottom audio dock, and slide-over drawer", "typescript"),
-        ("mvp_talker_offline/VisualsFrontend/src/components/Header.tsx", "Top navigation bar with engine status indicator, active chapter pill, and quick triggers", "typescript"),
-        ("mvp_talker_offline/VisualsFrontend/src/components/AudioDock.tsx", "Floating voice visualizer dock with active waveform, composer textarea, and action chips", "typescript"),
-        ("mvp_talker_offline/VisualsFrontend/src/components/SlideOverDrawer.tsx", "Collapsible slide-over drawer with 18-chapter roadmap, analytics, and remediation queue", "typescript"),
-        ("mvp_talker_offline/VisualsFrontend/src/components/SyllabusSection.tsx", "Modular syllabus section displaying active chapter hero, stage badges, coursework gating, 18-chapter roadmap, and drift audit metrics", "typescript"),
-        ("mvp_talker_offline/VisualsFrontend/src/components/InlineQuizCard.tsx", "Inline generative quiz artifact card with feedback, rule citations, dispute handling, and isomorphic retry", "typescript"),
-        ("mvp_talker_offline/VisualsFrontend/src/components/InlineDisputeCard.tsx", "Inline dispute ruling card comparing formal grammar vs colloquial usage with citations", "typescript"),
-        ("mvp_talker_offline/VisualsFrontend/src/components/InlineNotesCard.tsx", "Inline revision notes artifact card with bionic reading toggle and common traps", "typescript"),
-        ("mvp_talker_offline/VisualsFrontend/src/components/InlineGrammarMovementCard.tsx", "Inline syntactic movement animation card with Framer Motion layoutId spring physics and role capsules", "typescript"),
-        ("mvp_talker_offline/VisualsFrontend/src/components/InlineSheetErrorCard.tsx", "Inline sheet error card with alert status, target component diagnostics, and interactive retry action", "typescript"),
-        ("mvp_talker_offline/VisualsFrontend/src/components/StreamingCard.tsx", "Live LLM token synthesis card with typewriter animation and blinking cursor", "typescript"),
+        ("mvp_talker_offline/VisualsFrontend/src/App.tsx", "Conversational Live Stage: Timeline feed, ambient mesh canvas, top status bar, bottom audio dock, and slide-over drawer", "typescript"),
+        ("mvp_talker_offline/VisualsFrontend/src/components/layout/Header.tsx", "Top navigation bar with engine status indicator, active chapter pill, and quick triggers", "typescript"),
+        ("mvp_talker_offline/VisualsFrontend/src/components/layout/AudioDock.tsx", "Floating voice visualizer dock with 9-bar reactive equalizer, pulsing voice halo ring, composer textarea, and action chips", "typescript"),
+        ("mvp_talker_offline/VisualsFrontend/src/components/layout/SlideOverDrawer.tsx", "Collapsible slide-over drawer with 18-chapter roadmap, analytics, and remediation queue", "typescript"),
+        ("mvp_talker_offline/VisualsFrontend/src/components/syllabus/SyllabusSection.tsx", "Modular syllabus section displaying active chapter hero, stage badges, coursework gating, 18-chapter roadmap, and drift audit metrics", "typescript"),
+        ("mvp_talker_offline/VisualsFrontend/src/components/cards/InlineQuizCard.tsx", "Inline generative quiz artifact card with feedback, rule citations, dispute handling, and isomorphic retry", "typescript"),
+        ("mvp_talker_offline/VisualsFrontend/src/components/cards/InlineDisputeCard.tsx", "Inline dispute ruling card comparing formal grammar vs colloquial usage with citations", "typescript"),
+        ("mvp_talker_offline/VisualsFrontend/src/components/cards/InlineNotesCard.tsx", "Inline revision notes artifact card with bionic reading toggle and common traps", "typescript"),
+        ("mvp_talker_offline/VisualsFrontend/src/components/cards/InlineGrammarMovementCard.tsx", "Inline syntactic movement animation card with Framer Motion layoutId spring physics and role capsules", "typescript"),
+        ("mvp_talker_offline/VisualsFrontend/src/components/cards/InlineSheetErrorCard.tsx", "Inline sheet error card with alert status, target component diagnostics, and interactive retry action", "typescript"),
+        ("mvp_talker_offline/VisualsFrontend/src/components/cards/InlineCanvasLectureCard.tsx", "Interactive canvas lecture card with 5 visual primitives (syntactic tree, concord balance, flow, matrix, classifier), bionic reading, and analogy reinterpretation toolbar", "typescript"),
+        ("mvp_talker_offline/VisualsFrontend/src/components/cards/StreamingCard.tsx", "Live LLM token synthesis card with typewriter animation and blinking cursor", "typescript"),
     ]
 }
 
@@ -98,18 +111,18 @@ Built with React 19, TypeScript, Vite, Framer Motion, and Zustand, it serves as 
 ## 2. Key Architecture Patterns
 - **Event-Driven Conversation Timeline**:
   - Entire layout centers on a unified, chronological `feed: FeedItem[]` array.
-  - Transcript utterances, in-flight token streaming cards (`StreamingCard`), interactive quiz cards (`InlineQuizCard`), linguistic dispute verdicts (`InlineDisputeCard`), study notes (`InlineNotesCard`), and syntactic movement cards (`InlineGrammarMovementCard`) render directly inline at their exact chronological position in the chat stream.
+  - Transcript utterances, in-flight token streaming cards (`StreamingCard`), interactive quiz cards (`InlineQuizCard`), linguistic dispute verdicts (`InlineDisputeCard`), study notes (`InlineNotesCard`), syntactic movement cards (`InlineGrammarMovementCard`), and canvas lecture cards (`InlineCanvasLectureCard`) render directly inline at their exact chronological position in the chat stream.
 - **Top Header Bar**:
   - Live Audio / Engine status indicator pill (`Live Audio Connected` / `Engine Ready`).
   - Active chapter display pill.
   - Action triggers: `Quick Quiz`, `Notes`, and `Syllabus & Stats` drawer toggle.
 - **Floating Voice & Audio Dock**:
-  - Docked at the bottom of the viewport with an animated 5-bar active audio wave visualizer, auto-expanding composer, and quick prompt action chips.
+  - Docked at the bottom of the viewport with an animated 9-bar active audio wave visualizer, pulsing voice halo ring, auto-expanding composer, and quick prompt action chips.
 - **Slide-Over Syllabus & Mastery Drawer**:
   - On-demand slide-over panel on the right side displaying current chapter details, mastery statistics (Accuracy Rate, Correct Answers, Errors Detected), 18-chapter linear curriculum roadmap, and isomorphic remediation queue.
 - **Real-Time LiveKit Transport** (`useLiveKit.ts`):
   - Connects to LiveKit room via WebRTC data channels and text streams (`transcript`, `genui`, `genui_token`).
-  - Native RPC caller for `getSyllabus`, `getQuiz`, `submitQuizAnswer`, `disputeAnswer`, and `advanceChapter`.
+  - Native RPC caller for `getSyllabus`, `getQuiz`, `submitQuizAnswer`, `disputeAnswer`, `deliverCanvasLecture`, and `requestReinterpretation`.
 
 ## 3. Directory Tree
 ```
@@ -122,7 +135,7 @@ mvp_talker_offline/
     └── src/
         ├── main.tsx              # React DOM render with Inter font
         ├── index.css             # Minimalist surface tokens & typography
-        ├── types.ts              # FeedItem, QuizQuestion, ContentionProps, GrammarMovementProps
+        ├── types.ts              # FeedItem, QuizQuestion, ContentionProps, CanvasLectureProps
         ├── store.ts              # Unified timeline Zustand store with LiveKit RPC
         ├── App.tsx               # Conversational Live Stage
         ├── hooks/
@@ -130,21 +143,21 @@ mvp_talker_offline/
         ├── utils/
         │   └── bionic.ts         # Bionic reading algorithm
         └── components/
-            ├── Header.tsx        # Top status bar & chapter display
-            ├── AudioDock.tsx     # Floating voice dock & waveform
-            ├── SlideOverDrawer.tsx # 18-chapter roadmap & analytics drawer
-            ├── InlineQuizCard.tsx# Inline interactive quiz card artifact
-            ├── InlineDisputeCard.tsx # Inline linguistic dispute ruling artifact
-            ├── InlineNotesCard.tsx # Inline study notes with Bionic reading
-            ├── InlineGrammarMovementCard.tsx # Inline syntactic movement card with Framer Motion layoutId
-            └── StreamingCard.tsx # Live LLM token synthesis typewriter
+            ├── layout/           # Layout shell components
+            │   ├── Header.tsx    # Top status bar & chapter display
+            │   ├── AudioDock.tsx # Floating voice dock & waveform
+            │   └── SlideOverDrawer.tsx # 18-chapter roadmap & analytics drawer
+            ├── cards/            # Inline feed artifact cards
+            │   ├── InlineQuizCard.tsx       # Interactive quiz card
+            │   ├── InlineDisputeCard.tsx    # Linguistic dispute ruling
+            │   ├── InlineNotesCard.tsx      # Study notes with Bionic reading
+            │   ├── InlineGrammarMovementCard.tsx # Syntactic movement with Framer Motion
+            │   ├── InlineSheetErrorCard.tsx # Sheet error diagnostics
+            │   ├── InlineCanvasLectureCard.tsx # Canvas lecture with 5 visual primitives & analogy toolbar
+            │   └── StreamingCard.tsx        # Live LLM token typewriter
+            └── syllabus/         # Syllabus & curriculum UI
+                └── SyllabusSection.tsx # Chapter roadmap & mastery tracking
 ```
-
-## 4. Chunk Guide for LLMs
-- **`01_FE_CORE_AND_CONFIG.txt`**: Core package config, HTML entrypoint, main.tsx, and design system CSS.
-- **`02_FE_STATE_AND_SERVICES.txt`**: TypeScript interfaces, Zustand store, and LiveKit WebRTC hook.
-- **`03_FE_CONVERSATIONAL_STAGE.txt`**: Conversational Live Stage component (`App.tsx`), components (`Header`, `AudioDock`, `SlideOverDrawer`, `InlineQuizCard`, `InlineDisputeCard`, `InlineNotesCard`, `InlineGrammarMovementCard`, `StreamingCard`).
-- **`FULL_FRONTEND_CODEBASE.txt`**: Complete bundle of all frontend source files in one continuous document.
 """
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -153,59 +166,80 @@ mvp_talker_offline/
 
 BE_CHUNKS = {
     "01_BE_CORE_PIPELINE.txt": [
-        ("mvp_talker_offline/backend/agent.py", "LiveKit voice AI agent entrypoint: Faster-Whisper STT, Silero VAD, Piper TTS, Ollama LLM, in-process function tools (with RunContext UI streaming), and LiveKit RPC handlers", "python"),
-        ("mvp_talker_offline/backend/structured_logger.py", "Localized structured logging subsystem with consistent session_id and sequential turn_id for STT, LLM, TTS, RAG, and GenUI", "python"),
-        ("mvp_talker_offline/backend/audio_server.py", "Isolated FastAPI microservice serving local Piper neural TTS (/v1/audio/speech) and LiveKit JWT token minting (/api/token)", "python"),
-        ("mvp_talker_offline/Modelfile", "Custom Ollama Modelfile configuring qwen2.5:3b with pedagogical teacher persona and grammar guidelines", "dockerfile"),
+        ("mvp_talker_offline/backend/agent.py", "LiveKit voice AI agent entrypoint: Faster-Whisper STT, Silero VAD, Kokoro TTS, Ollama LLM, in-process function tools, and LiveKit RPC handlers (including requestReinterpretation)", "python"),
+        ("mvp_talker_offline/backend/core/kokoro_tts.py", "Native in-process Kokoro-82M ONNX streaming TTS plugin implementing tts.TTS and tts.SynthesizeStream with clause boundary splitting and direct 24kHz int16 PCM streaming to AudioEmitter", "python"),
+        ("mvp_talker_offline/backend/core/gpu_arbiter.py", "Application-level GPU Session Mutex & VRAM Arbiter enforcing strict voice-call priority and pausing Tier 2 LangGraph jobs to protect 8GB VRAM", "python"),
+        ("mvp_talker_offline/backend/core/structured_logger.py", "Localized structured logging subsystem with consistent session_id and sequential turn_id for STT, LLM, TTS, RAG, and GenUI", "python"),
+        ("mvp_talker_offline/backend/core/config.py", "Centralized environment configuration: all env vars (LiveKit, Ollama, TTS, data paths) loaded from .env via dotenv", "python"),
+        ("mvp_talker_offline/backend/core/audio_server.py", "Isolated FastAPI microservice serving local Kokoro/Piper neural TTS (/v1/audio/speech) and LiveKit JWT token minting (/api/token)", "python"),
+        ("mvp_talker_offline/Modelfile", "Custom Ollama Modelfile configuring qwen2.5:7b with pedagogical teacher persona and grammar guidelines", "dockerfile"),
         ("mvp_talker_offline/requirements.txt", "Python backend requirements (livekit, faster-whisper, fastapi, uvicorn, rank-bm25, duckduckgo-search)", "text"),
         ("mvp_talker_offline/.env.example", "Environment variable documentation (LiveKit keys, Ollama URL, Piper voice model path)", "ini"),
     ],
     "02_BE_ENGINES.txt": [
-        ("mvp_talker_offline/backend/simulation_engine.py", "Pedagogical simulation engine handling error detection, dispute resolution via local RAG & DuckDuckGo, and colloquial recasts", "python"),
-        ("mvp_talker_offline/backend/quiz_engine.py", "Quiz state machine managing chapter banks, answer verification, error tracking, and isomorphic repeat questions with SQLite audit logging", "python"),
-        ("mvp_talker_offline/backend/syllabus_tracker.py", "18-chapter linear progression tracker backed by SQLite database (memory.db) tracking coursework, mastery, and isomorphic audits", "python"),
-        ("mvp_talker_offline/backend/rag_store.py", "ChromaDB-backed hybrid RAG store: ANN vector search (HNSW) + BM25 keyword search with Reciprocal Rank Fusion; vectors persisted to data/chroma_db/ — no re-indexing on restart", "python"),
+        ("mvp_talker_offline/backend/engines/__init__.py", "Engine package re-exports: SimulationEngine, QuizEngine, SyllabusTracker, RAGStore", "python"),
+        ("mvp_talker_offline/backend/engines/curriculum_store.py", "Production curriculum SQLite engine: 5 tables (curriculum_nodes, curriculum_variants, quiz_items, reconsideration_requests, critique_log), typed CRUD, variant retrieval, and auto-seeding", "python"),
+        ("mvp_talker_offline/backend/engines/simulation_engine.py", "Pedagogical simulation engine handling error detection, dispute resolution via local RAG & DuckDuckGo, and colloquial recasts", "python"),
+        ("mvp_talker_offline/backend/engines/quiz_engine.py", "Quiz state machine managing chapter banks, answer verification, error tracking, and isomorphic repeat questions with SQLite audit logging", "python"),
+        ("mvp_talker_offline/backend/engines/syllabus_tracker.py", "18-chapter linear progression tracker backed by SQLite database (memory.db) tracking coursework, mastery, and isomorphic audits", "python"),
+        ("mvp_talker_offline/backend/engines/rag_store.py", "ChromaDB-backed hybrid RAG store: ANN vector search (HNSW) + BM25 keyword search with Reciprocal Rank Fusion; vectors persisted to data/chroma_db/ — no re-indexing on restart", "python"),
     ],
     "03_BE_LANGGRAPH_AND_TUTOR.txt": [
-        ("mvp_talker_offline/backend/langgraph_tutor_graph.py", "LangGraph StateGraph driving tutor mode: lecture phase sequencing, homework check, quiz flow, preference tracking, and session memory via SQLite checkpoints", "python"),
-        ("mvp_talker_offline/backend/curriculum_banks_generator.py", "Offline curriculum generator: builds and exports all 18 chapter quiz banks from ESL syllabus research", "python"),
-        ("mvp_talker_offline/backend/verify_langgraph_livekit.py", "Integration test suite verifying LangGraph tutor graph <-> LiveKit agent handshake: state transitions, checkpoint persistence, and voice-first turn-taking", "python"),
+        ("mvp_talker_offline/backend/tutor/__init__.py", "Tutor package re-exports: langgraph_engine", "python"),
+        ("mvp_talker_offline/backend/tutor/curriculum_authoring.py", "CurriculumNode & CriticVerdict Pydantic schemas, parse_structured with json_repair fallback, structured_authoring_call with exact validation diff retry loop, and semantic critic routing", "python"),
+        ("mvp_talker_offline/backend/tutor/curriculum_pipeline.py", "Shared 8-node LangGraph StateGraph (build, refine, reconsider) compiled with SqliteSaver at data/langgraph_checkpoints.db", "python"),
+        ("mvp_talker_offline/backend/tutor/curriculum_jobs.py", "Thin background job dispatch layer (enqueue_build, enqueue_refine, enqueue_reconsider) gated on GPUSessionArbiter", "python"),
+        ("mvp_talker_offline/backend/tutor/curriculum_notify.py", "Asynchronous GenUI broadcast and context injection: pushes WebRTC cards and injects session.history.add_message to prevent context blindness", "python"),
+        ("mvp_talker_offline/backend/tutor/curriculum_feedback.py", "Automated curriculum feedback scanner monitoring learner quiz failure rates and clustered reconsideration requests", "python"),
+        ("mvp_talker_offline/backend/tutor/studio_tts.py", "Studio-grade neural audio clip synthesis using Kokoro-82M ONNX caching 24kHz WAV files into data/lecture_audio/", "python"),
+        ("mvp_talker_offline/backend/tutor/langgraph_tutor_graph.py", "LangGraph StateGraph driving tutor mode: lecture phase sequencing, homework check, quiz flow, preference tracking, and session memory via SQLite checkpoints", "python"),
+        ("mvp_talker_offline/backend/tutor/curriculum_banks_generator.py", "Offline curriculum generator: builds and exports all 18 chapter quiz banks from ESL syllabus research", "python"),
+        ("mvp_talker_offline/langgraph.json", "LangGraph Studio & CLI configuration exposing tutor_graph and curriculum_pipeline DAGs", "json"),
     ],
     "04_BE_INGESTION_AND_DATA.txt": [
-        ("mvp_talker_offline/backend/knowledge_ingestor.py", "Textbook & PDF ingestion pipeline indexing Oxford Guide, Arihant Grammar, Espresso English, and narrative stories into SQLite & RAG", "python"),
-        ("mvp_talker_offline/backend/verify_phase1.py", "Automated test suite verifying RAG search, syllabus progression, quiz evaluation, and dispute handling", "python"),
-        ("mvp_talker_offline/backend/verify_phase2.py", "Automated test suite verifying embedding outage fallback, offline dispute, SQLite isomorphic audits, and learner state sync", "python"),
-        ("mvp_talker_offline/backend/verify_phase3.py", "Automated test suite verifying streaming STT capabilities, StreamingFasterWhisperAdapter, and VoiceTurnPriorityManager", "python"),
-        ("mvp_talker_offline/backend/verify_phase4.py", "Automated test suite verifying versioned GenUI schema ('1.0'), demonstrate_grammar_movement tool, and frontend motion integration", "python"),
-        ("mvp_talker_offline/backend/verify_phase5.py", "Automated test suite verifying in-flight reconnects, SQLite sheet persistence, get_last_sheet RPC, structured logging, and sheet_error surfacing", "python"),
-        ("mvp_talker_offline/backend/headless_console_test.py", "Headless CLI runner scripting milestone execution via LiveKit Agents fake_job_context with GenUI ANSI event cards and assertions", "python"),
+        ("mvp_talker_offline/backend/ingestion/__init__.py", "Ingestion package marker", "python"),
+        ("mvp_talker_offline/backend/ingestion/knowledge_ingestor.py", "Textbook & PDF ingestion pipeline indexing Oxford Guide, Arihant Grammar, Espresso English, and narrative stories into SQLite & RAG", "python"),
         ("mvp_talker_offline/data/curriculum.json", "Official 18-chapter English grammar curriculum definition with title, topics, rules, and coursework requirements", "json"),
         ("mvp_talker_offline/data/quiz_banks/chapter_01_bank.json", "Pre-verified milestone quiz bank schema for Chapter 1 (Present Simple & Continuous) with citations and explanations", "json"),
-    ]
+    ],
+    "05_BE_TESTS.txt": [
+        ("mvp_talker_offline/backend/tests/__init__.py", "Tests package marker", "python"),
+        ("mvp_talker_offline/backend/tests/verify_curriculum_engine.py", "Automated test suite verifying curriculum_store tables, variants, reconsideration, Pydantic authoring validation, GPUSessionArbiter concurrency gating, context injection, studio TTS, and LangGraph 8-node DAG", "python"),
+        ("mvp_talker_offline/backend/tests/verify_phase1.py", "Automated test suite verifying RAG search, syllabus progression, quiz evaluation, and dispute handling", "python"),
+        ("mvp_talker_offline/backend/tests/verify_phase2.py", "Automated test suite verifying embedding outage fallback, offline dispute, SQLite isomorphic audits, and learner state sync", "python"),
+        ("mvp_talker_offline/backend/tests/verify_phase3.py", "Automated test suite verifying streaming STT capabilities, StreamingFasterWhisperAdapter, and VoiceTurnPriorityManager", "python"),
+        ("mvp_talker_offline/backend/tests/verify_phase4.py", "Automated test suite verifying versioned GenUI schema ('1.0'), demonstrate_grammar_movement tool, and frontend motion integration", "python"),
+        ("mvp_talker_offline/backend/tests/verify_phase5.py", "Automated test suite verifying in-flight reconnects, SQLite sheet persistence, get_last_sheet RPC, structured logging, and sheet_error surfacing", "python"),
+        ("mvp_talker_offline/backend/tests/verify_langgraph_livekit.py", "Integration test suite verifying LangGraph tutor graph <-> LiveKit agent handshake: state transitions, checkpoint persistence, and voice-first turn-taking", "python"),
+        ("mvp_talker_offline/backend/tests/headless_console_test.py", "Headless CLI runner scripting milestone execution via LiveKit Agents fake_job_context with GenUI ANSI event cards and assertions", "python"),
+    ],
 }
 
 BE_OVERVIEW_MD = """# Backend Architecture & Overview (mvp_talker_offline)
 
 ## 1. Executive Summary
 **mvp_talker_offline** is a 100% locally-hosted, offline-capable Voice AI English Grammar Coach and simulator.
-It combines LiveKit Agents SDK, Faster-Whisper (CPU int8 STT), Piper (neural TTS), Ollama (`qwen2.5:3b`), in-process LiveKit function tools, and hybrid BM25 + vector RAG across authoritative grammar textbooks (Oxford Guide, Arihant English, Espresso English).
+It combines LiveKit Agents SDK, Faster-Whisper (CPU int8 STT), Piper/Kokoro (neural TTS), Ollama (`qwen2.5:7b`), in-process LiveKit function tools, and hybrid BM25 + vector RAG across authoritative grammar textbooks (Oxford Guide, Arihant English, Espresso English).
 
 ## 2. Phase 1 Architecture: In-Process Function Tools
 ```
              ┌──────── LiveKit Voice Agent (agent.py) ────────┐
-             │  • In-process function_tools:                  │
-             │    - query_grammar_rag                         │
-             │    - trigger_quiz                              │
-             │    - dispute_answer                            │
-             │    - get_learner_progress                      │
-             │    - generate_revision_notes                   │
-             │    - advance_chapter                           │
-             │  • LiveKit text streams on room:               │
-             │    - topic: 'transcript'                       │
-             │    - topic: 'genui'                            │
-             │  • Native RPC Handlers:                        │
-             │    - getSyllabus, getQuiz, submitQuizAnswer,   │
-             │      disputeAnswer, advanceChapter             │
+              • In-process function_tools:
+                - query_grammar_rag
+                - trigger_quiz
+                - dispute_answer
+                - get_learner_progress
+                - generate_revision_notes
+                - advance_chapter
+                - deliver_canvas_lecture
+                - request_reinterpretation
+              • LiveKit text streams on room:
+                - topic: 'transcript'
+                - topic: 'genui'
+              • Native RPC Handlers:
+                - getSyllabus, getQuiz, submitQuizAnswer,
+                  disputeAnswer, advanceChapter,
+                  deliverCanvasLecture, requestReinterpretation
              └───────┬───────────────────────────────┬────────┘
                      │ Direct python call            │ WebRTC Data / Streams
                      ▼                               ▼
@@ -215,29 +249,17 @@ It combines LiveKit Agents SDK, Faster-Whisper (CPU int8 STT), Piper (neural TTS
        │  - QuizEngine (Banks + Iso)   │     │  VisualsFrontend)             │
        │  - SyllabusTracker (SQLite)   │     └───────────────────────────────┘
        │  - SimulationEngine           │
+       │  - CurriculumStore (5 tables) │
+       │  - LangGraph Tutor (8 nodes)  │
        └─────────────┬─────────────────┘
                      │ HTTP (Audio Only)
                      ▼
        ┌───────────────────────────────┐
        │ audio_server.py (port 8880)   │
-       │  - /v1/audio/speech (Piper)   │
+       │  - /v1/audio/speech (Kokoro)  │
        │  - /api/token (JWT minting)   │
        └───────────────────────────────┘
 ```
-
-## 3. Key Subsystems
-1. **LiveKit Voice Agent (`backend/agent.py`)**:
-   - Audio Pipeline: StreamAdapter wrapping Faster-Whisper `tiny.en`, Silero VAD, and local Audio Turn Detector `v1-mini`.
-   - TTS: HTTP OpenAI-compatible endpoint provided by `audio_server.py` invoking Piper ONNX model (`en_US-lessac-medium`).
-   - In-Process Tools: Tools receive `RunContext` and push interactive GenUI cards (`QuizCard`, `BionicSketchNote`, `ContentionResolver`) directly to the WebRTC room via `send_room_text`.
-2. **Audio Server (`backend/audio_server.py`)**:
-   - Runs FastAPI on port 8880.
-   - Dedicated microservice: Piper TTS synthesis and LiveKit JWT access token minting.
-3. **Pedagogical Engines**:
-   - **`quiz_engine.py`**: Linear chapter progression, error counting, isomorphic problem repetition with audit logging to SQLite (`isomorphic_mutation_audit`).
-   - **`simulation_engine.py`**: Linguistic dispute resolution with offline local RAG fallback and dialect register analysis.
-   - **`syllabus_tracker.py`**: SQLite database interface (`memory.db`) storing learner state and curriculum progress.
-   - **`rag_store.py`**: BM25 + dense embedding vector index over textbook sections with explicit service outage logging.
 """
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -249,67 +271,42 @@ MASTER_README_MD = """# Codebase Context Export for LLMs
 This directory contains clean, structured, and chunked exports of the entire codebase for **Buddy — The Offline Voice AI English Grammar Coach**.
 
 The project is organized under the monorepo folder **`mvp_talker_offline/`**:
-- **`mvp_talker_offline/backend/`**: Python LiveKit Voice Agent, pedagogical engines, and audio microservice.
-- **`mvp_talker_offline/VisualsFrontend/`**: React 19 / TypeScript / Vite / Zustand conversational UI.
+- **`mvp_talker_offline/backend/`**: Python LiveKit Voice Agent with submodules: `core/`, `engines/`, `tutor/`, `ingestion/`, `tests/`.
+- **`mvp_talker_offline/VisualsFrontend/`**: React 19 / TypeScript / Vite / Zustand conversational UI with `components/layout/`, `components/cards/`, `components/syllabus/`.
 - **`mvp_talker_offline/data/`**: Curriculum schema, quiz banks, and narrative practice stories.
-- **`mvp_talker_offline/models/`**: Offline neural Piper TTS voice model.
+- **`mvp_talker_offline/models/`**: Offline neural Piper/Kokoro TTS voice models.
 
 ---
 
-## 1. ALL 3 FULL CODEBASE BUNDLES (Root Level)
+## 1. ALL 4 FULL CODEBASE BUNDLES (Root Level)
 
 For zero-navigation feeding into large-context LLMs (Claude 3.5 Sonnet, GPT-4o, Gemini 1.5/2.0 Pro):
 
 | Bundle File | Scope | Description |
 |---|---|---|
-| **`FULL_PROJECT_CODEBASE.txt`** | **Complete Project (BE + FE)** | All 32 source files across the entire backend and frontend in one file |
-| **`FULL_FRONTEND_CODEBASE.txt`** | **Full Frontend Stack** | All 18 frontend files (React 19, Zustand, LiveKit WebRTC, components) |
-| **`FULL_BACKEND_CODEBASE.txt`** | **Full Backend Stack** | All 14 backend files (LiveKit Agent, FastAPI audio, engines, data) |
+| **`FULL_PROJECT_CODEBASE.txt`** | **Complete Project (Specs + BE + FE)** | All design documents and active source files across the entire codebase |
+| **`FULL_FRONTEND_CODEBASE.txt`** | **Full Frontend Stack** | All frontend files (React 19, Zustand, LiveKit WebRTC, components) |
+| **`FULL_BACKEND_CODEBASE.txt`** | **Full Backend Stack** | All backend files (LiveKit Agent, FastAPI audio, engines, data) |
+| **`FULL_SPECS_AND_ARCHITECTURE.txt`** | **Architecture & Design Plans** | All architectural specs, curriculum engine coding plans, and doctrines |
 
 ---
 
 ## 2. ALL CHUNKS IN A SINGLE FOLDER (`chunks/`)
 
-For smaller context models (8k – 32k tokens) or targeted subagent prompts, all 6 chunks are unified in one directory:
+For smaller context models (8k – 32k tokens) or targeted subagent prompts, all 9 chunks are unified in one directory:
 
 ```
 codebase_llm_export/chunks/
-├── 01_BE_CORE_PIPELINE.txt          # agent.py, audio_server.py, Modelfile, requirements
-├── 02_BE_ENGINES.txt                # simulation_engine, quiz_engine, syllabus_tracker, rag_store
-├── 03_BE_INGESTION_AND_DATA.txt     # knowledge_ingestor, curriculum.json, chapter_01_bank
-├── 04_FE_CORE_AND_CONFIG.txt        # package.json, vite.config, tsconfig, index.html, index.css
-├── 05_FE_STATE_AND_SERVICES.txt     # types.ts, store.ts, useLiveKit.ts, bionic.ts
-└── 06_FE_CONVERSATIONAL_STAGE.txt   # App.tsx, Header, AudioDock, SlideOverDrawer, cards
+├── 00_ARCHITECTURE_AND_SPECS.txt     # buddy.md, implementation plans, pyproject.toml, READMEs
+├── 01_BE_CORE_PIPELINE.txt          # agent.py, core/config, core/audio_server, Modelfile, requirements
+├── 02_BE_ENGINES.txt                # engines/__init__, simulation_engine, quiz_engine, syllabus_tracker, rag_store
+├── 03_BE_LANGGRAPH_AND_TUTOR.txt    # tutor/langgraph_tutor_graph, curriculum_authoring, pipeline, jobs
+├── 04_BE_INGESTION_AND_DATA.txt     # ingestion/knowledge_ingestor, curriculum.json, chapter_01_bank
+├── 05_BE_TESTS.txt                  # tests/verify_curriculum_engine, verify_phase1-5, headless_console_test
+├── 06_FE_CORE_AND_CONFIG.txt        # package.json, vite.config, tsconfig, index.html, index.css, .mcp.json
+├── 07_FE_STATE_AND_SERVICES.txt     # types.ts, store.ts, useLiveKit.ts, bionic.ts
+└── 08_FE_CONVERSATIONAL_STAGE.txt   # App.tsx, layout/, cards/, syllabus/ components
 ```
-
----
-
-## 3. SEPARATED STACK DIRECTORIES (`frontend/` and `backend/`)
-
-For domain-specific development and targeted reviews:
-
-```
-codebase_llm_export/
-├── frontend/
-│   ├── 00_FRONTEND_OVERVIEW.md      # UI architecture, state model, component tree
-│   ├── 01_FE_CORE_AND_CONFIG.txt
-│   ├── 02_FE_STATE_AND_SERVICES.txt
-│   ├── 03_FE_CONVERSATIONAL_STAGE.txt
-│   └── FULL_FRONTEND_CODEBASE.txt
-└── backend/
-    ├── 00_BACKEND_OVERVIEW.md       # Agent pipeline, in-process tools, audio microservice
-    ├── 01_BE_CORE_PIPELINE.txt
-    ├── 02_BE_ENGINES.txt
-    ├── 03_BE_INGESTION_AND_DATA.txt
-    └── FULL_BACKEND_CODEBASE.txt
-```
-
----
-
-## How to Feed this to an LLM
-1. **End-to-End Tasks**: Load **`FULL_PROJECT_CODEBASE.txt`**.
-2. **Frontend Tasks**: Load **`FULL_FRONTEND_CODEBASE.txt`** (or chunks `04`, `05`, `06` in `chunks/`).
-3. **Backend Tasks**: Load **`FULL_BACKEND_CODEBASE.txt`** (or chunks `01`, `02`, `03` in `chunks/`).
 """
 
 def generate_exports():
@@ -324,10 +321,27 @@ def generate_exports():
     # Master README
     (EXPORT_DIR / "README.md").write_text(MASTER_README_MD.strip() + "\n", encoding="utf-8")
 
-    # Frontend Overview
+    # 1. Architecture & Specs Chunk
+    spec_chunk_contents = {}
+    full_spec_content = []
+    for chunk_filename, file_list in SPEC_CHUNKS.items():
+        chunk_content = []
+        for rel_path, purpose, lang in file_list:
+            block = format_file_block(rel_path, purpose, lang)
+            chunk_content.append(block)
+            full_spec_content.append(block)
+        text = "".join(chunk_content)
+        spec_chunk_contents[chunk_filename] = text
+        (CHUNKS_DIR / chunk_filename).write_text(text, encoding="utf-8")
+        print(f"  [Spec Chunk] Wrote {chunk_filename} ({len(file_list)} files)")
+
+    full_spec_str = "".join(full_spec_content)
+    (EXPORT_DIR / "FULL_SPECS_AND_ARCHITECTURE.txt").write_text(full_spec_str, encoding="utf-8")
+    print(f"  [Spec Bundle] Wrote FULL_SPECS_AND_ARCHITECTURE.txt ({len(full_spec_content)} files total)")
+
+    # 2. Frontend Overview & Chunks
     (FE_DIR / "00_FRONTEND_OVERVIEW.md").write_text(FE_OVERVIEW_MD.strip() + "\n", encoding="utf-8")
 
-    # Frontend Chunks
     full_fe_content = []
     fe_chunk_contents = {}
     for chunk_filename, file_list in FE_CHUNKS.items():
@@ -346,10 +360,9 @@ def generate_exports():
     (EXPORT_DIR / "FULL_FRONTEND_CODEBASE.txt").write_text(full_fe_str, encoding="utf-8")
     print(f"  [FE Bundle] Wrote FULL_FRONTEND_CODEBASE.txt ({len(full_fe_content)} files total)")
 
-    # Backend Overview
+    # 3. Backend Overview & Chunks
     (BE_DIR / "00_BACKEND_OVERVIEW.md").write_text(BE_OVERVIEW_MD.strip() + "\n", encoding="utf-8")
 
-    # Backend Chunks
     full_be_content = []
     be_chunk_contents = {}
     for chunk_filename, file_list in BE_CHUNKS.items():
@@ -368,32 +381,35 @@ def generate_exports():
     (EXPORT_DIR / "FULL_BACKEND_CODEBASE.txt").write_text(full_be_str, encoding="utf-8")
     print(f"  [BE Bundle] Wrote FULL_BACKEND_CODEBASE.txt ({len(full_be_content)} files total)")
 
-    # Combined Master Bundle (BE + FE Together)
+    # 4. Combined Master Bundle (Specs + BE + FE)
     combined_project_header = (
         "=" * 80 + "\n"
         "BUDDY CONVERSATIONAL VOICE AI & GENERATIVE UI — COMPLETE PROJECT EXPORT\n"
-        "INCLUDES: BACKEND (LiveKit Agent, Engines, Pipeline) & FRONTEND (React 19 Canvas UI)\n"
+        "INCLUDES: ARCHITECTURE & SPECS, BACKEND (LiveKit Agent, Engines, Pipeline) & FRONTEND (React 19 Canvas UI)\n"
         "=" * 80 + "\n\n"
     )
-    combined_project_content = combined_project_header + full_be_str + full_fe_str
+    combined_project_content = combined_project_header + full_spec_str + full_be_str + full_fe_str
     (EXPORT_DIR / "FULL_PROJECT_CODEBASE.txt").write_text(combined_project_content, encoding="utf-8")
-    print(f"  [Combined Project Bundle] Wrote FULL_PROJECT_CODEBASE.txt ({len(full_be_content) + len(full_fe_content)} files total)")
+    total_files = len(full_spec_content) + len(full_be_content) + len(full_fe_content)
+    print(f"  [Combined Project Bundle] Wrote FULL_PROJECT_CODEBASE.txt ({total_files} files total)")
 
-    # Consolidated Single 'chunks/' Directory — 7 chunks: 4 BE + 3 FE
+    # 5. Consolidated Single 'chunks/' Directory — 9 chunks: 1 Spec + 5 BE + 3 FE
     all_chunks_map = {
+        "00_ARCHITECTURE_AND_SPECS.txt":  spec_chunk_contents["00_ARCHITECTURE_AND_SPECS.txt"],
         "01_BE_CORE_PIPELINE.txt":        be_chunk_contents["01_BE_CORE_PIPELINE.txt"],
         "02_BE_ENGINES.txt":              be_chunk_contents["02_BE_ENGINES.txt"],
         "03_BE_LANGGRAPH_AND_TUTOR.txt":  be_chunk_contents["03_BE_LANGGRAPH_AND_TUTOR.txt"],
         "04_BE_INGESTION_AND_DATA.txt":   be_chunk_contents["04_BE_INGESTION_AND_DATA.txt"],
-        "05_FE_CORE_AND_CONFIG.txt":      fe_chunk_contents["01_FE_CORE_AND_CONFIG.txt"],
-        "06_FE_STATE_AND_SERVICES.txt":   fe_chunk_contents["02_FE_STATE_AND_SERVICES.txt"],
-        "07_FE_CONVERSATIONAL_STAGE.txt": fe_chunk_contents["03_FE_CONVERSATIONAL_STAGE.txt"],
+        "05_BE_TESTS.txt":               be_chunk_contents["05_BE_TESTS.txt"],
+        "06_FE_CORE_AND_CONFIG.txt":      fe_chunk_contents["01_FE_CORE_AND_CONFIG.txt"],
+        "07_FE_STATE_AND_SERVICES.txt":   fe_chunk_contents["02_FE_STATE_AND_SERVICES.txt"],
+        "08_FE_CONVERSATIONAL_STAGE.txt": fe_chunk_contents["03_FE_CONVERSATIONAL_STAGE.txt"],
     }
     for chunk_name, chunk_text in all_chunks_map.items():
         (CHUNKS_DIR / chunk_name).write_text(chunk_text, encoding="utf-8")
         print(f"  [Consolidated Chunk] Wrote chunks/{chunk_name}")
 
-    print(f"\nExport complete! Files written to:\n  {EXPORT_DIR}")
+    print(f"\nExport complete! {total_files} files packaged across 9 chunks into:\n  {EXPORT_DIR}")
 
 if __name__ == "__main__":
     generate_exports()

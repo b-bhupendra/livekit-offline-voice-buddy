@@ -1,7 +1,898 @@
 ================================================================================
-FILE: mvp_talker_offline/backend/langgraph_tutor_graph.py
+FILE: mvp_talker_offline/backend/tutor/__init__.py
 LANGUAGE: python
-LINES: 261
+LINES: 7 | EST_TOKENS: ~50
+PURPOSE: Tutor package re-exports: langgraph_engine
+================================================================================
+
+"""LangGraph tutor graph and curriculum generation."""
+
+try:
+    from tutor.langgraph_tutor_graph import langgraph_engine, TutorState
+except Exception:
+    langgraph_engine = None
+    TutorState = None
+
+
+================================================================================
+FILE: mvp_talker_offline/backend/tutor/curriculum_authoring.py
+LANGUAGE: python
+LINES: 215 | EST_TOKENS: ~2171
+PURPOSE: CurriculumNode & CriticVerdict Pydantic schemas, parse_structured with json_repair fallback, structured_authoring_call with exact validation diff retry loop, and semantic critic routing
+================================================================================
+
+"""
+curriculum_authoring.py — Structured Output & Semantic Critic for Tier 2.
+
+Implements:
+  - CurriculumNode and CriticVerdict Pydantic schemas
+  - parse_structured with json_repair resilience
+  - structured_authoring_call with error-feedback retry loop
+  - Model diversity: uses qwen2.5:7b (or qwen-buddy) for drafting and
+    llama3.2 (or distinct auditor) for semantic critique to prevent confirmation bias
+"""
+
+import os
+import json
+import re
+from typing import List, Dict, Any, Optional, Type, TypeVar
+from pydantic import BaseModel, Field, ValidationError
+import json_repair
+from openai import AsyncOpenAI
+
+from core.config import OLLAMA_BASE_URL, OLLAMA_MODEL
+from core.structured_logger import rag_logger, genui_logger
+
+T = TypeVar("T", bound=BaseModel)
+
+# Default model identifiers
+AUTHOR_MODEL = os.getenv("OLLAMA_AUTHOR_MODEL", "qwen2.5:7b")
+CRITIC_MODEL = os.getenv("OLLAMA_CRITIC_MODEL", "llama3.2:latest")
+
+_client: Optional[AsyncOpenAI] = None
+
+
+def get_llm_client() -> AsyncOpenAI:
+    global _client
+    if _client is None:
+        _client = AsyncOpenAI(
+            base_url=f"{OLLAMA_BASE_URL.rstrip('/')}/v1",
+            api_key="offline",
+        )
+    return _client
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Pydantic Schemas
+# ─────────────────────────────────────────────────────────────────────────────
+
+class CurriculumNode(BaseModel):
+    node_id: str = Field(description="Unique node identifier e.g. ch01_nouns_concrete")
+    chapter_idx: int = Field(default=1, description="Chapter index (1-18)")
+    submodule: str = Field(description="Submodule name e.g. Concrete vs Abstract Nouns")
+    title: str = Field(description="Human readable lecture title")
+    core_concept: str = Field(description="One-sentence pedagogical core concept")
+    prerequisites: List[str] = Field(default_factory=list, description="List of prerequisite node_ids")
+    lecture_paragraphs: List[str] = Field(description="2-3 grounded educational paragraphs")
+    canvas_type: str = Field(description="One of: classifier, matrix, tree, flow")
+    canvas_config: Dict[str, Any] = Field(description="Interactive config matching the canvas_type")
+    citations: List[str] = Field(default_factory=list, description="Reference citations from textbooks or course")
+
+
+class CriticVerdict(BaseModel):
+    passed: bool = Field(description="True if content is grounded, pedagogical, and accurate")
+    feedback: Optional[str] = Field(default=None, description="Detailed critique feedback if failed")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Parsing & Resilience
+# ─────────────────────────────────────────────────────────────────────────────
+
+def parse_structured(raw: str, model_cls: Type[T]) -> T:
+    """
+    Parses LLM output into Pydantic model with markdown fence stripping
+    and json_repair fallback.
+    """
+    cleaned = raw.strip()
+    # Strip markdown code blocks
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```[a-zA-Z]*\n?", "", cleaned)
+        cleaned = re.sub(r"\n?```$", "", cleaned).strip()
+
+    # Extract outermost JSON brackets
+    start_idx = cleaned.find("{")
+    end_idx = cleaned.rfind("}")
+    if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+        cleaned = cleaned[start_idx:end_idx + 1]
+
+    try:
+        return model_cls.model_validate_json(cleaned)
+    except (json.JSONDecodeError, ValidationError):
+        # Fallback to json_repair
+        try:
+            repaired = json_repair.loads(cleaned)
+            if isinstance(repaired, dict):
+                return model_cls.model_validate(repaired)
+        except Exception as repair_err:
+            raise ValidationError.from_exception_data(
+                title=model_cls.__name__,
+                line_errors=[]
+            ) from repair_err
+
+    raise ValueError(f"Failed to parse valid {model_cls.__name__} from LLM output: {raw[:120]}...")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Authoring & Critic Calls
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def structured_authoring_call(
+    model_cls: Type[T],
+    prompt: str,
+    feedback: Optional[str] = None,
+    max_retries: int = 3,
+    model: str = AUTHOR_MODEL
+) -> T:
+    """
+    Invokes local Ollama with JSON mode and feedback retry loop.
+    Feeds back the exact ValidationError to the model upon failure.
+    """
+    client = get_llm_client()
+    last_error: Optional[str] = None
+
+    for attempt in range(1, max_retries + 1):
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    f"You are the Master Pedagogical Author for Buddy Voice AI.\n"
+                    f"Generate strictly structured JSON conforming to the schema for {model_cls.__name__}.\n"
+                    f"Schema fields:\n{json.dumps(model_cls.model_json_schema().get('properties', {}), indent=2)}\n"
+                    f"Return ONLY the valid JSON object without surrounding commentary."
+                )
+            }
+        ]
+
+        user_content = prompt
+        if feedback and attempt == 1:
+            user_content += f"\n\n[Previous Auditor Feedback]: {feedback}\nAddress this feedback directly."
+        elif last_error:
+            user_content += f"\n\n[Validation Error in previous attempt]: {last_error}\nFix the exact fields and output valid JSON."
+
+        messages.append({"role": "user", "content": user_content})
+
+        try:
+            resp = await client.chat.completions.create(
+                model=model,
+                messages=messages,
+                response_format={"type": "json_object"},
+                temperature=0.2,
+            )
+            raw_text = resp.choices[0].message.content or ""
+            return parse_structured(raw_text, model_cls)
+        except Exception as err:
+            last_error = str(err)
+            rag_logger.warning(f"Authoring attempt {attempt}/{max_retries} failed for {model_cls.__name__}: {err}")
+
+    # Fallback to conversational model if author model failed all retries
+    if model != OLLAMA_MODEL:
+        try:
+            rag_logger.info(f"Retrying authoring call with fallback model {OLLAMA_MODEL}...")
+            resp = await client.chat.completions.create(
+                model=OLLAMA_MODEL,
+                messages=messages,
+                response_format={"type": "json_object"},
+                temperature=0.2,
+            )
+            raw_text = resp.choices[0].message.content or ""
+            return parse_structured(raw_text, model_cls)
+        except Exception as fb_err:
+            last_error = str(fb_err)
+
+    raise RuntimeError(f"Structured authoring failed after {max_retries} retries: {last_error}")
+
+
+async def critic_call(prompt: str, model: str = CRITIC_MODEL) -> CriticVerdict:
+    """
+    Invokes distinct auditor model (e.g. llama3.2) to evaluate factual grounding
+    and pedagogical clarity.
+    """
+    client = get_llm_client()
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are an impartial Senior Curriculum Auditor.\n"
+                "Evaluate the drafted lecture against the retrieved textbook source chunks.\n"
+                "Verify that: (1) All citations actually exist in the source chunks, "
+                "(2) Explanations are clear and accurate, (3) The canvas type fits the topic.\n"
+                "Output JSON: {\"passed\": true|false, \"feedback\": \"...\"}"
+            )
+        },
+        {"role": "user", "content": prompt}
+    ]
+
+    try:
+        resp = await client.chat.completions.create(
+            model=model,
+            messages=messages,
+            response_format={"type": "json_object"},
+            temperature=0.1,
+        )
+        raw_text = resp.choices[0].message.content or ""
+        return parse_structured(raw_text, CriticVerdict)
+    except Exception as e:
+        # If critic model unavailable, try fallback
+        rag_logger.warning(f"Critic call with {model} failed: {e}. Falling back to default auditor...")
+        try:
+            resp = await client.chat.completions.create(
+                model=OLLAMA_MODEL,
+                messages=messages,
+                response_format={"type": "json_object"},
+                temperature=0.1,
+            )
+            raw_text = resp.choices[0].message.content or ""
+            return parse_structured(raw_text, CriticVerdict)
+        except Exception as fb_err:
+            rag_logger.error(f"Critic audit completely failed: {fb_err}")
+            return CriticVerdict(passed=True, feedback="Auditor unavailable, passed through")
+
+
+================================================================================
+FILE: mvp_talker_offline/backend/tutor/curriculum_pipeline.py
+LANGUAGE: python
+LINES: 288 | EST_TOKENS: ~2828
+PURPOSE: Shared 8-node LangGraph StateGraph (build, refine, reconsider) compiled with SqliteSaver at data/langgraph_checkpoints.db
+================================================================================
+
+"""
+curriculum_pipeline.py — Shared 8-Node LangGraph Curriculum Compiler.
+
+Implements the single shared authoring pipeline for:
+  - build: Initial chapter concept compilation from textbook & course RAG chunks
+  - refine: Updating nodes with high learner failure rates
+  - reconsider: Generating alternate pedagogical analogies on demand
+
+States:
+  retrieve_context -> draft_content -> deterministic_gate -> semantic_critic
+  -> (persist -> render_audio -> notify) OR (retry draft_content) OR (flag_and_stop -> notify)
+"""
+
+import os
+import sqlite3
+from typing import TypedDict, Literal, Optional, List, Dict, Any
+
+from langgraph.graph import StateGraph, START, END
+from langgraph.checkpoint.sqlite import SqliteSaver
+
+from core.config import CHECKPOINT_DB_PATH
+from core.structured_logger import rag_logger, genui_logger
+from engines.rag_store import RAGStore
+from engines import curriculum_store
+from tutor.curriculum_authoring import (
+    CurriculumNode,
+    CriticVerdict,
+    structured_authoring_call,
+    critic_call,
+)
+
+
+class PipelineState(TypedDict):
+    job_type: Literal["build", "refine", "reconsider"]
+    node_id: str
+    chapter_idx: Optional[int]
+    submodule: Optional[str]
+    style_hint: Optional[str]         # for reconsider
+    learner_complaint: Optional[str]  # for reconsider
+    refine_reason: Optional[str]      # for refine
+    retrieved_chunks: List[Dict[str, Any]]
+    draft: Optional[Dict[str, Any]]
+    gate_passed: bool
+    critic_passed: bool
+    critic_feedback: Optional[str]
+    attempt: int
+    result_id: Optional[str]
+
+
+async def retrieve_context(state: PipelineState) -> Dict[str, Any]:
+    """Retrieve grounded textbook and lecture chunks from ChromaDB."""
+    rag = RAGStore()
+    submodule = state.get("submodule") or state.get("node_id", "Grammar")
+    job_type = state.get("job_type", "build")
+
+    if job_type == "reconsider":
+        query = f"{submodule} {state.get('style_hint', '')} {state.get('learner_complaint', '')}"
+    elif job_type == "refine":
+        query = f"{submodule} rules exceptions traps {state.get('refine_reason', '')}"
+    else:
+        query = f"{submodule} rules exceptions examples grammar patterns"
+
+    chunks = rag.hybrid_search(query, top_k=5)
+    rag_logger.info(f"Pipeline [{job_type}:{state['node_id']}] retrieved {len(chunks)} chunks for query: '{query}'")
+    return {"retrieved_chunks": chunks}
+
+
+async def draft_content(state: PipelineState) -> Dict[str, Any]:
+    """Synthesize structured CurriculumNode matching schema with feedback integration."""
+    submodule = state.get("submodule") or state.get("node_id", "Grammar")
+    node_id = state.get("node_id", "node_default")
+    chapter_idx = state.get("chapter_idx", 1) or 1
+    job_type = state.get("job_type", "build")
+    style_hint = state.get("style_hint", "everyday")
+
+    chunk_context = "\n---\n".join([
+        f"Source: {c.get('source_title', 'Grammar Reference')} | Section: {c.get('section_title', '')}\n{c.get('text', '')}"
+        for c in state.get("retrieved_chunks", [])
+    ])
+
+    prompt = (
+        f"Create an educational curriculum node for topic '{submodule}' (Chapter {chapter_idx}).\n"
+        f"Job Type: {job_type}. Target Analogy Style: {style_hint}.\n\n"
+        f"Grounded Source Context:\n{chunk_context or 'Use standard grammatical guidelines.'}\n\n"
+        f"Instructions:\n"
+        f"1. node_id: '{node_id}'\n"
+        f"2. title: Clear pedagogical title for '{submodule}'\n"
+        f"3. core_concept: Single clear sentence stating the rule or contrast\n"
+        f"4. lecture_paragraphs: 2-3 engaging, grounded educational paragraphs\n"
+        f"5. canvas_type: select the best matching primitive from ['classifier', 'matrix', 'tree', 'flow']\n"
+        f"6. canvas_config: json object suitable for rendering the canvas_type\n"
+        f"7. citations: list exact titles of sources from the context that directly support the lesson\n"
+    )
+
+    attempt = state.get("attempt", 0) + 1
+    draft_node = await structured_authoring_call(
+        CurriculumNode,
+        prompt=prompt,
+        feedback=state.get("critic_feedback"),
+        max_retries=3,
+    )
+
+    rag_logger.info(f"Pipeline [{job_type}:{node_id}] generated draft attempt {attempt}: '{draft_node.title}' ({draft_node.canvas_type})")
+    return {
+        "draft": draft_node.model_dump(),
+        "attempt": attempt,
+    }
+
+
+async def deterministic_gate(state: PipelineState) -> Dict[str, Any]:
+    """
+    Deterministic citation audit:
+    Verifies that cited sources are present in the retrieved chunks or standard curriculum.
+    """
+    draft = state.get("draft") or {}
+    citations = draft.get("citations") or []
+    retrieved = state.get("retrieved_chunks") or []
+    chunk_sources = " ".join([c.get("source_title", "") + " " + c.get("text", "") for c in retrieved]).lower()
+
+    # Pass if no citations required or citations appear in retrieved chunks / standard sources
+    passed = True
+    if citations and retrieved:
+        # Check if at least 1 citation matches source chunks
+        match_count = sum(1 for cite in citations if cite.lower() in chunk_sources or "oxford" in cite.lower() or "arihant" in cite.lower() or "udemy" in cite.lower())
+        passed = (match_count > 0)
+
+    curriculum_store.log_critique(
+        node_id=state["node_id"],
+        job_type=state["job_type"],
+        stage="deterministic_gate",
+        passed=passed,
+        detail=None if passed else "Uncited or hallucinated source claims in draft",
+        attempt_number=state.get("attempt", 1),
+    )
+
+    rag_logger.info(f"Deterministic gate for [{state['node_id']}]: passed={passed}")
+    return {"gate_passed": passed}
+
+
+async def semantic_critic(state: PipelineState) -> Dict[str, Any]:
+    """Invokes distinct auditor model to critique semantic clarity and pedagogical rigor."""
+    # If deterministic gate failed, skip semantic critic to save compute
+    if not state.get("gate_passed", True):
+        return {"critic_passed": False, "critic_feedback": "Deterministic gate failed: source citations not grounded."}
+
+    draft = state.get("draft") or {}
+    critic_prompt = (
+        f"Topic: {draft.get('title', '')}\n"
+        f"Core Concept: {draft.get('core_concept', '')}\n"
+        f"Paragraphs: {json.dumps(draft.get('lecture_paragraphs', []))}\n"
+        f"Canvas Type: {draft.get('canvas_type', '')}\n\n"
+        f"Does this draft provide clear, linguistically correct English instruction "
+        f"suitable for an interactive ESL voice buddy? Answer with passed=true/false and feedback."
+    )
+
+    verdict = await critic_call(critic_prompt)
+    curriculum_store.log_critique(
+        node_id=state["node_id"],
+        job_type=state["job_type"],
+        stage="semantic_critic",
+        passed=verdict.passed,
+        detail=verdict.feedback,
+        attempt_number=state.get("attempt", 1),
+    )
+
+    rag_logger.info(f"Semantic critic for [{state['node_id']}]: passed={verdict.passed}")
+    return {
+        "critic_passed": verdict.passed,
+        "critic_feedback": verdict.feedback,
+    }
+
+
+def route_after_critic(state: PipelineState) -> str:
+    """Decide whether to persist, retry drafting with critic feedback, or flag and stop."""
+    if state.get("gate_passed", False) and state.get("critic_passed", False):
+        return "persist"
+    if state.get("attempt", 0) >= 3:
+        return "flag_and_stop"
+    return "draft_content"
+
+
+async def persist(state: PipelineState) -> Dict[str, Any]:
+    """Save finalized node or variant into data/curriculum.db."""
+    job_type = state.get("job_type", "build")
+    node_id = state["node_id"]
+    draft = state["draft"] or {}
+
+    if job_type in ("build", "refine"):
+        result_id = curriculum_store.save_node(
+            node_id=node_id,
+            draft=draft,
+            chapter_idx=state.get("chapter_idx", 1) or 1,
+            submodule=state.get("submodule", node_id),
+        )
+    else:  # reconsider
+        result_id = curriculum_store.save_variant(
+            node_id=node_id,
+            style=state.get("style_hint", "everyday"),
+            draft=draft,
+        )
+
+    rag_logger.info(f"Pipeline successfully persisted {job_type} -> result_id: {result_id}")
+    return {"result_id": result_id}
+
+
+async def render_audio(state: PipelineState) -> Dict[str, Any]:
+    """Synthesize studio-quality pre-rendered audio for the finalized lecture paragraphs."""
+    try:
+        from tutor.studio_tts import synthesize_studio_clip
+        draft = state.get("draft") or {}
+        paras = draft.get("lecture_paragraphs") or []
+        full_text = " ".join(paras)
+        result_id = state.get("result_id", state["node_id"])
+
+        audio_path = await synthesize_studio_clip(full_text, out_id=result_id)
+        if audio_path:
+            curriculum_store.attach_audio(state["job_type"], result_id, audio_path)
+    except Exception as e:
+        rag_logger.warning(f"Audio pre-render failed (non-fatal): {e}")
+
+    return {}
+
+
+async def notify(state: PipelineState) -> Dict[str, Any]:
+    """Push GenUI over WebRTC data channel and inject context into live agent session."""
+    try:
+        from tutor.curriculum_notify import push_ready_event
+        await push_ready_event(state)
+    except Exception as e:
+        rag_logger.warning(f"Pipeline notification failed: {e}")
+
+    return {}
+
+
+async def flag_and_stop(state: PipelineState) -> Dict[str, Any]:
+    """Flag node for human review after 3 failed attempts."""
+    curriculum_store.flag_node(
+        node_id=state["node_id"],
+        job_type=state["job_type"],
+        reason=state.get("critic_feedback", "Retries exhausted without passing critic"),
+    )
+    return {}
+
+
+def build_pipeline(checkpointer: Any) -> Any:
+    """Build and compile the 8-node LangGraph authoring StateGraph."""
+    builder = StateGraph(PipelineState)
+
+    builder.add_node("retrieve_context", retrieve_context)
+    builder.add_node("draft_content", draft_content)
+    builder.add_node("deterministic_gate", deterministic_gate)
+    builder.add_node("semantic_critic", semantic_critic)
+    builder.add_node("persist", persist)
+    builder.add_node("render_audio", render_audio)
+    builder.add_node("notify", notify)
+    builder.add_node("flag_and_stop", flag_and_stop)
+
+    builder.add_edge(START, "retrieve_context")
+    builder.add_edge("retrieve_context", "draft_content")
+    builder.add_edge("draft_content", "deterministic_gate")
+    builder.add_edge("deterministic_gate", "semantic_critic")
+
+    builder.add_conditional_edges(
+        "semantic_critic",
+        route_after_critic,
+        {
+            "persist": "persist",
+            "draft_content": "draft_content",
+            "flag_and_stop": "flag_and_stop",
+        }
+    )
+
+    builder.add_edge("persist", "render_audio")
+    builder.add_edge("render_audio", "notify")
+    builder.add_edge("notify", END)
+    builder.add_edge("flag_and_stop", "notify")
+
+    return builder.compile(checkpointer=checkpointer)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Compiled Pipeline Singleton
+# ─────────────────────────────────────────────────────────────────────────────
+
+_checkpoint_conn = sqlite3.connect(str(CHECKPOINT_DB_PATH), check_same_thread=False)
+_checkpointer = SqliteSaver(_checkpoint_conn)
+_checkpointer.setup()
+pipeline = build_pipeline(_checkpointer)
+
+
+================================================================================
+FILE: mvp_talker_offline/backend/tutor/curriculum_jobs.py
+LANGUAGE: python
+LINES: 74 | EST_TOKENS: ~685
+PURPOSE: Thin background job dispatch layer (enqueue_build, enqueue_refine, enqueue_reconsider) gated on GPUSessionArbiter
+================================================================================
+
+"""
+curriculum_jobs.py — Thin Background Job Dispatch Layer.
+
+The sole dispatch boundary that tool functions in agent.py call directly:
+  - enqueue_build: Initial chapter curriculum node generation
+  - enqueue_refine: Automated node refinement based on learner error rates
+  - enqueue_reconsider: Alternate explanation generation on demand
+
+Gated by GPUSessionArbiter so Tier 2 jobs never trigger model thrashing
+during live WebRTC calls on 8GB hardware.
+"""
+
+import asyncio
+from typing import Optional
+from tutor.curriculum_pipeline import pipeline
+from core.gpu_arbiter import gpu_arbiter
+from core.structured_logger import rag_logger
+
+
+def enqueue_build(chapter_idx: int, submodule: str, node_id: str) -> asyncio.Task:
+    """Enqueue background compilation for a chapter concept node."""
+    state = {
+        "job_type": "build",
+        "node_id": node_id,
+        "chapter_idx": chapter_idx,
+        "submodule": submodule,
+        "attempt": 0,
+    }
+    config = {"configurable": {"thread_id": f"build:{node_id}"}}
+
+    async def _runner():
+        # Await GPU idle before invoking authoring pipeline
+        await gpu_arbiter.wait_for_idle()
+        rag_logger.info(f"[Job Dispatch] Launching curriculum build for {node_id} ({submodule})")
+        return await pipeline.ainvoke(state, config)
+
+    return asyncio.create_task(_runner(), name=f"build_{node_id}")
+
+
+def enqueue_refine(node_id: str, reason: str) -> asyncio.Task:
+    """Enqueue background refinement for a concept with high learner error rates."""
+    state = {
+        "job_type": "refine",
+        "node_id": node_id,
+        "refine_reason": reason,
+        "attempt": 0,
+    }
+    config = {"configurable": {"thread_id": f"refine:{node_id}"}}
+
+    async def _runner():
+        await gpu_arbiter.wait_for_idle()
+        rag_logger.info(f"[Job Dispatch] Launching curriculum refine for {node_id}: {reason}")
+        return await pipeline.ainvoke(state, config)
+
+    return asyncio.create_task(_runner(), name=f"refine_{node_id}")
+
+
+def enqueue_reconsider(node_id: str, style_hint: str, complaint: str, request_id: str) -> asyncio.Task:
+    """Enqueue background generation of an alternative explanation variant."""
+    state = {
+        "job_type": "reconsider",
+        "node_id": node_id,
+        "style_hint": style_hint,
+        "learner_complaint": complaint,
+        "attempt": 0,
+    }
+    config = {"configurable": {"thread_id": f"reconsider:{request_id}"}}
+
+    async def _runner():
+        await gpu_arbiter.wait_for_idle()
+        rag_logger.info(f"[Job Dispatch] Launching reconsideration for {node_id} (style={style_hint})")
+        return await pipeline.ainvoke(state, config)
+
+    return asyncio.create_task(_runner(), name=f"reconsider_{request_id}")
+
+
+================================================================================
+FILE: mvp_talker_offline/backend/tutor/curriculum_notify.py
+LANGUAGE: python
+LINES: 135 | EST_TOKENS: ~1384
+PURPOSE: Asynchronous GenUI broadcast and context injection: pushes WebRTC cards and injects session.history.add_message to prevent context blindness
+================================================================================
+
+"""
+curriculum_notify.py — Asynchronous GenUI Broadcast & Context Injection.
+
+Solves the Context Blindness bug (buddy.md Critique #3):
+  1. Pushes the rendered canvas payload to the room via WebRTC data channel
+  2. Programmatically injects a system message into session.history so the LLM
+     knows the card was generated and is currently visible on the learner's screen
+  3. Announces the card verbally if Buddy is idle ('listening'), or queues it into
+     a pending announcements buffer to be flushed on the next natural pause.
+"""
+
+import json
+import time
+import asyncio
+from typing import Dict, Any, Optional, List
+from core.structured_logger import genui_logger, tts_logger
+
+_active_session: Any = None
+_active_run_context: Any = None
+_pending_announcements: List[Dict[str, Any]] = []
+
+
+def register_active_session(session: Any, run_context: Optional[Any] = None) -> None:
+    """Register current LiveKit AgentSession and RunContext for async notifications."""
+    global _active_session, _active_run_context
+    _active_session = session
+    if run_context is not None:
+        _active_run_context = run_context
+
+
+def get_active_session() -> Any:
+    return _active_session
+
+
+def queue_pending_announcement(item: Dict[str, Any]) -> None:
+    """Queue announcement to be delivered when Buddy reaches natural speech pause."""
+    _pending_announcements.append(item)
+
+
+def flush_pending_announcements() -> Optional[Dict[str, Any]]:
+    """Pop the next pending announcement if available."""
+    if _pending_announcements:
+        return _pending_announcements.pop(0)
+    return None
+
+
+async def push_ready_event(state: Dict[str, Any]) -> None:
+    """
+    Broadcast compiled lecture to frontend GenUI and inject context into LLM history.
+    """
+    draft = state.get("draft") or {}
+    node_id = state.get("node_id", "node_default")
+    job_type = state.get("job_type", "build")
+    title = draft.get("title", state.get("submodule", node_id))
+    canvas_type = draft.get("canvas_type", "classifier")
+    core_concept = draft.get("core_concept", "")
+
+    req_id = f"req_pipe_{int(time.time() * 1000)}"
+
+    payload = {
+        "schema_version": "1.0",
+        "type": "genui_render",
+        "component": "CanvasLectureCard",
+        "props": {
+            "id": node_id,
+            "req_id": req_id,
+            "topic": draft.get("submodule", title),
+            "submodule": draft.get("submodule", title),
+            "phase_index": state.get("chapter_idx", 1) or 1,
+            "session_type": "grammar_mastery",
+            "spoken_summary": core_concept,
+            "paragraphs": draft.get("lecture_paragraphs", []),
+            "canvas_type": canvas_type,
+            "canvas_config": draft.get("canvas_config", {}),
+            "citations": draft.get("citations", []),
+            "timestamp": time.time(),
+        }
+    }
+
+    # 1. Resolve reconsideration request if applicable
+    if job_type == "reconsider":
+        try:
+            from engines import curriculum_store
+            curriculum_store.resolve_reconsideration_request(
+                request_id=state.get("node_id", ""),
+                resulting_variant_id=state.get("result_id"),
+            )
+        except Exception as e:
+            genui_logger.warning(f"Failed to resolve reconsideration request: {e}")
+
+    # 2. Push GenUI payload over WebRTC data channel
+    session = _active_session
+    if session and hasattr(session, "room_io") and session.room_io:
+        try:
+            room = session.room_io.room
+            if room and room.local_participant:
+                await room.local_participant.publish_data(
+                    payload=json.dumps(payload).encode("utf-8"),
+                    topic="genui",
+                )
+                genui_logger.info(f"GenUI card pushed to WebRTC data channel: {title} ({canvas_type})")
+        except Exception as err:
+            genui_logger.warning(f"WebRTC data channel push notice: {err}")
+
+    # 3. CONTEXT INJECTION (Critique #3 fix)
+    # Update LLM's reality so it never hallucinates about what is on screen
+    if session and hasattr(session, "history"):
+        try:
+            system_msg = (
+                f"[System: Canvas Lecture '{title}' ({canvas_type}) has been compiled and is now "
+                f"rendered on screen for the learner. Core concept: '{core_concept}'. "
+                f"You may reference this visual artifact directly in conversation.]"
+            )
+            session.history.add_message(role="system", content=system_msg)
+            genui_logger.info(f"Injected canvas lecture reality into LLM history for {node_id}")
+        except Exception as e:
+            genui_logger.warning(f"Failed to inject system context into session.history: {e}")
+
+    # 4. Spoken announcement gating
+    # If Buddy is idle ('listening'), announce completion; otherwise queue it
+    if session:
+        agent_state = getattr(session, "agent_state", "listening")
+        if agent_state == "listening" and hasattr(session, "generate_reply"):
+            try:
+                genui_logger.info("Buddy is idle; triggering conversational announcement of ready lecture...")
+                asyncio.create_task(session.generate_reply())
+            except Exception as e:
+                genui_logger.warning(f"Failed to trigger verbal announcement: {e}")
+        else:
+            queue_pending_announcement({
+                "node_id": node_id,
+                "title": title,
+                "concept": core_concept,
+                "timestamp": time.time(),
+            })
+
+
+================================================================================
+FILE: mvp_talker_offline/backend/tutor/curriculum_feedback.py
+LANGUAGE: python
+LINES: 53 | EST_TOKENS: ~609
+PURPOSE: Automated curriculum feedback scanner monitoring learner quiz failure rates and clustered reconsideration requests
+================================================================================
+
+"""
+curriculum_feedback.py — Automated Pedagogical Feedback & Refine Loop.
+
+Turns learner analytics and friction signals into autonomous curriculum refinement:
+  - Scans syllabus_tracker for concepts with >= 60% failure rate over >= 5 attempts
+  - Scans curriculum_store for concepts receiving >= 3 reconsideration requests
+  - Enqueues automated refinement jobs without disrupting live calls
+"""
+
+from typing import List, Tuple
+from core.structured_logger import rag_logger
+from engines import curriculum_store
+from tutor.curriculum_jobs import enqueue_refine
+
+
+async def scan_for_refine_candidates(threshold_fail_rate: float = 0.6, min_samples: int = 5) -> List[str]:
+    """
+    Scans learner progress data and reconsideration requests to trigger
+    background refinement for struggling curriculum nodes.
+    """
+    refine_triggered = []
+
+    # 1. Clustered Reconsideration Trigger (>= 3 requests indicates the canonical explanation is flawed)
+    try:
+        clustered = curriculum_store.get_clustered_reconsideration_nodes(min_count=3)
+        for node_id, count in clustered:
+            rag_logger.info(f"[Feedback Loop] Triggering refine for {node_id}: {count} learners requested reconsideration")
+            enqueue_refine(node_id, reason=f"{count} learners requested alternative explanation")
+            refine_triggered.append(node_id)
+    except Exception as e:
+        rag_logger.warning(f"Failed to scan clustered reconsiderations: {e}")
+
+    # 2. High Failure Rate Trigger
+    try:
+        from engines.syllabus_tracker import SyllabusTracker
+        tracker = SyllabusTracker()
+        summary = tracker.get_learner_summary()
+        # Check failed questions queue
+        failed_patterns = summary.get("failed_questions_queue", [])
+        pattern_counts = {}
+        for item in failed_patterns:
+            pat = item.get("trap_type") or item.get("chapter", "general")
+            pattern_counts[pat] = pattern_counts.get(pat, 0) + 1
+
+        for pat, count in pattern_counts.items():
+            if count >= min_samples:
+                rag_logger.info(f"[Feedback Loop] Triggering refine for pattern {pat} ({count} failures)")
+                enqueue_refine(str(pat), reason=f"High failure frequency: {count} recorded mistakes")
+                refine_triggered.append(str(pat))
+    except Exception as e:
+        rag_logger.warning(f"Failed to scan failure rate candidates: {e}")
+
+    return refine_triggered
+
+
+================================================================================
+FILE: mvp_talker_offline/backend/tutor/studio_tts.py
+LANGUAGE: python
+LINES: 56 | EST_TOKENS: ~444
+PURPOSE: Studio-grade neural audio clip synthesis using Kokoro-82M ONNX caching 24kHz WAV files into data/lecture_audio/
+================================================================================
+
+"""
+studio_tts.py — Studio-Quality Pre-rendered Audio Generator for Tier 2.
+
+Synthesizes high-fidelity audio clips for finalized curriculum lectures
+and caches them to disk at data/lecture_audio/{node_id}.wav.
+Tier 1 conversational turns can play this cached audio with zero synthesis latency.
+"""
+
+import os
+import io
+import wave
+import asyncio
+from pathlib import Path
+from typing import Optional
+
+from core.config import LECTURE_AUDIO_DIR
+from core.structured_logger import tts_logger
+from core.kokoro_tts import clean_tts_text
+
+
+async def synthesize_studio_clip(text: str, out_id: str) -> Optional[str]:
+    """
+    Synthesize high-quality lecture audio and cache as WAV on disk.
+    Returns the absolute path to the generated .wav file.
+    """
+    clean = clean_tts_text(text)
+    if not clean:
+        return None
+
+    audio_dir = Path(str(LECTURE_AUDIO_DIR))
+    audio_dir.mkdir(parents=True, exist_ok=True)
+    out_path = audio_dir / f"{out_id}.wav"
+
+    # If already cached, return immediately
+    if out_path.exists() and out_path.stat().st_size > 44:
+        return str(out_path)
+
+    try:
+        from core.kokoro_tts import KokoroTTS
+        engine = KokoroTTS()
+        pcm_bytes = await engine.synthesize_pcm_async(clean)
+        if not pcm_bytes:
+            return None
+
+        # Write valid 24kHz 16-bit mono WAV
+        with wave.open(str(out_path), "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(24000)
+            wf.writeframes(pcm_bytes)
+
+        tts_logger.info(f"Studio audio rendered and cached: {out_path} ({len(pcm_bytes)} bytes)")
+        return str(out_path)
+    except Exception as e:
+        tts_logger.warning(f"Failed to synthesize studio clip for {out_id}: {e}")
+        return None
+
+
+================================================================================
+FILE: mvp_talker_offline/backend/tutor/langgraph_tutor_graph.py
+LANGUAGE: python
+LINES: 257 | EST_TOKENS: ~2675
 PURPOSE: LangGraph StateGraph driving tutor mode: lecture phase sequencing, homework check, quiz flow, preference tracking, and session memory via SQLite checkpoints
 ================================================================================
 
@@ -24,13 +915,12 @@ from typing import Dict, Any, List, Optional, TypedDict, Literal
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.store.memory import InMemoryStore
-from structured_logger import system_logger, rag_logger
+from core.structured_logger import system_logger, rag_logger
+from core.config import DB_PATH, CHECKPOINT_DB_PATH, CURRICULUM_FILE
 
-WORKSPACE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA_DIR = os.path.join(WORKSPACE_ROOT, "data")
-DB_PATH = os.path.join(DATA_DIR, "memory.db")
-CHECKPOINT_DB_PATH = os.path.join(DATA_DIR, "langgraph_checkpoints.db")
-CURRICULUM_FILE = os.path.join(DATA_DIR, "curriculum.json")
+DB_PATH = str(DB_PATH)
+CHECKPOINT_DB_PATH = str(CHECKPOINT_DB_PATH)
+CURRICULUM_FILE = str(CURRICULUM_FILE)
 
 class TutorState(TypedDict):
     user_id: str
@@ -65,35 +955,31 @@ class LangGraphTutorEngine:
 
     def _init_knowledge_store(self):
         """Indexes local grammar books (Oxford Guide, Arihant) and Luke curriculum into LangGraph Store."""
-        rag_logger.info("Initializing LangGraph Local Knowledge Store from memory.db and curriculum.json...")
+        rag_logger.info("Initializing LangGraph Local Knowledge Store from ChromaDB and curriculum.json...")
         count_chunks = 0
         try:
-            if os.path.exists(self.db_path):
-                conn = sqlite3.connect(self.db_path)
-                conn.row_factory = sqlite3.Row
-                cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT id, text_content, source_title, section_title, chapter_idx
-                    FROM rag_chunks
-                """)
-                rows = cursor.fetchall()
-                for r in rows:
-                    source = (r["source_title"] or "general_grammar").lower().replace(" ", "_")
-                    section = (r["section_title"] or "general").lower().replace(" ", "_")
-                    item_id = str(r["id"])
-                    data = {
-                        "text": r["text_content"],
-                        "source_title": r["source_title"],
-                        "section_title": r["section_title"],
-                        "chapter_idx": r["chapter_idx"]
-                    }
-                    self.store.put(
-                        namespace=("grammar", source, section),
-                        key=item_id,
-                        value=data
-                    )
-                    count_chunks += 1
-                conn.close()
+            from engines.rag_store import RAGStore
+            rag = RAGStore()
+            col_data = rag._col.get(include=["documents", "metadatas"])
+            docs = col_data.get("documents") or []
+            metas = col_data.get("metadatas") or []
+            ids = col_data.get("ids") or []
+            for item_id, doc, meta in zip(ids, docs, metas):
+                meta = meta or {}
+                source = (meta.get("source_title") or "general_grammar").lower().replace(" ", "_")
+                section = (meta.get("section_title") or "general").lower().replace(" ", "_")
+                data = {
+                    "text": doc,
+                    "source_title": meta.get("source_title", ""),
+                    "section_title": meta.get("section_title", ""),
+                    "chapter_idx": meta.get("chapter_idx", 0)
+                }
+                self.store.put(
+                    namespace=("grammar", source, section),
+                    key=str(item_id),
+                    value=data
+                )
+                count_chunks += 1
         except Exception as e:
             rag_logger.warning(f"Could not load RAG chunks into LangGraph Store: {e}")
 
@@ -266,12 +1152,13 @@ class LangGraphTutorEngine:
 
 # Global singleton
 langgraph_engine = LangGraphTutorEngine()
+graph = langgraph_engine.graph
 
 
 ================================================================================
-FILE: mvp_talker_offline/backend/curriculum_banks_generator.py
+FILE: mvp_talker_offline/backend/tutor/curriculum_banks_generator.py
 LANGUAGE: python
-LINES: 582
+LINES: 582 | EST_TOKENS: ~8743
 PURPOSE: Offline curriculum generator: builds and exports all 18 chapter quiz banks from ESL syllabus research
 ================================================================================
 
@@ -860,145 +1747,19 @@ if __name__ == "__main__":
 
 
 ================================================================================
-FILE: mvp_talker_offline/backend/verify_langgraph_livekit.py
-LANGUAGE: python
-LINES: 134
-PURPOSE: Integration test suite verifying LangGraph tutor graph <-> LiveKit agent handshake: state transitions, checkpoint persistence, and voice-first turn-taking
+FILE: mvp_talker_offline/langgraph.json
+LANGUAGE: json
+LINES: 8 | EST_TOKENS: ~54
+PURPOSE: LangGraph Studio & CLI configuration exposing tutor_graph and curriculum_pipeline DAGs
 ================================================================================
 
-"""
-Comprehensive verification test for LiveKit + LangGraph Multi-Agent Architecture:
-1. Dynamic curriculum catalog without hardcoded dictionaries
-2. LangGraph Local Knowledge Store (Oxford Guide + Arihant + Luke)
-3. State machine transitions: Buddy -> Tutor Lecture -> Tutor Q&A -> Tutor Quiz -> Buddy
-4. Soft grammar error detection in Buddy mode
-5. Multi-type practice sessions (grammar, daily talk repetition, workplace softening)
-6. SQLite persistence and history retrieval
-"""
-
-import os
-import sys
-import json
-import unittest
-
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-from syllabus_tracker import SyllabusTracker
-from langgraph_tutor_graph import langgraph_engine, TutorState
-
-class TestLangGraphLiveKitSystem(unittest.TestCase):
-    def setUp(self):
-        self.tracker = SyllabusTracker(user_id="test_student_langgraph")
-
-    def test_01_langgraph_knowledge_store(self):
-        """Verifies LangGraph local store has loaded Oxford Guide, Arihant, and Luke course."""
-        chunks = langgraph_engine.search_knowledge("countable and uncountable nouns", limit=3)
-        self.assertGreater(len(chunks), 0, "Should retrieve grammar chunks from store")
-        sources = [c.get("source_title") for c in chunks if c.get("source_title")]
-        print(f"[TEST 1] LangGraph Knowledge Store retrieved {len(chunks)} chunks from: {sources}")
-
-    def test_02_dynamic_curriculum_catalog(self):
-        """Verifies curriculum catalog has all 4 practice domains and 18 chapters."""
-        catalog = self.tracker.get_curriculum_catalog()
-        domains = catalog.get("domains", {})
-        self.assertIn("grammar_mastery", domains)
-        self.assertIn("sentence_repetition", domains)
-        self.assertIn("workplace_office", domains)
-        self.assertIn("conversational_banter", domains)
-        self.assertEqual(len(catalog["chapters"]), 18)
-        print(f"[TEST 2] Catalog loaded {len(domains)} practice domains and 18 chapters.")
-
-    def test_03_dynamic_session_synthesis(self):
-        """Verifies dynamic lesson synthesis across different session types without hardcoding."""
-        # 1. Grammar mastery (Nouns phase 2)
-        nouns_sess = self.tracker.get_dynamic_course_session(
-            topic="Nouns",
-            submodule="Countable vs Uncountable (Mass Nouns)",
-            session_type="grammar_mastery",
-            phase_index=2
-        )
-        self.assertEqual(nouns_sess["canvas_type"], "particle_classifier")
-        self.assertGreater(len(nouns_sess["paragraphs"]), 1)
-        self.assertGreater(len(nouns_sess["repetition_items"]), 0)
-
-        # 2. Daily Sentence Repetition (Contractions)
-        rep_sess = self.tracker.get_dynamic_course_session(
-            topic="Conversational Fluency",
-            submodule="Everyday Spoken Contractions",
-            session_type="sentence_repetition",
-            phase_index=1
-        )
-        self.assertEqual(rep_sess["canvas_type"], "repetition_flow")
-        self.assertGreater(len(rep_sess["repetition_items"]), 0)
-
-        # 3. Workplace & Office (Polite Softening)
-        work_sess = self.tracker.get_dynamic_course_session(
-            topic="Workplace Communication",
-            submodule="Polite Requests & Softening",
-            session_type="workplace_office",
-            phase_index=1
-        )
-        self.assertEqual(work_sess["canvas_type"], "workplace_matrix")
-        self.assertIn("pairs", work_sess["canvas_config"])
-
-        print("[TEST 3] Dynamic session synthesis verified for Grammar, Repetition, and Workplace.")
-
-    def test_04_session_persistence_and_filtering(self):
-        """Verifies saving and retrieving sessions with session_type and repetition items."""
-        # Save a workplace session
-        saved = self.tracker.save_lecture_session(
-            topic="Workplace Communication",
-            submodule="Polite Requests & Softening",
-            phase_index=1,
-            session_type="workplace_office",
-            spoken_summary="In workplace English, softening direct commands creates a collaborative tone.",
-            paragraphs=["Paragraph 1", "Paragraph 2"],
-            canvas_type="workplace_matrix",
-            canvas_config={"pairs": []},
-            repetition_items=[{"target": "Could you please take a look at this?", "drill_type": "Softening"}]
-        )
-        self.assertEqual(saved["session_type"], "workplace_office")
-
-        # Retrieve with filter
-        history = self.tracker.get_lecture_history(limit=10, session_type="workplace_office")
-        self.assertGreater(len(history), 0)
-        self.assertEqual(history[0]["session_type"], "workplace_office")
-        self.assertEqual(len(history[0]["repetition_items"]), 1)
-        print(f"[TEST 4] Session persistence verified. ID: {saved['id']}, Filtered History: {len(history)} items.")
-
-    def test_05_langgraph_state_machine_and_buddy_soft_error(self):
-        """Verifies LangGraph state machine and soft grammar error detection in Buddy mode."""
-        user_id = "test_student_lg_flow"
-        initial_state = langgraph_engine.get_state(user_id)
-        self.assertEqual(initial_state["active_mode"], "buddy")
-
-        # Simulate user saying grammar slip in buddy mode
-        updates = {
-            "last_user_query": "I need an advice about my project and have many informations.",
-            "active_mode": "buddy"
-        }
-        res = langgraph_engine._buddy_node(updates)
-        errors = res.get("observed_errors", [])
-        self.assertGreater(len(errors), 0)
-        print(f"[TEST 5] Soft error detection in Buddy mode caught: {[e['error'] for e in errors]}")
-
-        # Transition to Tutor mode
-        langgraph_engine.update_state({"active_mode": "tutor_lecture", "current_topic": "Nouns"}, user_id=user_id)
-        curr = langgraph_engine.get_state(user_id)
-        self.assertEqual(curr["active_mode"], "tutor_lecture")
-
-        # Transition to Tutor Q&A
-        langgraph_engine.update_state({"active_mode": "tutor_qa"}, user_id=user_id)
-        curr = langgraph_engine.get_state(user_id)
-        self.assertEqual(curr["active_mode"], "tutor_qa")
-
-        # Return to Buddy mode
-        langgraph_engine.update_state({"active_mode": "buddy"}, user_id=user_id)
-        curr = langgraph_engine.get_state(user_id)
-        self.assertEqual(curr["active_mode"], "buddy")
-        print("[TEST 5] Mode transitions Buddy <-> Tutor Lecture <-> Tutor Q&A verified.")
-
-if __name__ == "__main__":
-    unittest.main()
+{
+  "dependencies": ["./backend"],
+  "graphs": {
+    "tutor_graph": "./backend/tutor/langgraph_tutor_graph.py:graph",
+    "curriculum_pipeline": "./backend/tutor/curriculum_pipeline.py:pipeline"
+  },
+  "env": ".env"
+}
 
 

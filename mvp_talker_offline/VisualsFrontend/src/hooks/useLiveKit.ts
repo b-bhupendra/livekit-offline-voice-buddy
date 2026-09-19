@@ -228,6 +228,15 @@ export function useLiveKit() {
           store.setLivekitConnected(true);
           store.setLivekitRoom(room);
           store.setSseConnected(true); // Signal online status to UI
+
+          // Ensure microphone is published immediately on connection
+          if (room && room.localParticipant) {
+            const activeVoice = store.isVoiceActive;
+            room.localParticipant.setMicrophoneEnabled(activeVoice).catch((err) => {
+              console.warn('[LiveKit Mic] Initial microphone enable notice:', err);
+            });
+          }
+
           // Hydrate syllabus, in-flight last sheet, and lecture history immediately via LiveKit RPC
           store.fetchSyllabus().catch((err) => {
             console.warn('[LiveKit] Initial syllabus hydration notice:', err);

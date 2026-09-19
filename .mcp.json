@@ -1,0 +1,26 @@
+{
+  "mcpServers": {
+    "shadcn": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "shadcn@latest",
+        "mcp"
+      ]
+    },
+    "shadcn-ui": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "shadcn-ui-mcp-server"
+      ]
+    },
+    "tailgrids": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@tailgrids/mcp"
+      ]
+    }
+  }
+}

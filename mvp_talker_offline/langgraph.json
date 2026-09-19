@@ -1,0 +1,8 @@
+{
+  "dependencies": ["./backend"],
+  "graphs": {
+    "tutor_graph": "./backend/tutor/langgraph_tutor_graph.py:graph",
+    "curriculum_pipeline": "./backend/tutor/curriculum_pipeline.py:pipeline"
+  },
+  "env": ".env"
+}

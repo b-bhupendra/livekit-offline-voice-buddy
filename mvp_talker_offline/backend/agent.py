@@ -19,12 +19,13 @@ import json
 import sqlite3
 import aiohttp
 import contextlib
+import subprocess
 from typing import Optional, List, Dict, Any, Union
 import numpy as np
 from pathlib import Path
 from dotenv import load_dotenv
 
-from structured_logger import (
+from core.structured_logger import (
     stt_logger, llm_logger, tts_logger, rag_logger, genui_logger, system_logger,
     next_turn, set_session_id, get_session_id, get_turn_id
 )
@@ -49,19 +50,28 @@ from livekit.agents import (
 )
 from livekit.plugins import openai, silero
 
-from syllabus_tracker import SyllabusTracker
-from simulation_engine import SimulationEngine
-from quiz_engine import QuizEngine
-from rag_store import RAGStore
+from engines.syllabus_tracker import SyllabusTracker
+from engines.simulation_engine import SimulationEngine
+from engines.quiz_engine import QuizEngine
+from engines.rag_store import RAGStore
 try:
-    from langgraph_tutor_graph import langgraph_engine
+    from tutor.langgraph_tutor_graph import langgraph_engine
 except Exception:
     langgraph_engine = None
+
+from core.gpu_arbiter import gpu_arbiter
+from tutor.curriculum_notify import (
+    register_active_session, flush_pending_announcements, push_ready_event, get_active_session
+)
+from tutor.curriculum_jobs import enqueue_reconsider, enqueue_build, enqueue_refine
+from engines import curriculum_store
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen-buddy")
 AUDIO_SERVER_URL = os.getenv("AUDIO_SERVER_URL", "http://127.0.0.1:8880/v1")
 LIVEKIT_TRANSPORT_MODE = os.getenv("LIVEKIT_TRANSPORT_MODE", "webrtc")
+
+_audio_server_proc: Optional[subprocess.Popen] = None
 
 tracker = SyllabusTracker()
 rag = RAGStore()
@@ -998,11 +1008,63 @@ async def switch_to_tutor_mode(context: RunContext, topic: str = "Nouns", sessio
     return f"[TUTOR MODE ACTIVATED] Master Tutor active for '{topic}' ({session_type}). Ready to deliver lecture via deliver_canvas_lecture!"
 
 @function_tool()
+async def request_reinterpretation(
+    context: RunContext,
+    node_id: Optional[str] = None,
+    style_hint: str = "everyday",
+    learner_complaint: str = ""
+) -> str:
+    """Requests an alternative pedagogical explanation or analogy for a grammar/fluency concept node (e.g., everyday life, software engineering, workplace office, or sports).
+    If a pre-compiled visual variant exists in SQLite, it loads immediately onto the user's screen.
+    Otherwise, an async background authoring task is enqueued without blocking conversation.
+    """
+    if not node_id or node_id in ("current", "none", ""):
+        state = tracker.get_state()
+        curr_topic = state.get("current_topic", "Nouns")
+        node_id = curr_topic.lower().replace(" ", "_").replace("-", "_")
+
+    req_id = curriculum_store.log_reconsideration_request(
+        node_id=node_id,
+        style_hint=style_hint,
+        complaint=learner_complaint
+    )
+
+    # Check if an alternative variant already exists in curriculum_store
+    existing = curriculum_store.get_variant(node_id, style_hint)
+    if existing:
+        curriculum_store.resolve_reconsideration_request(req_id, existing.get("id"))
+        draft_payload = {
+            "title": f"{node_id.replace('_', ' ').title()} ({style_hint.title()})",
+            "core_concept": existing.get("spoken_summary", ""),
+            "canvas_type": existing.get("canvas_type", "classifier"),
+            "canvas_config": existing.get("canvas_config", {}),
+            "lecture_paragraphs": existing.get("lecture_paragraphs", []),
+            "citations": existing.get("citations", []),
+        }
+        fake_state = {
+            "node_id": node_id,
+            "job_type": "reconsider",
+            "result_id": existing.get("id"),
+            "draft": draft_payload
+        }
+        await push_ready_event(fake_state)
+        return (
+            f"[RE-INTERPRETATION LOADED] Delivered pre-compiled {style_hint} visual for '{node_id}'. "
+            f"Intuition: {existing.get('spoken_summary', '')}. "
+            f"Explain this concept to Bhupendra in 2 spoken sentences using the {style_hint} analogy."
+        )
+
+    # If not yet generated, launch background job via arbiter and return immediate spoken response instructions
+    enqueue_reconsider(node_id=node_id, style_hint=style_hint, complaint=learner_complaint, request_id=req_id)
+    return (
+        f"[RE-INTERPRETATION REQUESTED] Scheduled background authoring of a tailored {style_hint} visual for '{node_id}'. "
+        f"Right now in voice, explain this concept directly to Bhupendra using a relatable {style_hint} analogy in 2-3 warm, conversational sentences."
+    )
+
+@function_tool()
 async def renarrate_lecture(context: RunContext, analogy_style: Optional[str] = "everyday") -> str:
     """Re-narrates the current topic using alternative analogies (software engineering, business, or everyday life)."""
-    if analogy_style:
-        tracker.update_learner_preferences({"analogy_style": analogy_style})
-    return f"[RE-NARRATION ACTIVATED] Re-explain the current concept clearly using fresh {analogy_style} analogies in 2-3 spoken sentences."
+    return await request_reinterpretation(context=context, node_id="current", style_hint=analogy_style or "everyday")
 
 @function_tool()
 async def exit_tutor_mode(context: RunContext) -> str:
@@ -1021,6 +1083,7 @@ IN_PROCESS_TOOLS = [
     switch_to_tutor_mode,
     switch_to_buddy_mode,
     deliver_canvas_lecture,
+    request_reinterpretation,
     renarrate_lecture,
     complete_homework,
     assign_homework,
@@ -1079,15 +1142,10 @@ async def entrypoint(ctx: agents.JobContext):
         interruption={"mode": "vad"},
     )
 
-    # Kokoro-82M via official LiveKit openai.TTS pattern:
-    # openai.TTS(model="kokoro", voice="af_heart", base_url=...) per LiveKit docs.
-    tts_provider = openai.TTS(
-        model="kokoro",
-        voice=os.getenv("KOKORO_VOICE", "af_heart"),
-        base_url=AUDIO_SERVER_URL,
-        api_key="offline",
-        response_format="wav",
-    )
+    # Native in-process Kokoro-82M ONNX streaming TTS plugin:
+    # Sub-300ms latency, clause-boundary streaming directly to AudioEmitter
+    from core.kokoro_tts import KokoroTTS
+    tts_provider = KokoroTTS()
 
     local_whisper = get_faster_whisper_stt(model_size="tiny.en")
     stt_provider = stt.StreamAdapter(
@@ -1104,6 +1162,8 @@ async def entrypoint(ctx: agents.JobContext):
         tools=IN_PROCESS_TOOLS,
     )
 
+    register_active_session(session, None)
+
     set_session_id(ctx.room.name if ctx.room else f"session_{int(time.time())}")
     system_logger.info(f"RTC session initialized for room: {get_session_id()}")
     system_logger.info(f"Active transport mode: {LIVEKIT_TRANSPORT_MODE} (LiveKit WebRTC active, legacy SSE bridge retired)")
@@ -1112,15 +1172,28 @@ async def entrypoint(ctx: agents.JobContext):
     def on_user_state(ev):
         if ev.new_state == "speaking":
             voice_priority_lock.user_speaking = True
+            gpu_arbiter.set_voice_active(True)
             stt_logger.info("User started speaking")
         elif ev.new_state == "listening":
             voice_priority_lock.user_speaking = False
+            if voice_priority_lock.agent_state == "listening":
+                gpu_arbiter.set_voice_active(False)
             stt_logger.info("User stopped speaking, processing utterance...")
 
     @session.on("agent_state_changed")
     def on_agent_state(ev):
-        voice_priority_lock.agent_state = str(ev.new_state).split('.')[-1].lower()
+        new_state_str = str(ev.new_state).split('.')[-1].lower()
+        voice_priority_lock.agent_state = new_state_str
         llm_logger.info(f"Agent state changed to: {ev.new_state}")
+        if new_state_str in ("speaking", "thinking"):
+            gpu_arbiter.set_voice_active(True)
+        elif new_state_str == "listening":
+            if not voice_priority_lock.user_speaking:
+                gpu_arbiter.set_voice_active(False)
+            pending = flush_pending_announcements()
+            if pending and hasattr(session, "generate_reply"):
+                stt_logger.info(f"Delivering pending curriculum announcement: {pending.get('title')}")
+                asyncio.create_task(session.generate_reply())
 
     @session.on("user_input_transcribed")
     def on_user_input(ev):
@@ -1521,6 +1594,56 @@ async def entrypoint(ctx: agents.JobContext):
             return json.dumps(saved)
         except Exception as e:
             genui_logger.error(f"rpc_deliver_canvas_lecture error: {e}")
+            return json.dumps({"error": str(e)})
+
+    @ctx.room.local_participant.register_rpc_method("requestReinterpretation")
+    async def rpc_request_reinterpretation(data: rtc.RpcInvocationData) -> str:
+        try:
+            params = json.loads(data.payload) if data.payload else {}
+            style_hint = params.get("style_hint", "everyday")
+            node_id = params.get("node_id", "current")
+            complaint = params.get("complaint", "")
+            if not node_id or node_id in ("current", "none", ""):
+                state = tracker.get_state()
+                curr_topic = state.get("current_topic", "Nouns")
+                node_id = curr_topic.lower().replace(" ", "_").replace("-", "_")
+
+            req_id = curriculum_store.log_reconsideration_request(
+                node_id=node_id,
+                style_hint=style_hint,
+                complaint=complaint
+            )
+
+            existing = curriculum_store.get_variant(node_id, style_hint)
+            if existing:
+                curriculum_store.resolve_reconsideration_request(req_id, existing.get("id"))
+                draft_payload = {
+                    "title": f"{node_id.replace('_', ' ').title()} ({style_hint.title()})",
+                    "core_concept": existing.get("spoken_summary", ""),
+                    "canvas_type": existing.get("canvas_type", "classifier"),
+                    "canvas_config": existing.get("canvas_config", {}),
+                    "lecture_paragraphs": existing.get("lecture_paragraphs", []),
+                    "citations": existing.get("citations", []),
+                }
+                fake_state = {
+                    "node_id": node_id,
+                    "job_type": "reconsider",
+                    "result_id": existing.get("id"),
+                    "draft": draft_payload
+                }
+                await push_ready_event(fake_state)
+                spoken = existing.get("spoken_summary", "")
+                if spoken and session:
+                    asyncio.create_task(session.say(f"Here is how to think about this in a {style_hint} context: {spoken}", allow_interruptions=True))
+                return json.dumps({"status": "loaded", "variant": existing})
+            else:
+                enqueue_reconsider(node_id=node_id, style_hint=style_hint, complaint=complaint, request_id=req_id)
+                voice_msg = f"Got it! I am switching to a {style_hint} analogy for {node_id.replace('_', ' ')}."
+                if session:
+                    asyncio.create_task(session.say(voice_msg, allow_interruptions=True))
+                return json.dumps({"status": "enqueued", "style_hint": style_hint, "node_id": node_id})
+        except Exception as e:
+            genui_logger.error(f"rpc_request_reinterpretation error: {e}")
             return json.dumps({"error": str(e)})
 
     # ── Periodic Authoritative Learner State Sync Loop ───────────────

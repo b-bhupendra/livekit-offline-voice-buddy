@@ -117,6 +117,7 @@ export interface BuddyStore {
   triggerRevision: (chapter: number) => Promise<void>;
   fetchLectureHistory: () => Promise<void>;
   deliverLecturePhase: (phase_index: number, topic?: string, session_type?: string, submodule?: string) => Promise<void>;
+  requestReinterpretation: (style_hint: string, topic?: string) => Promise<void>;
   fetchSyllabus: () => Promise<void>;
   fetchQuiz: (chapter: number, mode?: string) => Promise<void>;
   fetchLastSheet: () => Promise<void>;
@@ -695,6 +696,68 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
         console.warn('[LiveKit RPC] deliverCanvasLecture failed:', rpcErr);
       }
     }
+  },
+
+  requestReinterpretation: async (style_hint: string, topic?: string) => {
+    const room = get().livekitRoom;
+    const agentId = getAgentParticipantIdentity(room);
+    const currentTopic = topic || get().syllabus?.roadmap?.find(c => c.index === get().activeChapter)?.topic || 'Nouns';
+
+    const styleLabels: Record<string, string> = {
+      software: 'Software / Engineering Analogy',
+      workplace: 'Workplace & Executive Register',
+      everyday: 'Everyday Life Intuition'
+    };
+    const styleLabel = styleLabels[style_hint] || `${style_hint} model`;
+
+    get().appendTranscript('user', `Can you re-explain ${currentTopic} using a ${styleLabel}?`);
+    get().appendStreamToken(`Switching pedagogical model to ${styleLabel}...`, 'coach');
+
+    if (room && room.state === 'connected' && agentId) {
+      try {
+        console.log(`[LiveKit RPC] Invoking requestReinterpretation (${style_hint}) on ${agentId}...`);
+        const rpcRes = await room.localParticipant.performRpc({
+          destinationIdentity: agentId,
+          method: 'requestReinterpretation',
+          payload: JSON.stringify({
+            style_hint,
+            node_id: currentTopic.toLowerCase().replace(/\s+/g, '_').replace(/-/g, '_')
+          }),
+          responseTimeout: 8000
+        });
+        get().finalizeStreamCard();
+        const parsed = JSON.parse(rpcRes);
+        if (parsed?.variant) {
+          get().pushInlineCanvasLecture({
+            id: parsed.variant.id || `re_${Date.now()}`,
+            topic: currentTopic,
+            submodule: `${currentTopic} (${styleLabel})`,
+            phase_index: 2,
+            session_type: 'grammar_mastery',
+            spoken_summary: parsed.variant.spoken_summary,
+            paragraphs: parsed.variant.lecture_paragraphs || [],
+            canvas_type: parsed.variant.canvas_type || 'particle_classifier',
+            canvas_config: parsed.variant.canvas_config || {},
+            timestamp: new Date().toLocaleTimeString()
+          });
+        }
+        return;
+      } catch (rpcErr) {
+        console.warn('[LiveKit RPC] requestReinterpretation failed, falling back:', rpcErr);
+      }
+    }
+
+    // Fallback conversational simulation
+    setTimeout(() => {
+      get().finalizeStreamCard();
+      const fallbackAnalogy = style_hint === 'software'
+        ? `In software architecture, **${currentTopic}** is like type-checking in a compiler. Countable nouns behave like instantiated objects (with length or count properties), whereas uncountable nouns behave like streams or primitive buffer references where discrete indices do not apply!`
+        : style_hint === 'workplace'
+        ? `In corporate communications, **${currentTopic}** determines executive presence. Using precise collective concord ("the committee has decided" vs "the team are aligned") ensures your reports and presentations strike the right tone of unified authority.`
+        : `In everyday life, think of **${currentTopic}** like water vs ice cubes: you can't say "give me two waters" (mass noun), but you can easily count "two glasses of water" (quantified containers).`;
+
+      get().appendTranscript('agent', fallbackAnalogy);
+    }, 600);
   },
 
   fetchSyllabus: async () => {

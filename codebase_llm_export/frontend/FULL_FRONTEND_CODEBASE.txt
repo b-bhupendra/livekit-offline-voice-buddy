@@ -1,7 +1,7 @@
 ================================================================================
 FILE: mvp_talker_offline/VisualsFrontend/package.json
 LANGUAGE: json
-LINES: 34
+LINES: 34 | EST_TOKENS: ~206
 PURPOSE: Project dependencies (React 19, Framer Motion, Lucide, Inter, LiveKit Client), scripts, build configuration
 ================================================================================
 
@@ -44,7 +44,7 @@ PURPOSE: Project dependencies (React 19, Framer Motion, Lucide, Inter, LiveKit C
 ================================================================================
 FILE: mvp_talker_offline/VisualsFrontend/vite.config.ts
 LANGUAGE: typescript
-LINES: 7
+LINES: 7 | EST_TOKENS: ~40
 PURPOSE: Vite build & dev server configuration with React plugin
 ================================================================================
 
@@ -60,7 +60,7 @@ export default defineConfig({
 ================================================================================
 FILE: mvp_talker_offline/VisualsFrontend/tsconfig.json
 LANGUAGE: json
-LINES: 7
+LINES: 7 | EST_TOKENS: ~29
 PURPOSE: Root TypeScript compiler options
 ================================================================================
 
@@ -76,7 +76,7 @@ PURPOSE: Root TypeScript compiler options
 ================================================================================
 FILE: mvp_talker_offline/VisualsFrontend/index.html
 LANGUAGE: html
-LINES: 17
+LINES: 17 | EST_TOKENS: ~254
 PURPOSE: HTML shell mounting root React container with Inter typography
 ================================================================================
 
@@ -102,7 +102,7 @@ PURPOSE: HTML shell mounting root React container with Inter typography
 ================================================================================
 FILE: mvp_talker_offline/VisualsFrontend/src/main.tsx
 LANGUAGE: typescript
-LINES: 17
+LINES: 17 | EST_TOKENS: ~107
 PURPOSE: React 19 entrypoint mounting App with @fontsource/inter
 ================================================================================
 
@@ -128,13 +128,13 @@ createRoot(document.getElementById('root')!).render(
 ================================================================================
 FILE: mvp_talker_offline/VisualsFrontend/src/index.css
 LANGUAGE: css
-LINES: 192
-PURPOSE: Design System: Dark surface tokens (--surface-0 to --surface-3), hairlines, and typography
+LINES: 273 | EST_TOKENS: ~1792
+PURPOSE: Design System: Dark surface tokens (--surface-0 to --surface-3), ambient mesh background, voice halo, and typography
 ================================================================================
 
 /* =========================================================
    BUDDY — Generative Conversational AI Design System
-   Inspired by Gemini Live, ChatGPT Canvas & Linear
+   World-Class Dark Mode, Glassmorphism & Micro-Animations
    ========================================================= */
 
 @import '@fontsource/inter/400.css';
@@ -143,62 +143,75 @@ PURPOSE: Design System: Dark surface tokens (--surface-0 to --surface-3), hairli
 @import '@fontsource/inter/700.css';
 
 :root {
-  /* ── Deep Obsidian / Neutral Palette ── */
-  --surface-0: #09090b;       /* App Canvas */
-  --surface-1: #111114;       /* Sidebar, Slide-over, Dock */
-  --surface-2: #18181b;       /* Cards & Elevated Bubbles */
-  --surface-3: #27272a;       /* Input & Hover States */
-  --surface-elevated: #222226;
-  --surface-glass: rgba(18, 18, 22, 0.78);
+  /* ── Deep Obsidian & Glass Elevation Scale ── */
+  --surface-0: #070709;       /* Deepest Canvas */
+  --surface-1: #0e0e12;       /* Sidebar, Slide-over, Dock */
+  --surface-2: #14141a;       /* Cards & Elevated Containers */
+  --surface-3: #1f1f27;       /* Input & Active States */
+  --surface-hover: #262633;   /* Interactive Hover */
+  --surface-elevated: #1a1a22;
+  --surface-glass: rgba(14, 14, 18, 0.72);
+  --surface-glass-heavy: rgba(10, 10, 14, 0.88);
 
-  /* ── Hairlines & Borders ── */
-  --border-subtle: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.16);
-  --border-focus: #3b82f6;
+  /* ── Specular Hairlines & Gradients ── */
+  --border-subtle: rgba(255, 255, 255, 0.07);
+  --border-medium: rgba(255, 255, 255, 0.12);
+  --border-strong: rgba(255, 255, 255, 0.20);
+  --border-focus: #38bdf8;
+  --border-specular: linear-gradient(135deg, rgba(255, 255, 255, 0.15) 0%, rgba(255, 255, 255, 0.02) 100%);
 
   /* ── Typography Scale & Families ── */
-  --text-primary: #fafafa;
-  --text-secondary: #a1a1aa;
-  --text-tertiary: #71717a;
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  --text-tertiary: #64748b;
   --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 
-  /* ── Accent & Status Tints ── */
-  --accent: #3b82f6;
-  --accent-hover: #2563eb;
-  --accent-soft: rgba(59, 130, 246, 0.12);
-  --accent-gradient: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+  /* ── Curated Accent & Status Tints (HSL Harmonized) ── */
+  --accent: #6366f1;           /* Indigo Primary */
+  --accent-light: #818cf8;
+  --accent-hover: #4f46e5;
+  --accent-soft: rgba(99, 102, 241, 0.14);
+  --accent-gradient: linear-gradient(135deg, #6366f1 0%, #38bdf8 100%);
+  --accent-glow: rgba(99, 102, 241, 0.25);
+
+  --cyan-primary: #06b6d4;
+  --cyan-soft: rgba(6, 182, 212, 0.14);
+  --cyan-gradient: linear-gradient(135deg, #06b6d4 0%, #3b82f6 100%);
+
   --success: #10b981;
-  --success-soft: rgba(16, 185, 129, 0.12);
+  --success-soft: rgba(16, 185, 129, 0.14);
   --danger: #ef4444;
-  --danger-soft: rgba(239, 68, 68, 0.12);
+  --danger-soft: rgba(239, 68, 68, 0.14);
   --warning: #f59e0b;
-  --warning-soft: rgba(245, 158, 11, 0.12);
+  --warning-soft: rgba(245, 158, 11, 0.14);
 
-  /* ── Grammar Syntax Role Tokens (Framer Motion Integration) ── */
+  /* ── Grammar Syntax Role Tokens (Framer Motion Tweening) ── */
   --role-subject: #38bdf8;
-  --role-subject-soft: rgba(56, 189, 248, 0.12);
+  --role-subject-soft: rgba(56, 189, 248, 0.14);
   --role-aux: #a855f7;
-  --role-aux-soft: rgba(168, 85, 247, 0.12);
+  --role-aux-soft: rgba(168, 85, 247, 0.14);
   --role-verb: #10b981;
-  --role-verb-soft: rgba(16, 185, 129, 0.12);
+  --role-verb-soft: rgba(16, 185, 129, 0.14);
   --role-object: #f59e0b;
-  --role-object-soft: rgba(245, 158, 11, 0.12);
+  --role-object-soft: rgba(245, 158, 11, 0.14);
   --role-particle: #ec4899;
-  --role-particle-soft: rgba(236, 72, 153, 0.12);
+  --role-particle-soft: rgba(236, 72, 153, 0.14);
 
-  /* ── Elevation Shadows ── */
-  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.24);
-  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.32);
-  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.48);
-  --shadow-glow: 0 0 28px rgba(59, 130, 246, 0.22);
+  /* ── Elevation Shadows & Ambient Glows ── */
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.60);
+  --shadow-dock: 0 20px 48px -8px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(255, 255, 255, 0.08);
+  --shadow-glow: 0 0 32px rgba(99, 102, 241, 0.28);
+  --shadow-glow-emerald: 0 0 32px rgba(16, 185, 129, 0.25);
 
-  /* ── Geometry ── */
+  /* ── Radii ── */
   --radius-xs: 4px;
-  --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 14px;
-  --radius-xl: 20px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 22px;
   --radius-full: 9999px;
 }
 
@@ -225,20 +238,72 @@ pre, code {
   font-family: var(--font-mono);
 }
 
-/* ── Minimalist Scrollbar ── */
+/* ── Ambient Radial Mesh Background ── */
+.ambient-mesh-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% -10%, rgba(99, 102, 241, 0.12) 0%, transparent 60%),
+    radial-gradient(circle at 10% 40%, rgba(6, 182, 212, 0.06) 0%, transparent 50%),
+    radial-gradient(circle at 90% 60%, rgba(168, 85, 247, 0.06) 0%, transparent 50%),
+    radial-gradient(circle at 50% 110%, rgba(16, 185, 129, 0.05) 0%, transparent 60%);
+}
+
+/* ── Minimalist Premium Scrollbar ── */
 ::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
+  width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--surface-3);
+  background: rgba(255, 255, 255, 0.12);
   border-radius: var(--radius-full);
 }
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.25);
+}
+
+/* ── Glassmorphism Utility Classes ── */
+.glass-panel {
+  background: var(--surface-glass);
+  backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-md);
+}
+
+.glass-card {
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.03) 0%, rgba(20, 20, 26, 0.6) 100%);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--border-medium);
+  box-shadow: var(--shadow-sm);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.glass-card:hover {
+  border-color: rgba(255, 255, 255, 0.22);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md), 0 0 20px rgba(99, 102, 241, 0.08);
+}
+
+.glass-pill {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-full);
+  transition: all 0.15s ease;
+}
+
+.glass-pill:hover {
+  background: rgba(255, 255, 255, 0.09);
+  border-color: var(--border-strong);
 }
 
 /* ── Bionic Reading Fixation ── */
@@ -247,7 +312,7 @@ pre, code {
   color: #ffffff;
 }
 
-/* ── Markdown Content Typography in Chat ── */
+/* ── Markdown Content in Feed ── */
 .markdown-content {
   font-size: 14.5px;
   line-height: 1.65;
@@ -289,20 +354,35 @@ pre, code {
   margin-bottom: 4px;
 }
 
-/* ── Shimmer & Pulse Animations ── */
+/* ── Micro-Animations & Glow Effects ── */
 @keyframes pulseGlow {
   0%, 100% {
     opacity: 1;
     transform: scale(1);
+    filter: drop-shadow(0 0 6px rgba(16, 185, 129, 0.8));
   }
   50% {
-    opacity: 0.6;
-    transform: scale(0.96);
+    opacity: 0.55;
+    transform: scale(0.92);
+    filter: drop-shadow(0 0 2px rgba(16, 185, 129, 0.2));
   }
 }
 
 .pulse-beacon {
-  animation: pulseGlow 2s infinite ease-in-out;
+  animation: pulseGlow 2.2s infinite ease-in-out;
+}
+
+@keyframes voiceHaloPulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.45);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(99, 102, 241, 0);
+  }
+}
+
+.voice-halo {
+  animation: voiceHaloPulse 1.8s infinite ease-out;
 }
 
 @keyframes cursorBlink {
@@ -314,23 +394,59 @@ pre, code {
   display: inline-block;
   width: 7px;
   height: 14px;
-  background-color: var(--accent);
+  background: var(--accent);
   margin-left: 4px;
   vertical-align: middle;
   animation: cursorBlink 0.9s infinite;
 }
 
-/* Button & Interactive Resets */
+/* Button & Interactive Element Base */
 button {
   font-family: inherit;
+  user-select: none;
+}
+
+
+================================================================================
+FILE: .mcp.json
+LANGUAGE: json
+LINES: 26 | EST_TOKENS: ~95
+PURPOSE: Workspace MCP configuration for frontend design, React, and UI component servers (shadcn, shadcn-ui, tailgrids)
+================================================================================
+
+{
+  "mcpServers": {
+    "shadcn": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "shadcn@latest",
+        "mcp"
+      ]
+    },
+    "shadcn-ui": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "shadcn-ui-mcp-server"
+      ]
+    },
+    "tailgrids": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@tailgrids/mcp"
+      ]
+    }
+  }
 }
 
 
 ================================================================================
 FILE: mvp_talker_offline/VisualsFrontend/src/types.ts
 LANGUAGE: typescript
-LINES: 239
-PURPOSE: Central TypeScript interfaces (FeedItem, QuizQuestion, ContentionProps, SyllabusData)
+LINES: 241 | EST_TOKENS: ~1567
+PURPOSE: Central TypeScript interfaces (FeedItem, QuizQuestion, ContentionProps, CanvasLectureProps, SyllabusData)
 ================================================================================
 
 // ── Global Type Definitions for Buddy Live Voice & Conversational UI ─────────
@@ -474,6 +590,8 @@ export interface CanvasLectureProps {
   key_takeaways?: string[];
   canvas_type: 'particle_classifier' | 'concord_balance' | 'noun_hierarchy' | 'compound_builder' | 'repetition_flow' | 'workplace_matrix' | string;
   canvas_config?: Record<string, unknown>;
+  style_hint?: string;
+  citations?: Array<string | { text: string; source: string; rule?: string }>;
   repetition_items?: Array<{
     prompt?: string;
     target: string;
@@ -577,7 +695,7 @@ export type DrawerTab = 'syllabus' | 'analytics' | 'remediation' | 'lectures';
 ================================================================================
 FILE: mvp_talker_offline/VisualsFrontend/src/config/transport.ts
 LANGUAGE: typescript
-LINES: 43
+LINES: 43 | EST_TOKENS: ~364
 PURPOSE: Transport configuration establishing LiveKit WebRTC as authoritative transport and formally deprecating legacy SSE/stdio bridges
 ================================================================================
 
@@ -629,8 +747,8 @@ export function getActiveTransportInfo(): string {
 ================================================================================
 FILE: mvp_talker_offline/VisualsFrontend/src/store.ts
 LANGUAGE: typescript
-LINES: 873
-PURPOSE: Zustand state store managing sequential feed array, LiveKit room instance, drawer state, and LiveKit RPC actions
+LINES: 936 | EST_TOKENS: ~9883
+PURPOSE: Zustand state store managing sequential feed array, LiveKit room instance, drawer state, and LiveKit RPC actions (including requestReinterpretation)
 ================================================================================
 
 import { create } from 'zustand';
@@ -752,6 +870,7 @@ export interface BuddyStore {
   triggerRevision: (chapter: number) => Promise<void>;
   fetchLectureHistory: () => Promise<void>;
   deliverLecturePhase: (phase_index: number, topic?: string, session_type?: string, submodule?: string) => Promise<void>;
+  requestReinterpretation: (style_hint: string, topic?: string) => Promise<void>;
   fetchSyllabus: () => Promise<void>;
   fetchQuiz: (chapter: number, mode?: string) => Promise<void>;
   fetchLastSheet: () => Promise<void>;
@@ -1332,6 +1451,68 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
     }
   },
 
+  requestReinterpretation: async (style_hint: string, topic?: string) => {
+    const room = get().livekitRoom;
+    const agentId = getAgentParticipantIdentity(room);
+    const currentTopic = topic || get().syllabus?.roadmap?.find(c => c.index === get().activeChapter)?.topic || 'Nouns';
+
+    const styleLabels: Record<string, string> = {
+      software: 'Software / Engineering Analogy',
+      workplace: 'Workplace & Executive Register',
+      everyday: 'Everyday Life Intuition'
+    };
+    const styleLabel = styleLabels[style_hint] || `${style_hint} model`;
+
+    get().appendTranscript('user', `Can you re-explain ${currentTopic} using a ${styleLabel}?`);
+    get().appendStreamToken(`Switching pedagogical model to ${styleLabel}...`, 'coach');
+
+    if (room && room.state === 'connected' && agentId) {
+      try {
+        console.log(`[LiveKit RPC] Invoking requestReinterpretation (${style_hint}) on ${agentId}...`);
+        const rpcRes = await room.localParticipant.performRpc({
+          destinationIdentity: agentId,
+          method: 'requestReinterpretation',
+          payload: JSON.stringify({
+            style_hint,
+            node_id: currentTopic.toLowerCase().replace(/\s+/g, '_').replace(/-/g, '_')
+          }),
+          responseTimeout: 8000
+        });
+        get().finalizeStreamCard();
+        const parsed = JSON.parse(rpcRes);
+        if (parsed?.variant) {
+          get().pushInlineCanvasLecture({
+            id: parsed.variant.id || `re_${Date.now()}`,
+            topic: currentTopic,
+            submodule: `${currentTopic} (${styleLabel})`,
+            phase_index: 2,
+            session_type: 'grammar_mastery',
+            spoken_summary: parsed.variant.spoken_summary,
+            paragraphs: parsed.variant.lecture_paragraphs || [],
+            canvas_type: parsed.variant.canvas_type || 'particle_classifier',
+            canvas_config: parsed.variant.canvas_config || {},
+            timestamp: new Date().toLocaleTimeString()
+          });
+        }
+        return;
+      } catch (rpcErr) {
+        console.warn('[LiveKit RPC] requestReinterpretation failed, falling back:', rpcErr);
+      }
+    }
+
+    // Fallback conversational simulation
+    setTimeout(() => {
+      get().finalizeStreamCard();
+      const fallbackAnalogy = style_hint === 'software'
+        ? `In software architecture, **${currentTopic}** is like type-checking in a compiler. Countable nouns behave like instantiated objects (with length or count properties), whereas uncountable nouns behave like streams or primitive buffer references where discrete indices do not apply!`
+        : style_hint === 'workplace'
+        ? `In corporate communications, **${currentTopic}** determines executive presence. Using precise collective concord ("the committee has decided" vs "the team are aligned") ensures your reports and presentations strike the right tone of unified authority.`
+        : `In everyday life, think of **${currentTopic}** like water vs ice cubes: you can't say "give me two waters" (mass noun), but you can easily count "two glasses of water" (quantified containers).`;
+
+      get().appendTranscript('agent', fallbackAnalogy);
+    }, 600);
+  },
+
   fetchSyllabus: async () => {
     const room = get().livekitRoom;
     const agentId = getAgentParticipantIdentity(room);
@@ -1511,7 +1692,7 @@ export const useBuddyStore = create<BuddyStore>((set, get) => ({
 ================================================================================
 FILE: mvp_talker_offline/VisualsFrontend/src/hooks/useLiveKit.ts
 LANGUAGE: typescript
-LINES: 303
+LINES: 312 | EST_TOKENS: ~3417
 PURPOSE: LiveKit WebRTC transport hook: room joining (/api/token), speaker audio track playback, text stream handling, and client RPC
 ================================================================================
 
@@ -1745,6 +1926,15 @@ export function useLiveKit() {
           store.setLivekitConnected(true);
           store.setLivekitRoom(room);
           store.setSseConnected(true); // Signal online status to UI
+
+          // Ensure microphone is published immediately on connection
+          if (room && room.localParticipant) {
+            const activeVoice = store.isVoiceActive;
+            room.localParticipant.setMicrophoneEnabled(activeVoice).catch((err) => {
+              console.warn('[LiveKit Mic] Initial microphone enable notice:', err);
+            });
+          }
+
           // Hydrate syllabus, in-flight last sheet, and lecture history immediately via LiveKit RPC
           store.fetchSyllabus().catch((err) => {
             console.warn('[LiveKit] Initial syllabus hydration notice:', err);
@@ -1823,7 +2013,7 @@ export function useLiveKit() {
 ================================================================================
 FILE: mvp_talker_offline/VisualsFrontend/src/utils/bionic.ts
 LANGUAGE: typescript
-LINES: 26
+LINES: 26 | EST_TOKENS: ~203
 PURPOSE: Bionic reading text transformation algorithm bolding initial letters of words
 ================================================================================
 
@@ -1858,8 +2048,8 @@ export function bionicHtml(text: string, enabled: boolean): string {
 ================================================================================
 FILE: mvp_talker_offline/VisualsFrontend/src/App.tsx
 LANGUAGE: typescript
-LINES: 328
-PURPOSE: Conversational Live Stage: Timeline feed, top status bar, bottom audio dock, and slide-over drawer
+LINES: 331 | EST_TOKENS: ~3402
+PURPOSE: Conversational Live Stage: Timeline feed, ambient mesh canvas, top status bar, bottom audio dock, and slide-over drawer
 ================================================================================
 
 import { useEffect, useRef } from 'react';
@@ -1869,16 +2059,16 @@ import remarkGfm from 'remark-gfm';
 import { Sparkles } from 'lucide-react';
 import { useBuddyStore } from './store';
 import { useLiveKit } from './hooks/useLiveKit';
-import { Header } from './components/Header';
-import { AudioDock } from './components/AudioDock';
-import { SlideOverDrawer } from './components/SlideOverDrawer';
-import { InlineQuizCard } from './components/InlineQuizCard';
-import { InlineDisputeCard } from './components/InlineDisputeCard';
-import { InlineNotesCard } from './components/InlineNotesCard';
-import { InlineGrammarMovementCard } from './components/InlineGrammarMovementCard';
-import { InlineSheetErrorCard } from './components/InlineSheetErrorCard';
-import { InlineCanvasLectureCard } from './components/InlineCanvasLectureCard';
-import { StreamingCard } from './components/StreamingCard';
+import { Header } from './components/layout/Header';
+import { AudioDock } from './components/layout/AudioDock';
+import { SlideOverDrawer } from './components/layout/SlideOverDrawer';
+import { InlineQuizCard } from './components/cards/InlineQuizCard';
+import { InlineDisputeCard } from './components/cards/InlineDisputeCard';
+import { InlineNotesCard } from './components/cards/InlineNotesCard';
+import { InlineGrammarMovementCard } from './components/cards/InlineGrammarMovementCard';
+import { InlineSheetErrorCard } from './components/cards/InlineSheetErrorCard';
+import { InlineCanvasLectureCard } from './components/cards/InlineCanvasLectureCard';
+import { StreamingCard } from './components/cards/StreamingCard';
 
 export default function App() {
   useLiveKit();
@@ -1905,6 +2095,9 @@ export default function App() {
         overflow: 'hidden'
       }}
     >
+      {/* ── Background Ambient Mesh Gradient Canvas ── */}
+      <div className="ambient-mesh-canvas" />
+
       {/* ── Top Header ── */}
       <Header />
 
@@ -2193,15 +2386,15 @@ export default function App() {
 
 
 ================================================================================
-FILE: mvp_talker_offline/VisualsFrontend/src/components/Header.tsx
+FILE: mvp_talker_offline/VisualsFrontend/src/components/layout/Header.tsx
 LANGUAGE: typescript
-LINES: 216
+LINES: 216 | EST_TOKENS: ~1838
 PURPOSE: Top navigation bar with engine status indicator, active chapter pill, and quick triggers
 ================================================================================
 
 import React from 'react';
 import { Sparkles, BookOpen, Layers, Zap } from 'lucide-react';
-import { useBuddyStore, DEFAULT_ROADMAP } from '../store';
+import { useBuddyStore, DEFAULT_ROADMAP } from '../../store';
 
 export const Header: React.FC = () => {
   const {
@@ -2418,17 +2611,17 @@ export const Header: React.FC = () => {
 
 
 ================================================================================
-FILE: mvp_talker_offline/VisualsFrontend/src/components/AudioDock.tsx
+FILE: mvp_talker_offline/VisualsFrontend/src/components/layout/AudioDock.tsx
 LANGUAGE: typescript
-LINES: 314
-PURPOSE: Floating voice visualizer dock with active waveform, composer textarea, and action chips
+LINES: 374 | EST_TOKENS: ~3190
+PURPOSE: Floating voice visualizer dock with 9-bar reactive equalizer, pulsing voice halo ring, composer textarea, and action chips
 ================================================================================
 
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import TextareaAutosize from 'react-textarea-autosize';
-import { Mic, MicOff, Send, Sparkles, BookOpen, Scale, GraduationCap } from 'lucide-react';
-import { useBuddyStore } from '../store';
+import { Mic, MicOff, Send, Sparkles, BookOpen, Scale, GraduationCap, Code2 } from 'lucide-react';
+import { useBuddyStore } from '../../store';
 
 export const AudioDock: React.FC = () => {
   const [inputVal, setInputVal] = useState('');
@@ -2441,6 +2634,7 @@ export const AudioDock: React.FC = () => {
     activeMode,
     toggleTutorMode,
     deliverLecturePhase,
+    requestReinterpretation,
     triggerLLMQuiz,
     triggerRevision,
     disputeAnswer,
@@ -2460,6 +2654,8 @@ export const AudioDock: React.FC = () => {
     }
   };
 
+  const waveBars = [6, 12, 18, 24, 15, 22, 16, 11, 7];
+
   return (
     <div
       style={{
@@ -2467,7 +2663,7 @@ export const AudioDock: React.FC = () => {
         bottom: '24px',
         left: '50%',
         transform: 'translateX(-50%)',
-        width: 'min(720px, calc(100% - 32px))',
+        width: 'min(740px, calc(100% - 32px))',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
@@ -2483,13 +2679,14 @@ export const AudioDock: React.FC = () => {
           gap: '8px',
           overflowX: 'auto',
           maxWidth: '100%',
-          paddingBottom: '2px'
+          paddingBottom: '3px',
+          scrollbarWidth: 'none'
         }}
       >
         <button
           onClick={() => toggleTutorMode()}
           style={{
-            background: activeMode === 'tutor' ? 'rgba(99, 102, 241, 0.2)' : 'var(--surface-1)',
+            background: activeMode === 'tutor' ? 'rgba(99, 102, 241, 0.22)' : 'var(--surface-1)',
             border: activeMode === 'tutor' ? '1px solid var(--accent)' : '1px solid var(--border-subtle)',
             borderRadius: 'var(--radius-full)',
             padding: '5px 14px',
@@ -2501,11 +2698,12 @@ export const AudioDock: React.FC = () => {
             alignItems: 'center',
             gap: '6px',
             whiteSpace: 'nowrap',
+            boxShadow: activeMode === 'tutor' ? '0 0 12px rgba(99, 102, 241, 0.3)' : 'none',
             transition: 'all 0.15s ease'
           }}
         >
-          <Sparkles size={12} color="var(--accent)" />
-          <span>{activeMode === 'tutor' ? '🎓 Exit Tutor Mode (Chat)' : '🎓 Start Tutor Mode: Nouns'}</span>
+          <Sparkles size={13} color="var(--accent)" />
+          <span>{activeMode === 'tutor' ? '🎓 Exit Tutor Mode' : '🎓 Tutor Mode: Nouns'}</span>
         </button>
 
         <button
@@ -2514,7 +2712,7 @@ export const AudioDock: React.FC = () => {
             background: 'var(--surface-1)',
             border: '1px solid var(--border-subtle)',
             borderRadius: 'var(--radius-full)',
-            padding: '5px 12px',
+            padding: '5px 13px',
             fontSize: '12px',
             color: 'var(--text-secondary)',
             cursor: 'pointer',
@@ -2533,8 +2731,37 @@ export const AudioDock: React.FC = () => {
             e.currentTarget.style.color = 'var(--text-secondary)';
           }}
         >
-          <GraduationCap size={12} color="var(--accent)" />
-          <span>Canvas Lecture: Nouns</span>
+          <GraduationCap size={13} color="var(--accent)" />
+          <span>Canvas Lecture</span>
+        </button>
+
+        <button
+          onClick={() => requestReinterpretation('software')}
+          style={{
+            background: 'var(--surface-1)',
+            border: '1px solid var(--border-subtle)',
+            borderRadius: 'var(--radius-full)',
+            padding: '5px 13px',
+            fontSize: '12px',
+            color: 'var(--text-secondary)',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '5px',
+            whiteSpace: 'nowrap',
+            transition: 'all 0.15s ease'
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.borderColor = '#38bdf8';
+            e.currentTarget.style.color = 'var(--text-primary)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.borderColor = 'var(--border-subtle)';
+            e.currentTarget.style.color = 'var(--text-secondary)';
+          }}
+        >
+          <Code2 size={13} color="#38bdf8" />
+          <span>⚡ Software Analogy</span>
         </button>
 
         <button
@@ -2543,7 +2770,7 @@ export const AudioDock: React.FC = () => {
             background: 'var(--surface-1)',
             border: '1px solid var(--border-subtle)',
             borderRadius: 'var(--radius-full)',
-            padding: '5px 12px',
+            padding: '5px 13px',
             fontSize: '12px',
             color: 'var(--text-secondary)',
             cursor: 'pointer',
@@ -2562,8 +2789,8 @@ export const AudioDock: React.FC = () => {
             e.currentTarget.style.color = 'var(--text-secondary)';
           }}
         >
-          <Sparkles size={12} color="var(--accent)" />
-          <span>Generate Ch. {activeChapter} Quiz</span>
+          <Sparkles size={13} color="var(--accent)" />
+          <span>Generate Quiz</span>
         </button>
 
         <button
@@ -2572,7 +2799,7 @@ export const AudioDock: React.FC = () => {
             background: 'var(--surface-1)',
             border: '1px solid var(--border-subtle)',
             borderRadius: 'var(--radius-full)',
-            padding: '5px 12px',
+            padding: '5px 13px',
             fontSize: '12px',
             color: 'var(--text-secondary)',
             cursor: 'pointer',
@@ -2591,17 +2818,17 @@ export const AudioDock: React.FC = () => {
             e.currentTarget.style.color = 'var(--text-secondary)';
           }}
         >
-          <BookOpen size={12} color="var(--text-secondary)" />
+          <BookOpen size={13} color="var(--text-secondary)" />
           <span>Revision Notes</span>
         </button>
 
         <button
-          onClick={() => disputeAnswer('In modern English, plural verb agreement with neither is common.')}
+          onClick={() => disputeAnswer('In modern English, plural verb agreement with neither is widely accepted.')}
           style={{
             background: 'var(--surface-1)',
             border: '1px solid var(--border-subtle)',
             borderRadius: 'var(--radius-full)',
-            padding: '5px 12px',
+            padding: '5px 13px',
             fontSize: '12px',
             color: 'var(--text-secondary)',
             cursor: 'pointer',
@@ -2620,7 +2847,7 @@ export const AudioDock: React.FC = () => {
             e.currentTarget.style.color = 'var(--text-secondary)';
           }}
         >
-          <Scale size={12} color="var(--text-tertiary)" />
+          <Scale size={13} color="var(--text-tertiary)" />
           <span>Test Dispute Ruling</span>
         </button>
       </div>
@@ -2629,42 +2856,45 @@ export const AudioDock: React.FC = () => {
       <div
         style={{
           width: '100%',
-          background: 'var(--surface-1)',
-          border: '1px solid var(--border-strong)',
+          background: 'rgba(15, 20, 31, 0.88)',
+          border: '1px solid rgba(255, 255, 255, 0.12)',
           borderRadius: 'var(--radius-xl)',
           padding: '8px 14px',
           display: 'flex',
           alignItems: 'center',
-          gap: '10px',
-          boxShadow: '0 12px 36px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05)',
-          backdropFilter: 'blur(16px)'
+          gap: '12px',
+          boxShadow: '0 16px 42px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.04)',
+          backdropFilter: 'blur(20px)'
         }}
       >
-        {/* Audio Wave Visualizer */}
+        {/* 9-Bar Reactive Equalizer Wave Visualizer */}
         <div
           style={{
             display: 'flex',
             alignItems: 'center',
-            gap: '3px',
+            gap: '2.5px',
             padding: '0 4px',
-            height: '24px'
+            height: '26px'
           }}
+          title={isVoiceActive ? 'Real-time Audio Spectrum Active' : 'Microphone Muted'}
         >
-          {[8, 14, 22, 12, 7].map((height, i) => (
+          {waveBars.map((height, i) => (
             <motion.span
               key={i}
               animate={{
-                height: isVoiceActive && (sseConnected || livekitConnected) ? [height, height * 0.35, height] : 4
+                height: isVoiceActive && (sseConnected || livekitConnected) ? [height, height * 0.3, height] : 4
               }}
               transition={{
                 repeat: Infinity,
-                duration: 0.9,
-                delay: i * 0.12,
+                duration: 0.85,
+                delay: i * 0.09,
                 ease: 'easeInOut'
               }}
               style={{
                 width: '3px',
-                background: isVoiceActive && (sseConnected || livekitConnected) ? 'var(--accent)' : 'var(--surface-3)',
+                background: isVoiceActive
+                  ? 'linear-gradient(to top, #6366f1, #06b6d4)'
+                  : 'var(--surface-3)',
                 borderRadius: '2px',
                 height: isVoiceActive ? `${height}px` : '4px'
               }}
@@ -2672,31 +2902,51 @@ export const AudioDock: React.FC = () => {
           ))}
         </div>
 
-        {/* Mic Toggle Button */}
-        <button
-          onClick={() => setIsVoiceActive(!isVoiceActive)}
-          style={{
-            width: '34px',
-            height: '34px',
-            borderRadius: 'var(--radius-full)',
-            background: isVoiceActive ? 'var(--accent-soft)' : 'var(--surface-2)',
-            border: `1px solid ${isVoiceActive ? 'rgba(59, 130, 246, 0.3)' : 'var(--border-subtle)'}`,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            cursor: 'pointer',
-            color: isVoiceActive ? 'var(--accent)' : 'var(--text-tertiary)',
-            transition: 'all 0.15s ease'
-          }}
-          title={isVoiceActive ? 'Mute Live Voice Input' : 'Enable Live Voice Input'}
-        >
-          {isVoiceActive ? <Mic size={16} /> : <MicOff size={16} />}
-        </button>
+        {/* Mic Toggle Button with Pulsing Voice Halo */}
+        <div style={{ position: 'relative' }}>
+          {isVoiceActive && (
+            <div
+              style={{
+                position: 'absolute',
+                top: '-4px',
+                left: '-4px',
+                right: '-4px',
+                bottom: '-4px',
+                borderRadius: '50%',
+                background: 'radial-gradient(circle, rgba(99, 102, 241, 0.35) 0%, rgba(6, 182, 212, 0) 70%)',
+                animation: 'pulse 1.8s infinite ease-in-out',
+                pointerEvents: 'none'
+              }}
+            />
+          )}
+          <button
+            onClick={() => setIsVoiceActive(!isVoiceActive)}
+            style={{
+              width: '36px',
+              height: '36px',
+              borderRadius: 'var(--radius-full)',
+              background: isVoiceActive ? 'linear-gradient(135deg, #4f46e5 0%, #3b82f6 100%)' : 'var(--surface-2)',
+              border: `1px solid ${isVoiceActive ? 'rgba(99, 102, 241, 0.5)' : 'var(--border-subtle)'}`,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+              color: isVoiceActive ? '#ffffff' : 'var(--text-tertiary)',
+              boxShadow: isVoiceActive ? '0 0 16px rgba(99, 102, 241, 0.5)' : 'none',
+              transition: 'all 0.15s ease',
+              position: 'relative',
+              zIndex: 2
+            }}
+            title={isVoiceActive ? 'Mute Live Voice Input' : 'Enable Live Voice Input'}
+          >
+            {isVoiceActive ? <Mic size={17} /> : <MicOff size={17} />}
+          </button>
+        </div>
 
         {/* Text Area Composer */}
         <TextareaAutosize
           maxRows={4}
-          placeholder="Talk with Buddy or ask a grammar question..."
+          placeholder="Talk with Buddy, dispute a rule, or request an analogy..."
           value={inputVal}
           onChange={(e) => setInputVal(e.target.value)}
           onKeyDown={handleKeyDown}
@@ -2718,16 +2968,19 @@ export const AudioDock: React.FC = () => {
           onClick={handleSend}
           disabled={!inputVal.trim()}
           style={{
-            width: '34px',
-            height: '34px',
+            width: '36px',
+            height: '36px',
             borderRadius: 'var(--radius-full)',
-            background: inputVal.trim() ? 'var(--accent)' : 'var(--surface-2)',
+            background: inputVal.trim()
+              ? 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)'
+              : 'var(--surface-2)',
             border: 'none',
             color: inputVal.trim() ? '#ffffff' : 'var(--text-tertiary)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             cursor: inputVal.trim() ? 'pointer' : 'default',
+            boxShadow: inputVal.trim() ? '0 2px 10px rgba(99, 102, 241, 0.4)' : 'none',
             transition: 'all 0.15s ease'
           }}
           title="Send message (Enter)"
@@ -2741,9 +2994,9 @@ export const AudioDock: React.FC = () => {
 
 
 ================================================================================
-FILE: mvp_talker_offline/VisualsFrontend/src/components/SlideOverDrawer.tsx
+FILE: mvp_talker_offline/VisualsFrontend/src/components/layout/SlideOverDrawer.tsx
 LANGUAGE: typescript
-LINES: 547
+LINES: 547 | EST_TOKENS: ~6509
 PURPOSE: Collapsible slide-over drawer with 18-chapter roadmap, analytics, and remediation queue
 ================================================================================
 
@@ -2764,9 +3017,9 @@ import {
   Briefcase,
   MessageSquare
 } from 'lucide-react';
-import { useBuddyStore } from '../store';
-import type { DrawerTab } from '../types';
-import { SyllabusSection } from './SyllabusSection';
+import { useBuddyStore } from '../../store';
+import type { DrawerTab } from '../../types';
+import { SyllabusSection } from '../syllabus/SyllabusSection';
 
 export const SlideOverDrawer: React.FC = () => {
   const [lectureFilter, setLectureFilter] = useState<string>('all');
@@ -3297,9 +3550,9 @@ export const SlideOverDrawer: React.FC = () => {
 
 
 ================================================================================
-FILE: mvp_talker_offline/VisualsFrontend/src/components/SyllabusSection.tsx
+FILE: mvp_talker_offline/VisualsFrontend/src/components/syllabus/SyllabusSection.tsx
 LANGUAGE: typescript
-LINES: 376
+LINES: 376 | EST_TOKENS: ~3306
 PURPOSE: Modular syllabus section displaying active chapter hero, stage badges, coursework gating, 18-chapter roadmap, and drift audit metrics
 ================================================================================
 
@@ -3314,7 +3567,7 @@ import {
   AlertTriangle,
   RotateCcw
 } from 'lucide-react';
-import { useBuddyStore, DEFAULT_ROADMAP } from '../store';
+import { useBuddyStore, DEFAULT_ROADMAP } from '../../store';
 
 export const SyllabusSection: React.FC = () => {
   const {
@@ -3682,9 +3935,9 @@ export const SyllabusSection: React.FC = () => {
 
 
 ================================================================================
-FILE: mvp_talker_offline/VisualsFrontend/src/components/InlineQuizCard.tsx
+FILE: mvp_talker_offline/VisualsFrontend/src/components/cards/InlineQuizCard.tsx
 LANGUAGE: typescript
-LINES: 529
+LINES: 529 | EST_TOKENS: ~4573
 PURPOSE: Inline generative quiz artifact card with feedback, rule citations, dispute handling, and isomorphic retry
 ================================================================================
 
@@ -3703,8 +3956,8 @@ import {
   BookOpen,
   Award
 } from 'lucide-react';
-import { useBuddyStore } from '../store';
-import type { QuizQuestion, QuizSubmitResult } from '../types';
+import { useBuddyStore } from '../../store';
+import type { QuizQuestion, QuizSubmitResult } from '../../types';
 
 interface InlineQuizCardProps {
   questions: QuizQuestion[];
@@ -4220,16 +4473,16 @@ export const InlineQuizCard: React.FC<InlineQuizCardProps> = ({
 
 
 ================================================================================
-FILE: mvp_talker_offline/VisualsFrontend/src/components/InlineDisputeCard.tsx
+FILE: mvp_talker_offline/VisualsFrontend/src/components/cards/InlineDisputeCard.tsx
 LANGUAGE: typescript
-LINES: 221
+LINES: 221 | EST_TOKENS: ~1939
 PURPOSE: Inline dispute ruling card comparing formal grammar vs colloquial usage with citations
 ================================================================================
 
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Scale, Check, Copy, ExternalLink, BookCheck, MessageCircle } from 'lucide-react';
-import type { ContentionProps } from '../types';
+import type { ContentionProps } from '../../types';
 
 export const InlineDisputeCard: React.FC<{ data: ContentionProps }> = ({ data }) => {
   const [copied, setCopied] = useState(false);
@@ -4450,16 +4703,16 @@ export const InlineDisputeCard: React.FC<{ data: ContentionProps }> = ({ data })
 
 
 ================================================================================
-FILE: mvp_talker_offline/VisualsFrontend/src/components/InlineNotesCard.tsx
+FILE: mvp_talker_offline/VisualsFrontend/src/components/cards/InlineNotesCard.tsx
 LANGUAGE: typescript
-LINES: 219
+LINES: 219 | EST_TOKENS: ~1944
 PURPOSE: Inline revision notes artifact card with bionic reading toggle and common traps
 ================================================================================
 
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { BookOpen, Eye, AlertTriangle, MessageSquareQuote } from 'lucide-react';
-import { bionicHtml } from '../utils/bionic';
+import { bionicHtml } from '../../utils/bionic';
 
 interface NoteRule {
   title?: string;
@@ -4678,16 +4931,16 @@ export const InlineNotesCard: React.FC<InlineNotesCardProps> = ({ notes }) => {
 
 
 ================================================================================
-FILE: mvp_talker_offline/VisualsFrontend/src/components/InlineGrammarMovementCard.tsx
+FILE: mvp_talker_offline/VisualsFrontend/src/components/cards/InlineGrammarMovementCard.tsx
 LANGUAGE: typescript
-LINES: 368
+LINES: 368 | EST_TOKENS: ~2906
 PURPOSE: Inline syntactic movement animation card with Framer Motion layoutId spring physics and role capsules
 ================================================================================
 
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowRightLeft, RotateCcw, Play, BookOpen, Sparkles, CheckCircle2 } from 'lucide-react';
-import type { GrammarMovementProps, GrammarRole } from '../types';
+import type { GrammarMovementProps, GrammarRole } from '../../types';
 
 interface InlineGrammarMovementCardProps {
   data: GrammarMovementProps;
@@ -5055,17 +5308,17 @@ export const InlineGrammarMovementCard: React.FC<InlineGrammarMovementCardProps>
 
 
 ================================================================================
-FILE: mvp_talker_offline/VisualsFrontend/src/components/InlineSheetErrorCard.tsx
+FILE: mvp_talker_offline/VisualsFrontend/src/components/cards/InlineSheetErrorCard.tsx
 LANGUAGE: typescript
-LINES: 197
+LINES: 197 | EST_TOKENS: ~1688
 PURPOSE: Inline sheet error card with alert status, target component diagnostics, and interactive retry action
 ================================================================================
 
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { AlertTriangle, RefreshCw, ChevronDown, ChevronUp, Terminal } from 'lucide-react';
-import type { SheetErrorProps } from '../types';
-import { useBuddyStore } from '../store';
+import type { SheetErrorProps } from '../../types';
+import { useBuddyStore } from '../../store';
 
 interface Props {
   data: SheetErrorProps;
@@ -5261,9 +5514,1025 @@ export function InlineSheetErrorCard({ data }: Props) {
 
 
 ================================================================================
-FILE: mvp_talker_offline/VisualsFrontend/src/components/StreamingCard.tsx
+FILE: mvp_talker_offline/VisualsFrontend/src/components/cards/InlineCanvasLectureCard.tsx
 LANGUAGE: typescript
-LINES: 74
+LINES: 1007 | EST_TOKENS: ~9487
+PURPOSE: Interactive canvas lecture card with 5 visual primitives (syntactic tree, concord balance, flow, matrix, classifier), bionic reading, and analogy reinterpretation toolbar
+================================================================================
+
+import React, { useState, useRef, useEffect } from 'react';
+import { motion } from 'framer-motion';
+import {
+  GraduationCap,
+  Eye,
+  Sparkles,
+  CheckCircle2,
+  Volume2,
+  Repeat,
+  Briefcase,
+  MessageSquare,
+  Mic,
+  Volume1,
+  Code2,
+  Compass,
+  BookMarked,
+  ChevronDown,
+  ChevronUp
+} from 'lucide-react';
+import type { CanvasLectureProps } from '../../types';
+import { bionicHtml } from '../../utils/bionic';
+import { useBuddyStore } from '../../store';
+
+interface InlineCanvasLectureCardProps {
+  data: CanvasLectureProps;
+}
+
+export const InlineCanvasLectureCard: React.FC<InlineCanvasLectureCardProps> = ({ data }) => {
+  const [bionicEnabled, setBionicEnabled] = useState(false);
+  const [activeInteractiveMode, setActiveInteractiveMode] = useState<'unitary' | 'divided'>('unitary');
+  const [activeWorkplaceIdx, setActiveWorkplaceIdx] = useState<number>(0);
+  const [practicingIdx, setPracticingIdx] = useState<number | null>(null);
+  const [selectedTreeNode, setSelectedTreeNode] = useState<string>('agreement');
+  const [reinterpretingStyle, setReinterpretingStyle] = useState<string | null>(null);
+  const [showCitations, setShowCitations] = useState(false);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  const rawCanvasType = (data.canvas_type || 'particle_classifier').toLowerCase();
+  const cfg = (data.canvas_config || {}) as Record<string, any>;
+  const sessionType = data.session_type || 'grammar_mastery';
+
+  // Normalize canvas type into 5 canonical primitives
+  const canvasType =
+    rawCanvasType.includes('tree') || rawCanvasType.includes('hierarchy')
+      ? 'tree'
+      : rawCanvasType.includes('balance') || rawCanvasType.includes('scale') || rawCanvasType.includes('concord')
+      ? 'balance'
+      : rawCanvasType.includes('flow') || rawCanvasType.includes('cadence') || rawCanvasType.includes('repetition')
+      ? 'flow'
+      : rawCanvasType.includes('matrix') || rawCanvasType.includes('workplace') || rawCanvasType.includes('soften')
+      ? 'matrix'
+      : 'classifier';
+
+  // Session metadata
+  const sessionMeta = {
+    grammar_mastery: {
+      label: 'Grammar Mastery',
+      icon: GraduationCap,
+      color: '#6366f1',
+      bg: 'rgba(99, 102, 241, 0.15)',
+      border: 'rgba(99, 102, 241, 0.3)'
+    },
+    sentence_repetition: {
+      label: 'Sentence Repetition',
+      icon: Repeat,
+      color: '#06b6d4',
+      bg: 'rgba(6, 182, 212, 0.15)',
+      border: 'rgba(6, 182, 212, 0.3)'
+    },
+    workplace_office: {
+      label: 'Workplace & Office',
+      icon: Briefcase,
+      color: '#10b981',
+      bg: 'rgba(16, 185, 129, 0.15)',
+      border: 'rgba(16, 185, 129, 0.3)'
+    },
+    conversational_banter: {
+      label: 'Conversational Banter',
+      icon: MessageSquare,
+      color: '#f59e0b',
+      bg: 'rgba(245, 158, 11, 0.15)',
+      border: 'rgba(245, 158, 11, 0.3)'
+    }
+  }[sessionType as string] || {
+    label: 'Interactive Lecture',
+    icon: GraduationCap,
+    color: '#6366f1',
+    bg: 'rgba(99, 102, 241, 0.15)',
+    border: 'rgba(99, 102, 241, 0.3)'
+  };
+
+  const SessionIcon = sessionMeta.icon;
+
+  // Speech preview for repetition/shadowing
+  const handleListenPractice = (text: string, idx: number) => {
+    setPracticingIdx(idx);
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+      const utter = new SpeechSynthesisUtterance(text);
+      utter.rate = 0.92;
+      utter.pitch = 1.0;
+      utter.onend = () => setPracticingIdx(null);
+      utter.onerror = () => setPracticingIdx(null);
+      window.speechSynthesis.speak(utter);
+    } else {
+      setTimeout(() => setPracticingIdx(null), 2000);
+    }
+  };
+
+  // Reinterpretation action trigger
+  const handleRequestAnalogy = async (style: 'software' | 'workplace' | 'everyday') => {
+    setReinterpretingStyle(style);
+    try {
+      await useBuddyStore.getState().requestReinterpretation(style, data.topic);
+    } finally {
+      setTimeout(() => setReinterpretingStyle(null), 1500);
+    }
+  };
+
+  // Canvas Drawing Loop
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    let animId: number;
+    let width = (canvas.width = canvas.parentElement?.clientWidth || 640);
+    let height = (canvas.height = 230);
+
+    // Particle Classifier state
+    const items = (cfg.items as Array<{ name: string; category: string; type: string }>) || [
+      { name: 'Apples', category: 'Countable', type: 'countable' },
+      { name: 'Water', category: 'Uncountable', type: 'uncountable' },
+      { name: 'Advice', category: 'Uncountable', type: 'uncountable' },
+      { name: 'Laptops', category: 'Countable', type: 'countable' },
+      { name: 'Information', category: 'Uncountable', type: 'uncountable' },
+      { name: 'Furniture', category: 'Uncountable', type: 'uncountable' }
+    ];
+
+    const particles = items.map((it, idx) => ({
+      ...it,
+      x: 80 + (idx % 3) * ((width - 160) / 2) + Math.random() * 30,
+      y: 40 + Math.floor(idx / 3) * 65,
+      vx: (Math.random() - 0.5) * 0.7,
+      vy: (Math.random() - 0.5) * 0.7,
+      radius: 28
+    }));
+
+    let scaleAngle = activeInteractiveMode === 'unitary' ? -0.12 : 0.12;
+    let waveOffset = 0;
+    let pulseT = 0;
+
+    const render = () => {
+      ctx.clearRect(0, 0, width, height);
+      pulseT += 0.04;
+
+      // 1. Syntactic Tree Primitive
+      if (canvasType === 'tree') {
+        const cx = width / 2;
+        const cy = 30;
+
+        // Tree layout coordinates
+        const root = { x: cx, y: cy, label: 'S (Sentence)', role: 'Clause Root' };
+        const np = { x: cx - width * 0.22, y: cy + 60, label: 'NP (Subject)', role: 'Subject Noun Phrase' };
+        const vp = { x: cx + width * 0.22, y: cy + 60, label: 'VP (Predicate)', role: 'Verb Phrase' };
+
+        // Leaves
+        const det = { x: np.x - 45, y: np.y + 60, label: 'Det', text: '"The"' };
+        const noun = { x: np.x + 45, y: np.y + 60, label: 'Noun', text: '"committee"' };
+        const aux = { x: vp.x - 65, y: vp.y + 60, label: 'Aux', text: activeInteractiveMode === 'unitary' ? '"has"' : '"have"' };
+        const verb = { x: vp.x, y: vp.y + 60, label: 'Verb', text: '"voted"' };
+        const obj = { x: vp.x + 65, y: vp.y + 60, label: 'NP', text: '"unanimously"' };
+
+        // Draw connecting branches with bezier curves
+        ctx.strokeStyle = 'rgba(99, 102, 241, 0.4)';
+        ctx.lineWidth = 2;
+
+        const drawBranch = (p1: { x: number; y: number }, p2: { x: number; y: number }, active = false) => {
+          ctx.beginPath();
+          ctx.moveTo(p1.x, p1.y + 12);
+          ctx.bezierCurveTo(p1.x, (p1.y + p2.y) / 2, p2.x, (p1.y + p2.y) / 2, p2.x, p2.y - 12);
+          ctx.strokeStyle = active ? '#38bdf8' : 'rgba(148, 163, 184, 0.25)';
+          ctx.lineWidth = active ? 2.5 : 1.5;
+          ctx.stroke();
+        };
+
+        drawBranch(root, np);
+        drawBranch(root, vp);
+        drawBranch(np, det);
+        drawBranch(np, noun);
+        drawBranch(vp, aux, true);
+        drawBranch(vp, verb);
+        drawBranch(vp, obj);
+
+        // Agreement arc between Head Noun and Auxiliary Verb
+        ctx.save();
+        ctx.beginPath();
+        ctx.setLineDash([4, 4]);
+        ctx.moveTo(noun.x, noun.y + 20);
+        ctx.quadraticCurveTo(cx, height - 25, aux.x, aux.y + 20);
+        ctx.strokeStyle = activeInteractiveMode === 'unitary' ? '#60a5fa' : '#34d399';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.restore();
+
+        // Agreement indicator label
+        ctx.fillStyle = activeInteractiveMode === 'unitary' ? '#60a5fa' : '#34d399';
+        ctx.font = 'bold 11px Inter, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(
+          activeInteractiveMode === 'unitary' ? '⇄ Grammatical Concord: Singular (Unit)' : '⇄ Notional Concord: Plural (Members)',
+          cx,
+          height - 10
+        );
+
+        // Helper to draw node pills
+        const drawNode = (
+          pt: { x: number; y: number; label: string; text?: string },
+          highlight = false,
+          color = '#6366f1'
+        ) => {
+          const w = pt.text ? 72 : 84;
+          const h = pt.text ? 36 : 24;
+          ctx.fillStyle = highlight ? 'rgba(99, 102, 241, 0.25)' : 'rgba(15, 23, 42, 0.85)';
+          ctx.strokeStyle = highlight ? color : 'rgba(148, 163, 184, 0.3)';
+          ctx.lineWidth = highlight ? 1.5 : 1;
+          ctx.roundRect(pt.x - w / 2, pt.y - h / 2, w, h, [6]);
+          ctx.fill();
+          ctx.stroke();
+
+          ctx.fillStyle = highlight ? '#ffffff' : '#cbd5e1';
+          ctx.font = '600 11px Inter, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText(pt.label, pt.x, pt.text ? pt.y - 3 : pt.y + 4);
+
+          if (pt.text) {
+            ctx.fillStyle = color;
+            ctx.font = 'bold 11px Inter, sans-serif';
+            ctx.fillText(pt.text, pt.x, pt.y + 11);
+          }
+        };
+
+        drawNode(root, false, '#818cf8');
+        drawNode(np, false, '#38bdf8');
+        drawNode(vp, false, '#818cf8');
+        drawNode(det);
+        drawNode(noun, true, activeInteractiveMode === 'unitary' ? '#60a5fa' : '#34d399');
+        drawNode(aux, true, activeInteractiveMode === 'unitary' ? '#60a5fa' : '#34d399');
+        drawNode(verb);
+        drawNode(obj);
+
+      // 2. Concord Balance Scale Primitive
+      } else if (canvasType === 'balance') {
+        const centerX = width / 2;
+        const centerY = 125;
+        const beamLength = Math.min(width * 0.72, 350);
+
+        const targetAngle = activeInteractiveMode === 'unitary' ? -0.14 : 0.14;
+        scaleAngle += (targetAngle - scaleAngle) * 0.08;
+
+        // Base Stand
+        ctx.strokeStyle = '#475569';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(centerX, centerY - 20);
+        ctx.lineTo(centerX, centerY + 65);
+        ctx.moveTo(centerX - 42, centerY + 65);
+        ctx.lineTo(centerX + 42, centerY + 65);
+        ctx.stroke();
+
+        // Glowing Fulcrum
+        ctx.fillStyle = '#6366f1';
+        ctx.beginPath();
+        ctx.moveTo(centerX, centerY - 20);
+        ctx.lineTo(centerX - 15, centerY + 6);
+        ctx.lineTo(centerX + 15, centerY + 6);
+        ctx.closePath();
+        ctx.fill();
+
+        // Beam
+        ctx.save();
+        ctx.translate(centerX, centerY - 20);
+        ctx.rotate(scaleAngle);
+
+        ctx.strokeStyle = '#94a3b8';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(-beamLength / 2, 0);
+        ctx.lineTo(beamLength / 2, 0);
+        ctx.stroke();
+
+        // Left Pan: Unitary
+        ctx.fillStyle = activeInteractiveMode === 'unitary' ? '#3b82f6' : '#334155';
+        ctx.fillRect(-beamLength / 2 - 38, 15, 76, 28);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 11px Inter, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('IS / HAS', -beamLength / 2, 33);
+
+        // Right Pan: Divided
+        ctx.fillStyle = activeInteractiveMode === 'divided' ? '#10b981' : '#334155';
+        ctx.fillRect(beamLength / 2 - 38, 15, 76, 28);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 11px Inter, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('ARE / HAVE', beamLength / 2, 33);
+
+        ctx.restore();
+
+        // Status pill
+        ctx.fillStyle = activeInteractiveMode === 'unitary' ? 'rgba(59, 130, 246, 0.12)' : 'rgba(16, 185, 129, 0.12)';
+        ctx.strokeStyle = activeInteractiveMode === 'unitary' ? '#3b82f6' : '#10b981';
+        ctx.lineWidth = 1.2;
+        ctx.roundRect(width / 2 - 180, 14, 360, 36, [8]);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = '#f8fafc';
+        ctx.font = '12px Inter, sans-serif';
+        ctx.textAlign = 'center';
+        const statusText =
+          activeInteractiveMode === 'unitary'
+            ? 'Unified Entity (Unitary Concord): "The committee has approved the plan."'
+            : 'Individual Members (Notional Concord): "The committee are divided in opinion."';
+        ctx.fillText(statusText, width / 2, 37);
+
+      // 3. Cadence Flow Waveform Primitive
+      } else if (canvasType === 'flow') {
+        waveOffset += 0.045;
+        const centerY = height / 2 + 10;
+        const barCount = 38;
+        const barWidth = (width - 60) / barCount;
+
+        ctx.fillStyle = 'rgba(6, 182, 212, 0.04)';
+        ctx.fillRect(10, 10, width - 20, height - 20);
+
+        for (let i = 0; i < barCount; i++) {
+          const x = 30 + i * barWidth;
+          const sine = Math.sin(i * 0.32 + waveOffset);
+          const isStressed = i % 6 === 2 || i % 6 === 3;
+          const barHeight = isStressed ? Math.max(16, Math.abs(sine) * 75 + 25) : Math.max(8, Math.abs(sine) * 35 + 8);
+
+          ctx.fillStyle = isStressed ? '#38bdf8' : i % 2 === 0 ? '#818cf8' : '#334155';
+          ctx.roundRect(x, centerY - barHeight / 2, barWidth - 4, barHeight, [3]);
+          ctx.fill();
+
+          if (isStressed && Math.sin(pulseT) > 0) {
+            ctx.fillStyle = '#38bdf8';
+            ctx.beginPath();
+            ctx.arc(x + (barWidth - 4) / 2, centerY - barHeight / 2 - 6, 2.5, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+
+        // Header pill
+        ctx.fillStyle = 'rgba(6, 182, 212, 0.16)';
+        ctx.strokeStyle = '#06b6d4';
+        ctx.lineWidth = 1;
+        ctx.roundRect(width / 2 - 165, 12, 330, 28, [6]);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = '#f8fafc';
+        ctx.font = 'bold 11px Inter, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('STRESS-TIMED CADENCE • BEAT RECOGNITION', width / 2, 30);
+
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '11px Inter, sans-serif';
+        ctx.fillText('Notice how content words take the primary beat while function words compress.', width / 2, height - 12);
+
+      // 4. Workplace Matrix Primitive
+      } else if (canvasType === 'matrix') {
+        const pairs = (cfg.pairs as Array<{ direct: string; softened: string; tone: string }>) || [
+          { direct: 'Send me the project files now.', softened: 'Could you possibly send over the project files when you have a moment?', tone: 'Polite Inquiry' },
+          { direct: 'You misunderstood my proposal.', softened: 'I might not have been clear; let me clarify the main point.', tone: 'Diplomatic Pivot' }
+        ];
+        const activePair = pairs[activeWorkplaceIdx % pairs.length];
+        const colW = (width - 40) / 2;
+
+        // Direct
+        ctx.fillStyle = 'rgba(239, 68, 68, 0.08)';
+        ctx.strokeStyle = 'rgba(239, 68, 68, 0.35)';
+        ctx.lineWidth = 1.5;
+        ctx.roundRect(14, 20, colW - 10, height - 42, [8]);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = '#f87171';
+        ctx.font = 'bold 11px Inter, sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText('BLUNT / DIRECT REGISTER', 26, 44);
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '12px Inter, sans-serif';
+        ctx.fillText(`"${activePair.direct}"`, 26, 75);
+
+        // Softened
+        ctx.fillStyle = 'rgba(16, 185, 129, 0.08)';
+        ctx.strokeStyle = 'rgba(16, 185, 129, 0.35)';
+        ctx.lineWidth = 1.5;
+        ctx.roundRect(colW + 14, 20, colW - 10, height - 42, [8]);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = '#34d399';
+        ctx.font = 'bold 11px Inter, sans-serif';
+        ctx.fillText(`SOFTENED (${activePair.tone.toUpperCase()})`, colW + 26, 44);
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '12px Inter, sans-serif';
+        ctx.fillText(`"${activePair.softened.slice(0, 44)}..."`, colW + 26, 75);
+
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '11px Inter, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('Modal auxiliaries (could, would) and past frames soften imperative tone.', width / 2, height - 12);
+
+      // 5. Default: Particle Classifier
+      } else {
+        const colWidth = (width - 40) / 2;
+
+        ctx.fillStyle = 'rgba(59, 130, 246, 0.08)';
+        ctx.strokeStyle = 'rgba(59, 130, 246, 0.35)';
+        ctx.lineWidth = 1.5;
+        ctx.roundRect(14, 18, colWidth - 10, height - 36, [10]);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = '#60a5fa';
+        ctx.font = 'bold 11.5px Inter, sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText('COUNTABLE / SENSORY [Many • Few • Units]', 26, 42);
+
+        ctx.fillStyle = 'rgba(168, 85, 247, 0.08)';
+        ctx.strokeStyle = 'rgba(168, 85, 247, 0.35)';
+        ctx.lineWidth = 1.5;
+        ctx.roundRect(colWidth + 14, 18, colWidth - 10, height - 36, [10]);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = '#c084fc';
+        ctx.font = 'bold 11.5px Inter, sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText('UNCOUNTABLE / MASS [Much • Less • Continuous]', colWidth + 26, 42);
+
+        particles.forEach((p) => {
+          p.x += p.vx;
+          p.y += p.vy;
+
+          const isCountable = p.type === 'countable' || p.type === 'concrete';
+          const minX = isCountable ? 26 : colWidth + 26;
+          const maxX = isCountable ? colWidth - 26 : width - 26;
+
+          if (p.x < minX || p.x > maxX) p.vx *= -1;
+          if (p.y < 65 || p.y > height - 35) p.vy *= -1;
+
+          const pillW = 88;
+          const pillH = 26;
+          const px = p.x - pillW / 2;
+          const py = p.y - pillH / 2;
+
+          ctx.fillStyle = isCountable ? 'rgba(30, 58, 138, 0.85)' : 'rgba(88, 28, 135, 0.85)';
+          ctx.strokeStyle = isCountable ? '#38bdf8' : '#e879f9';
+          ctx.lineWidth = 1;
+          ctx.roundRect(px, py, pillW, pillH, [13]);
+          ctx.fill();
+          ctx.stroke();
+
+          ctx.fillStyle = '#ffffff';
+          ctx.font = '500 11.5px Inter, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText(p.name, p.x, p.y + 4);
+        });
+      }
+
+      animId = requestAnimationFrame(render);
+    };
+
+    render();
+
+    return () => {
+      cancelAnimationFrame(animId);
+    };
+  }, [canvasType, activeInteractiveMode, activeWorkplaceIdx, selectedTreeNode, cfg]);
+
+  const citations = data.citations || [
+    { text: 'Collective Concord & Syntactic Inversion', source: 'Oxford Guide to English Grammar § 2.4', rule: 'Rule 12' }
+  ];
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.25 }}
+      style={{
+        margin: '20px 0',
+        background: 'var(--surface-1)',
+        border: '1px solid var(--border-subtle)',
+        borderRadius: 'var(--radius-xl)',
+        padding: '22px 24px',
+        maxWidth: '740px',
+        width: '100%',
+        boxShadow: '0 12px 36px rgba(0, 0, 0, 0.45)',
+        position: 'relative',
+        overflow: 'hidden'
+      }}
+    >
+      {/* ── Top Header Badge Bar ── */}
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: '16px',
+          borderBottom: '1px solid var(--border-subtle)',
+          paddingBottom: '12px'
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div
+            style={{
+              width: '32px',
+              height: '32px',
+              borderRadius: '50%',
+              background: sessionMeta.bg,
+              border: `1px solid ${sessionMeta.border}`,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: sessionMeta.color,
+              boxShadow: `0 2px 10px ${sessionMeta.bg}`
+            }}
+          >
+            <SessionIcon size={16} />
+          </div>
+          <div>
+            <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span>Phase {data.phase_index || 1}: {data.submodule}</span>
+              <span
+                style={{
+                  fontSize: '10px',
+                  background: sessionMeta.bg,
+                  color: sessionMeta.color,
+                  border: `1px solid ${sessionMeta.border}`,
+                  padding: '2px 8px',
+                  borderRadius: '10px',
+                  fontWeight: 600,
+                  textTransform: 'uppercase'
+                }}
+              >
+                {sessionMeta.label}
+              </span>
+            </div>
+            <div style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>
+              Curriculum Topic: {data.topic} • Visual Engine: {canvasType.toUpperCase()}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <button
+            onClick={() => setBionicEnabled(!bionicEnabled)}
+            style={{
+              background: bionicEnabled ? 'rgba(99, 102, 241, 0.2)' : 'var(--surface-2)',
+              border: `1px solid ${bionicEnabled ? 'var(--accent)' : 'var(--border-subtle)'}`,
+              borderRadius: 'var(--radius-full)',
+              padding: '4px 10px',
+              fontSize: '11px',
+              color: bionicEnabled ? 'var(--accent)' : 'var(--text-secondary)',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '5px'
+            }}
+            title="Toggle Bionic Rapid Reading"
+          >
+            <Eye size={12} />
+            <span>Bionic</span>
+          </button>
+        </div>
+      </div>
+
+      {/* ── Spoken Voice Script Pill ── */}
+      {data.spoken_summary && (
+        <div
+          style={{
+            marginBottom: '16px',
+            padding: '12px 16px',
+            background: 'rgba(59, 130, 246, 0.08)',
+            border: '1px solid rgba(59, 130, 246, 0.25)',
+            borderRadius: 'var(--radius-md)',
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: '10px'
+          }}
+        >
+          <Volume2 size={16} color="var(--accent)" style={{ flexShrink: 0, marginTop: '2px' }} />
+          <div style={{ fontSize: '13.5px', lineHeight: 1.55, color: 'var(--text-primary)', fontStyle: 'italic' }}>
+            "{data.spoken_summary}"
+          </div>
+        </div>
+      )}
+
+      {/* ── Educational Lecture Paragraphs ── */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '20px' }}>
+        {data.paragraphs.map((para, idx) => (
+          <div
+            key={idx}
+            style={{
+              fontSize: '13.5px',
+              lineHeight: 1.7,
+              color: 'var(--text-secondary)',
+              background: 'var(--surface-0)',
+              padding: '12px 16px',
+              borderRadius: 'var(--radius-md)',
+              border: '1px solid var(--border-subtle)'
+            }}
+          >
+            {bionicEnabled ? (
+              <span dangerouslySetInnerHTML={{ __html: bionicHtml(para, true) }} />
+            ) : (
+              <span>{para}</span>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* ── Interactive HTML5 Canvas Visualizer ── */}
+      <div
+        style={{
+          background: '#090d16',
+          border: '1px solid var(--border-strong)',
+          borderRadius: 'var(--radius-lg)',
+          padding: '14px',
+          marginBottom: '18px',
+          position: 'relative'
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: '10px'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <Sparkles size={13} color="var(--accent)" />
+            <span style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--accent)', fontWeight: 600 }}>
+              Interactive Visual Primitive: {canvasType}
+            </span>
+          </div>
+
+          {(canvasType === 'balance' || canvasType === 'tree') && (
+            <div style={{ display: 'flex', gap: '6px' }}>
+              <button
+                onClick={() => setActiveInteractiveMode('unitary')}
+                style={{
+                  background: activeInteractiveMode === 'unitary' ? 'var(--accent)' : 'var(--surface-2)',
+                  border: 'none',
+                  borderRadius: 'var(--radius-full)',
+                  padding: '3px 10px',
+                  fontSize: '11px',
+                  color: '#ffffff',
+                  cursor: 'pointer'
+                }}
+              >
+                Unitary Concord
+              </button>
+              <button
+                onClick={() => setActiveInteractiveMode('divided')}
+                style={{
+                  background: activeInteractiveMode === 'divided' ? '#10b981' : 'var(--surface-2)',
+                  border: 'none',
+                  borderRadius: 'var(--radius-full)',
+                  padding: '3px 10px',
+                  fontSize: '11px',
+                  color: '#ffffff',
+                  cursor: 'pointer'
+                }}
+              >
+                Divided Concord
+              </button>
+              {canvasType === 'tree' && (
+                <button
+                  onClick={() => setSelectedTreeNode(selectedTreeNode === 'agreement' ? 'constituents' : 'agreement')}
+                  style={{
+                    background: 'rgba(56, 189, 248, 0.15)',
+                    border: '1px solid rgba(56, 189, 248, 0.35)',
+                    borderRadius: 'var(--radius-full)',
+                    padding: '3px 10px',
+                    fontSize: '11px',
+                    color: '#38bdf8',
+                    cursor: 'pointer'
+                  }}
+                >
+                  {selectedTreeNode === 'agreement' ? '⇄ Concord Focus' : '🌲 Tree Focus'}
+                </button>
+              )}
+            </div>
+          )}
+
+          {canvasType === 'matrix' && (
+            <div style={{ display: 'flex', gap: '6px' }}>
+              {((cfg.pairs as Array<any>) || [1, 2]).map((_, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => setActiveWorkplaceIdx(idx)}
+                  style={{
+                    background: activeWorkplaceIdx === idx ? '#10b981' : 'var(--surface-2)',
+                    border: 'none',
+                    borderRadius: 'var(--radius-full)',
+                    padding: '3px 10px',
+                    fontSize: '11px',
+                    color: '#ffffff',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Example {idx + 1}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <canvas
+          ref={canvasRef}
+          style={{
+            width: '100%',
+            height: '230px',
+            display: 'block',
+            borderRadius: 'var(--radius-md)'
+          }}
+        />
+      </div>
+
+      {/* ── Spoken Sentence Repetition & Shadowing Section ── */}
+      {data.repetition_items && data.repetition_items.length > 0 && (
+        <div style={{ marginBottom: '18px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
+            <Repeat size={14} color="#06b6d4" />
+            <span style={{ fontSize: '11.5px', textTransform: 'uppercase', letterSpacing: '0.06em', color: '#06b6d4', fontWeight: 600 }}>
+              Sentence Repetition & Shadowing Practice
+            </span>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            {data.repetition_items.map((item, idx) => (
+              <div
+                key={idx}
+                style={{
+                  padding: '12px 14px',
+                  background: 'var(--surface-2)',
+                  borderRadius: 'var(--radius-md)',
+                  border: '1px solid var(--border-subtle)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '6px'
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '10px', background: 'rgba(6, 182, 212, 0.15)', color: '#06b6d4', padding: '2px 8px', borderRadius: '8px', fontWeight: 600 }}>
+                    {item.drill_type || 'Shadowing Drill'}
+                  </span>
+                  <button
+                    onClick={() => handleListenPractice(item.target, idx)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      background: practicingIdx === idx ? '#06b6d4' : 'rgba(255, 255, 255, 0.08)',
+                      border: 'none',
+                      color: practicingIdx === idx ? '#000000' : '#ffffff',
+                      borderRadius: 'var(--radius-full)',
+                      padding: '3px 10px',
+                      fontSize: '11px',
+                      cursor: 'pointer',
+                      transition: 'all 0.15s ease'
+                    }}
+                  >
+                    {practicingIdx === idx ? <Volume2 size={12} /> : <Volume1 size={12} />}
+                    <span>{practicingIdx === idx ? 'Playing Audio...' : 'Listen & Shadow'}</span>
+                  </button>
+                </div>
+
+                <div style={{ fontSize: '13.5px', fontWeight: 500, color: 'var(--text-primary)' }}>
+                  {bionicEnabled ? (
+                    <span dangerouslySetInnerHTML={{ __html: bionicHtml(item.target, true) }} />
+                  ) : (
+                    <span>{item.target}</span>
+                  )}
+                </div>
+
+                {item.audio_cue && (
+                  <div style={{ fontSize: '11px', color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                    <Mic size={11} color="var(--accent)" />
+                    <span>Cadence Tip: {item.audio_cue}</span>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Key Syntactical Rules ── */}
+      {data.key_takeaways && data.key_takeaways.length > 0 && (
+        <div style={{ marginBottom: '18px' }}>
+          <div style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-tertiary)', marginBottom: '8px' }}>
+            Key Syntactical Rules to Remember
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            {data.key_takeaways.map((rule, idx) => (
+              <div
+                key={idx}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  fontSize: '12.5px',
+                  color: 'var(--text-primary)',
+                  background: 'var(--surface-2)',
+                  padding: '6px 12px',
+                  borderRadius: 'var(--radius-sm)',
+                  border: '1px solid var(--border-subtle)'
+                }}
+              >
+                <CheckCircle2 size={13} color="var(--accent)" style={{ flexShrink: 0 }} />
+                <span>{rule}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── NEW: Analogy Reinterpretation Trigger Action Bar ── */}
+      <div
+        style={{
+          marginTop: '16px',
+          marginBottom: '16px',
+          padding: '14px 16px',
+          background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.08) 0%, rgba(6, 182, 212, 0.05) 100%)',
+          border: '1px solid rgba(99, 102, 241, 0.25)',
+          borderRadius: 'var(--radius-lg)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '10px'
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+            <Sparkles size={14} color="var(--accent)" />
+            <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)' }}>
+              Reinterpret with Alternative Pedagogical Model
+            </span>
+          </div>
+          <span style={{ fontSize: '10.5px', color: 'var(--text-tertiary)' }}>
+            Instant Voice & Visual Sync
+          </span>
+        </div>
+
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+          <button
+            onClick={() => handleRequestAnalogy('software')}
+            disabled={reinterpretingStyle !== null}
+            style={{
+              flex: 1,
+              minWidth: '150px',
+              padding: '8px 12px',
+              background: reinterpretingStyle === 'software' ? 'var(--accent)' : 'var(--surface-2)',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 'var(--radius-md)',
+              color: reinterpretingStyle === 'software' ? '#ffffff' : 'var(--text-primary)',
+              fontSize: '12px',
+              fontWeight: 500,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+              transition: 'all 0.15s ease'
+            }}
+          >
+            <Code2 size={13} color={reinterpretingStyle === 'software' ? '#ffffff' : '#38bdf8'} />
+            <span>{reinterpretingStyle === 'software' ? 'Re-interpreting...' : '⚡ Software Analogy'}</span>
+          </button>
+
+          <button
+            onClick={() => handleRequestAnalogy('workplace')}
+            disabled={reinterpretingStyle !== null}
+            style={{
+              flex: 1,
+              minWidth: '150px',
+              padding: '8px 12px',
+              background: reinterpretingStyle === 'workplace' ? '#10b981' : 'var(--surface-2)',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 'var(--radius-md)',
+              color: reinterpretingStyle === 'workplace' ? '#ffffff' : 'var(--text-primary)',
+              fontSize: '12px',
+              fontWeight: 500,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+              transition: 'all 0.15s ease'
+            }}
+          >
+            <Briefcase size={13} color={reinterpretingStyle === 'workplace' ? '#ffffff' : '#34d399'} />
+            <span>{reinterpretingStyle === 'workplace' ? 'Re-interpreting...' : '💼 Workplace Style'}</span>
+          </button>
+
+          <button
+            onClick={() => handleRequestAnalogy('everyday')}
+            disabled={reinterpretingStyle !== null}
+            style={{
+              flex: 1,
+              minWidth: '150px',
+              padding: '8px 12px',
+              background: reinterpretingStyle === 'everyday' ? '#f59e0b' : 'var(--surface-2)',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 'var(--radius-md)',
+              color: reinterpretingStyle === 'everyday' ? '#ffffff' : 'var(--text-primary)',
+              fontSize: '12px',
+              fontWeight: 500,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+              transition: 'all 0.15s ease'
+            }}
+          >
+            <Compass size={13} color={reinterpretingStyle === 'everyday' ? '#ffffff' : '#fbbf24'} />
+            <span>{reinterpretingStyle === 'everyday' ? 'Re-interpreting...' : '🌱 Everyday Intuition'}</span>
+          </button>
+        </div>
+      </div>
+
+      {/* ── NEW: Expandable Textbook Citation Pill ── */}
+      <div style={{ marginBottom: '14px' }}>
+        <button
+          onClick={() => setShowCitations(!showCitations)}
+          style={{
+            background: 'transparent',
+            border: 'none',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            fontSize: '11px',
+            color: 'var(--text-tertiary)',
+            cursor: 'pointer',
+            padding: '2px 0'
+          }}
+        >
+          <BookMarked size={12} color="var(--accent)" />
+          <span>Curriculum Source Citations & Textbook Alignment</span>
+          {showCitations ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+        </button>
+
+        {showCitations && (
+          <div
+            style={{
+              marginTop: '6px',
+              padding: '8px 12px',
+              background: 'var(--surface-0)',
+              borderRadius: 'var(--radius-md)',
+              border: '1px solid var(--border-subtle)',
+              fontSize: '11.5px',
+              color: 'var(--text-secondary)'
+            }}
+          >
+            {citations.map((c, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '6px', margin: '2px 0' }}>
+                <span style={{ color: 'var(--accent)', fontWeight: 600 }}>•</span>
+                <span>{typeof c === 'string' ? c : `${c.source}: ${c.text} (${c.rule || 'Verified'})`}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ── Footer ── */}
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          paddingTop: '10px',
+          borderTop: '1px solid var(--border-subtle)',
+          fontSize: '11.5px',
+          color: 'var(--text-tertiary)'
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <CheckCircle2 size={13} color="#10b981" />
+          <span>Saved to Revision Store (Check anytime in Drawer &gt; Lectures)</span>
+        </div>
+        <div style={{ fontFamily: 'var(--font-mono)' }}>
+          ID: {data.id.slice(0, 14)}
+        </div>
+      </div>
+    </motion.div>
+  );
+};
+
+
+================================================================================
+FILE: mvp_talker_offline/VisualsFrontend/src/components/cards/StreamingCard.tsx
+LANGUAGE: typescript
+LINES: 74 | EST_TOKENS: ~467
 PURPOSE: Live LLM token synthesis card with typewriter animation and blinking cursor
 ================================================================================
 

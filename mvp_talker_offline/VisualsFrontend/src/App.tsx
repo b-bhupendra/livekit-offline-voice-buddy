@@ -5,16 +5,16 @@ import remarkGfm from 'remark-gfm';
 import { Sparkles } from 'lucide-react';
 import { useBuddyStore } from './store';
 import { useLiveKit } from './hooks/useLiveKit';
-import { Header } from './components/Header';
-import { AudioDock } from './components/AudioDock';
-import { SlideOverDrawer } from './components/SlideOverDrawer';
-import { InlineQuizCard } from './components/InlineQuizCard';
-import { InlineDisputeCard } from './components/InlineDisputeCard';
-import { InlineNotesCard } from './components/InlineNotesCard';
-import { InlineGrammarMovementCard } from './components/InlineGrammarMovementCard';
-import { InlineSheetErrorCard } from './components/InlineSheetErrorCard';
-import { InlineCanvasLectureCard } from './components/InlineCanvasLectureCard';
-import { StreamingCard } from './components/StreamingCard';
+import { Header } from './components/layout/Header';
+import { AudioDock } from './components/layout/AudioDock';
+import { SlideOverDrawer } from './components/layout/SlideOverDrawer';
+import { InlineQuizCard } from './components/cards/InlineQuizCard';
+import { InlineDisputeCard } from './components/cards/InlineDisputeCard';
+import { InlineNotesCard } from './components/cards/InlineNotesCard';
+import { InlineGrammarMovementCard } from './components/cards/InlineGrammarMovementCard';
+import { InlineSheetErrorCard } from './components/cards/InlineSheetErrorCard';
+import { InlineCanvasLectureCard } from './components/cards/InlineCanvasLectureCard';
+import { StreamingCard } from './components/cards/StreamingCard';
 
 export default function App() {
   useLiveKit();
@@ -41,6 +41,9 @@ export default function App() {
         overflow: 'hidden'
       }}
     >
+      {/* ── Background Ambient Mesh Gradient Canvas ── */}
+      <div className="ambient-mesh-canvas" />
+
       {/* ── Top Header ── */}
       <Header />
 
