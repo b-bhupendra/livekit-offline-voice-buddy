@@ -1,7 +1,7 @@
 ================================================================================
 FILE: mvp_talker_offline/backend/agent.py
 LANGUAGE: python
-LINES: 1676 | EST_TOKENS: ~19428
+LINES: 1724 | EST_TOKENS: ~20024
 PURPOSE: LiveKit voice AI agent entrypoint: Faster-Whisper STT, Silero VAD, Kokoro TTS, Ollama LLM, in-process function tools, and LiveKit RPC handlers (including requestReinterpretation)
 ================================================================================
 
@@ -967,6 +967,7 @@ async def deliver_canvas_lecture(
                 "key_takeaways": dyn_session.get("key_takeaways", []),
                 "canvas_type": c_type,
                 "canvas_config": cfg,
+                "canvas_html": dyn_session.get("canvas_html", ""),
                 "repetition_items": reps,
                 "timestamp": saved["timestamp"]
             }
@@ -1081,6 +1082,8 @@ async def exit_tutor_mode(context: RunContext) -> str:
         langgraph_engine.update_state({"active_mode": "buddy"})
     summary = tracker.get_learner_summary()
     await send_room_text(context, "progress", json.dumps(summary))
+    if _active_session:
+        unmount_tools_to_fastpath(_active_session)
     genui_logger.info("Exited tutor mode to buddy mode.")
     return "[BUDDY MODE ACTIVATED] Switched back to friendly casual conversation mode."
 
@@ -1109,6 +1112,31 @@ IN_PROCESS_TOOLS = [
     search_web_grammar
 ]
 in_process_tools = IN_PROCESS_TOOLS
+BUDDY_FAST_PATH_TOOLS = []
+TUTOR_MODE_TOOLS = IN_PROCESS_TOOLS
+
+
+def mount_tutor_tools(sess: AgentSession) -> None:
+    """Dynamically mount the 21 tutor tools into the live session when study mode is requested."""
+    try:
+        sess._tools = list(TUTOR_MODE_TOOLS)
+        if hasattr(sess, "update_agent"):
+            sess.update_agent(Agent(instructions=INSTRUCTIONS, tools=TUTOR_MODE_TOOLS))
+        llm_logger.info("[FastPath] Dynamically MOUNTED 21 tutor tools into AgentSession.")
+    except Exception as e:
+        llm_logger.error(f"[FastPath] Error mounting tutor tools: {e}")
+
+
+def unmount_tools_to_fastpath(sess: AgentSession) -> None:
+    """Revert to Zero-Tool Fast Path for sub-300ms conversational turn-taking."""
+    try:
+        sess._tools = []
+        if hasattr(sess, "update_agent"):
+            sess.update_agent(Agent(instructions=INSTRUCTIONS, tools=[]))
+        llm_logger.info("[FastPath] REVERTED to Zero-Tool Fast Path (0 tools) for maximum voice fluidness.")
+    except Exception as e:
+        llm_logger.error(f"[FastPath] Error unmounting tools: {e}")
+
 
 class BuddyAgent(Agent):
     def __init__(self):
@@ -1166,7 +1194,7 @@ async def entrypoint(ctx: agents.JobContext):
         llm=llm_provider,
         tts=tts_provider,
         stt=stt_provider,
-        tools=IN_PROCESS_TOOLS,
+        tools=BUDDY_FAST_PATH_TOOLS,  # START FAST & TOOL-LESS (sub-300ms conversational TTFT)
     )
 
     register_active_session(session, None)
@@ -1214,6 +1242,26 @@ async def entrypoint(ctx: agents.JobContext):
                 if is_final:
                     turn = next_turn()
                     stt_logger.info(f"Final user transcript: \"{transcript}\" (turn={turn})")
+
+                    # Dynamic mode-switching triggers to mount/unmount tools
+                    lower = transcript.lower()
+                    tutor_triggers = (
+                        "teach me", "tutor mode", "start lesson", "start lecture",
+                        "learn grammar", "practice grammar", "workplace practice",
+                        "scenario mode", "study mode", "let's learn", "teach about"
+                    )
+                    exit_triggers = (
+                        "back to buddy", "let's just chat", "exit tutor",
+                        "stop lesson", "casual chat", "buddy mode", "just talk"
+                    )
+
+                    current_tools_count = len(getattr(session, "tools", []))
+                    if any(trig in lower for trig in tutor_triggers):
+                        if current_tools_count == 0:
+                            mount_tutor_tools(session)
+                    elif any(trig in lower for trig in exit_triggers):
+                        if current_tools_count > 0:
+                            unmount_tools_to_fastpath(session)
                 else:
                     stt_logger.debug(f"Interim user transcript: \"{transcript}\"")
                     
@@ -2493,7 +2541,7 @@ if __name__ == "__main__":
 FILE: mvp_talker_offline/Modelfile
 LANGUAGE: dockerfile
 LINES: 34 | EST_TOKENS: ~572
-PURPOSE: Custom Ollama Modelfile configuring qwen2.5:7b with pedagogical teacher persona and grammar guidelines
+PURPOSE: Custom Ollama Modelfile configuring qwen2.5:3b with pedagogical teacher persona and grammar guidelines
 ================================================================================
 
 FROM qwen2.5:3b
@@ -2530,6 +2578,343 @@ CORE TEACHING & CONVERSATIONAL RULES:
    - Always end your turn with an engaging follow-up question or conversational prompt to invite the user to speak next.
    - Use your memory tools and past session context to reference what you practiced earlier and pick up where you left off.
 """
+
+
+================================================================================
+FILE: mcp/mcp_registry.json
+LANGUAGE: json
+LINES: 191 | EST_TOKENS: ~1545
+PURPOSE: Authoritative registry of all 10 MCP servers (Design, Docs, System) configured for Buddy Voice AI
+================================================================================
+
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "version": "1.0.0",
+  "title": "Buddy Voice AI - MCP Server Registry",
+  "description": "Authoritative registry of Model Context Protocol (MCP) servers integrated with Buddy Voice AI and Antigravity IDE",
+  "servers": {
+    "shadcn": {
+      "name": "shadcn",
+      "category": "Design & UI Primitives",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "shadcn@latest", "mcp"],
+      "description": "Official shadcn Registry Server. Searches, inspects, and installs accessible headless primitives (Radix UI, Framer Motion, Lucide icons).",
+      "tools": [
+        "get_project_registries",
+        "list_items_in_registries",
+        "search_items_in_registries",
+        "view_items_in_registries",
+        "get_item_examples_from_registries",
+        "get_add_command_for_items",
+        "get_audit_checklist"
+      ]
+    },
+    "shadcn-ui": {
+      "name": "shadcn-ui",
+      "category": "Design & UI Primitives",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "shadcn-ui-mcp-server"],
+      "description": "Component Reference Engine. Exposes token schemas, component anatomy, dark-mode tokens, and variant compositions.",
+      "tools": [
+        "list_shadcn_components",
+        "get_component_details",
+        "get_component_examples",
+        "search_components"
+      ]
+    },
+    "tailgrids": {
+      "name": "tailgrids",
+      "category": "Design & UI Primitives",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@tailgrids/mcp"],
+      "description": "Tailwind React UI Library. Exposes 600+ pre-built React Tailwind sections, cards, dashboards, and responsive layout templates.",
+      "tools": [
+        "list_components",
+        "search_components",
+        "get_component",
+        "get_component_code",
+        "get_usage_example",
+        "get_install_command",
+        "get_props_schema",
+        "validate_props",
+        "get_a11y_notes",
+        "check_usage_a11y",
+        "get_tailwind_variants",
+        "get_dark_mode_classes",
+        "get_theming_guide",
+        "get_primitive_info",
+        "compose_ui"
+      ]
+    },
+    "livekit-docs": {
+      "name": "livekit-docs",
+      "category": "Framework & Real-Time Docs",
+      "transport": "sse",
+      "serverUrl": "https://docs.livekit.io/mcp",
+      "description": "Official LiveKit documentation and code search engine. Provides Python/TypeScript SDK guides, AgentSession patterns, WebRTC audio streaming, and protocol references.",
+      "tools": [
+        "get_docs_overview",
+        "get_sdks",
+        "get_pages",
+        "docs_search",
+        "get_changelog",
+        "get_python_agent_example",
+        "get_pricing_info",
+        "submit_docs_feedback",
+        "code_search"
+      ]
+    },
+    "langgraph-docs": {
+      "name": "langgraph-docs",
+      "category": "Framework & Real-Time Docs",
+      "transport": "sse",
+      "serverUrl": "https://docs.langchain.com/mcp",
+      "description": "LangGraph & LangChain architectural guides, StateGraph patterns, checkpointer specifications (SqliteSaver), and multi-agent supervisory flows.",
+      "tools": [
+        "search_docs_by_lang_chain",
+        "query_docs_filesystem_docs_by_lang_chain",
+        "submit_feedback"
+      ]
+    },
+    "filesystem": {
+      "name": "filesystem",
+      "category": "System & IDE Utilities",
+      "transport": "stdio",
+      "description": "Local workspace filesystem inspector and safe editor.",
+      "tools": [
+        "read_file",
+        "read_text_file",
+        "read_media_file",
+        "read_multiple_files",
+        "write_file",
+        "edit_file",
+        "create_directory",
+        "list_directory",
+        "list_directory_with_sizes",
+        "directory_tree",
+        "move_file",
+        "search_files",
+        "get_file_info",
+        "list_allowed_directories"
+      ]
+    },
+    "github": {
+      "name": "github",
+      "category": "System & IDE Utilities",
+      "transport": "stdio",
+      "description": "GitHub repository version control, pull requests, issue tracking, and commits.",
+      "tools": [
+        "create_or_update_file",
+        "search_repositories",
+        "create_repository",
+        "get_file_contents",
+        "push_files",
+        "create_issue",
+        "create_pull_request",
+        "fork_repository",
+        "create_branch",
+        "list_commits",
+        "list_issues",
+        "update_issue",
+        "add_issue_comment",
+        "search_code",
+        "search_issues",
+        "search_users",
+        "get_issue",
+        "get_pull_request",
+        "list_pull_requests",
+        "create_pull_request_review",
+        "merge_pull_request",
+        "get_pull_request_files",
+        "get_pull_request_status",
+        "update_pull_request_branch",
+        "get_pull_request_comments",
+        "get_pull_request_reviews"
+      ]
+    },
+    "memory": {
+      "name": "memory",
+      "category": "System & IDE Utilities",
+      "transport": "stdio",
+      "description": "Knowledge graph memory store for persisting cross-turn user preferences, entities, and relations.",
+      "tools": [
+        "create_entities",
+        "create_relations",
+        "add_observations",
+        "delete_entities",
+        "delete_observations",
+        "delete_relations",
+        "read_graph",
+        "search_nodes",
+        "open_nodes"
+      ]
+    },
+    "puppeteer": {
+      "name": "puppeteer",
+      "category": "System & IDE Utilities",
+      "transport": "stdio",
+      "description": "Headless browser automation engine for DOM inspection, screenshot capture, and visual validation.",
+      "tools": [
+        "puppeteer_navigate",
+        "puppeteer_screenshot",
+        "puppeteer_click",
+        "puppeteer_fill",
+        "puppeteer_select",
+        "puppeteer_hover",
+        "puppeteer_evaluate"
+      ]
+    },
+    "sequential-thinking": {
+      "name": "sequential-thinking",
+      "category": "System & IDE Utilities",
+      "transport": "stdio",
+      "description": "Multi-step reasoning and dynamic thought verification scratchpad.",
+      "tools": [
+        "sequentialthinking"
+      ]
+    }
+  }
+}
+
+
+================================================================================
+FILE: mcp/inspect_mcp.py
+LANGUAGE: python
+LINES: 79 | EST_TOKENS: ~672
+PURPOSE: Modular CLI inspector providing terminal dashboard of MCP servers, categories, and 95 tools
+================================================================================
+
+#!/usr/bin/env python3
+"""
+inspect_mcp.py — Modular MCP Inspector for Buddy Voice AI.
+
+Provides a unified overview of all Model Context Protocol (MCP) servers
+registered in the project workspace and IDE environment.
+"""
+
+import os
+import sys
+import json
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+REGISTRY_FILE = os.path.join(SCRIPT_DIR, "mcp_registry.json")
+CONFIG_FILE = os.path.join(os.path.dirname(SCRIPT_DIR), "mcp_config.json")
+
+
+def load_registry():
+    if not os.path.exists(REGISTRY_FILE):
+        print(f"Error: Registry file not found at {REGISTRY_FILE}")
+        sys.exit(1)
+    with open(REGISTRY_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def main():
+    data = load_registry()
+    servers = data.get("servers", {})
+    total_servers = len(servers)
+    total_tools = sum(len(s.get("tools", [])) for s in servers.values())
+
+    print("\n" + "=" * 78)
+    print(" 🌐 BUDDY VOICE AI — MODEL CONTEXT PROTOCOL (MCP) ARCHITECTURE")
+    print("=" * 78)
+    print(f" Total Registered MCP Servers: {total_servers}")
+    print(f" Total Available MCP Tools:   {total_tools}")
+    print(f" Registry Location:           {REGISTRY_FILE}")
+    print("=" * 78 + "\n")
+
+    # Group servers by category
+    categories = {}
+    for sid, s in servers.items():
+        cat = s.get("category", "General")
+        categories.setdefault(cat, []).append((sid, s))
+
+    cat_order = [
+        "Design & UI Primitives",
+        "Framework & Real-Time Docs",
+        "System & IDE Utilities"
+    ]
+
+    for cat in cat_order:
+        items = categories.get(cat, [])
+        if not items:
+            continue
+        print(f"┌─ 📁 {cat.upper()} ({len(items)} Servers)")
+        for idx, (sid, s) in enumerate(items):
+            is_last = (idx == len(items) - 1)
+            branch = "└──" if is_last else "├──"
+            transport = s.get("transport", "stdio").upper()
+            tools = s.get("tools", [])
+            tool_cnt = len(tools)
+            print(f"│  {branch} 🔌 [{sid}] (Transport: {transport} | {tool_cnt} Tools)")
+            print(f"│     • Description: {s.get('description')}")
+            if "command" in s:
+                cmd_str = f"{s['command']} {' '.join(s.get('args', []))}"
+                print(f"│     • Command:     {cmd_str}")
+            elif "serverUrl" in s:
+                print(f"│     • Remote URL:  {s['serverUrl']}")
+            print(f"│     • Key Tools:   {', '.join(tools[:5])}{' ...' if tool_cnt > 5 else ''}")
+            if not is_last:
+                print("│")
+        print("└" + "─" * 77 + "\n")
+
+    print("Tip: Run this inspector anytime with: python mcp/inspect_mcp.py\n")
+
+
+if __name__ == "__main__":
+    main()
+
+
+================================================================================
+FILE: mcp/README.md
+LANGUAGE: markdown
+LINES: 40 | EST_TOKENS: ~511
+PURPOSE: Complete architectural documentation for the modularized MCP codespace
+================================================================================
+
+# Model Context Protocol (MCP) Modular Architecture
+
+This directory modularizes all MCP server configurations, registries, and inspection tooling for the **Buddy Voice AI** project.
+
+---
+
+## 📊 Overview of Configured MCP Servers
+
+Buddy Voice AI integrates **10 MCP Servers** across 3 functional categories:
+
+| Server | Category | Transport | Purpose & Capabilities |
+| :--- | :--- | :--- | :--- |
+| **`shadcn`** | Design & UI | `stdio` (`npx shadcn@latest mcp`) | Search and pull accessible headless primitives (Radix, Lucide, Framer Motion) |
+| **`shadcn-ui`** | Design & UI | `stdio` (`npx shadcn-ui-mcp-server`) | Direct component token schemas, variants, and dark-mode compositions |
+| **`tailgrids`** | Design & UI | `stdio` (`npx @tailgrids/mcp`) | 600+ pre-built React Tailwind layout templates and cards |
+| **`livekit-docs`** | Framework Docs | `sse` (`docs.livekit.io/mcp`) | LiveKit Python/TS agents, WebRTC streaming, and protocol documentation |
+| **`langgraph-docs`** | Framework Docs | `sse` (`docs.langchain.com/mcp`) | LangGraph StateGraph, SqliteSaver checkpointers, and multi-agent coordination |
+| **`filesystem`** | System & IDE | `stdio` | Workspace file tree inspection, safe reading, and editing |
+| **`github`** | System & IDE | `stdio` | GitHub PRs, commits, branches, issues, and diff reviews |
+| **`memory`** | System & IDE | `stdio` | Knowledge graph entity/relation tracking for lifelong user preferences |
+| **`puppeteer`** | System & IDE | `stdio` | Headless browser execution for UI screenshot verification and DOM auditing |
+| **`sequential-thinking`**| System & IDE | `stdio` | Dynamic multi-step reasoning and hypothesis verification |
+
+---
+
+## 🔍 Running the Inspector
+
+Inspect the entire MCP architecture and tool count directly from your terminal:
+
+```bash
+python mcp/inspect_mcp.py
+```
+
+---
+
+## ⚙️ Configuration Files
+
+- Workspace Config: [`mcp_config.json`](../mcp_config.json)
+- Authoritative Registry: [`mcp/mcp_registry.json`](mcp_registry.json)
+- IDE Global MCP Root: `~/.gemini/antigravity-ide/mcp/`
 
 
 ================================================================================

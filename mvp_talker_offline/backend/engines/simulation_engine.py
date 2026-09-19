@@ -72,30 +72,69 @@ class SimulationEngine:
     def __init__(self, rag_store: Optional[RAGStore] = None):
         self.rag = rag_store or RAGStore()
 
-    def get_chapter_dilemma(self, chapter_idx: int) -> Dict[str, Any]:
-        """Retrieve or generate a story-driven dilemma for the active chapter."""
-        dilemma = CHAPTER_DILEMMAS.get(chapter_idx)
-        if dilemma:
-            return dilemma
+    def get_chapter_dilemma(self, chapter_idx: int, topic_hint: str = "") -> Dict[str, Any]:
+        """
+        Dynamically synthesize a story-driven dilemma grounded in ChromaDB reference material.
+        Falls back to dynamic persona synthesis if not pre-indexed.
+        """
+        query = topic_hint or f"roleplay scenario dilemma chapter {chapter_idx}"
+        chunks = self.rag.hybrid_search(query, top_k=2, chapter_filter=chapter_idx)
+        context = chunks[0]["text"] if chunks else f"Grammatical mastery and communicative focus for Chapter {chapter_idx}."
+        source = chunks[0].get("source_title", "Grounded Knowledge Store") if chunks else "Course Syllabus"
+
         return {
-            "scenario": f"Chapter {chapter_idx} Scenario Practice",
-            "persona": "Professor Sterling",
-            "context": f"Mastering the grammatical concepts and communicative patterns of Chapter {chapter_idx}.",
-            "target_pattern": f"Core patterns of Chapter {chapter_idx}.",
-            "friction_prompt": "If you make a grammatical error, the persona points out the confusion and asks you to rephrase."
+            "scenario": f"Interactive Scenario: {topic_hint or f'Chapter {chapter_idx} Challenge'}",
+            "persona": "Colleague Alex (Workplace & Conversational Partner)",
+            "context": context[:300],
+            "target_pattern": f"Grounded in {source}",
+            "friction_prompt": "React with natural persona friction to grammatical slips, requesting clarification or modeling the natural native phrase."
         }
+
+    async def start_dynamic_scenario(self, session: Any, scenario_topic: str, chapter_idx: Optional[int] = None) -> str:
+        """
+        Starts a live scenario simulation via Dynamic System-Prompt Injection.
+        Replaces brittle python substring checks by letting the LLM's natural intelligence
+        drive authentic communicative friction.
+        """
+        rag_logger.info(f"[SimulationEngine] Initializing dynamic scenario: '{scenario_topic}'...")
+        context_chunks = self.rag.hybrid_search(f"roleplay scenario {scenario_topic}", top_k=2, chapter_filter=chapter_idx)
+        context_text = "\n".join([f"- {c.get('text', '')[:250]}" for c in context_chunks]) if context_chunks else f"Scenario: {scenario_topic}"
+
+        dynamic_persona = (
+            f"You are now running a live, interactive scenario simulation with Bhupendra based on: {scenario_topic}.\n\n"
+            f"--- SCENARIO CONTEXT (FROM CHROMADB REFERENCE TEXTS) ---\n"
+            f"{context_text}\n\n"
+            f"--- CORE SIMULATION & COMMUNICATIVE FRICTION RULES ---\n"
+            f"1. STAY FULLY IN CHARACTER throughout the simulation.\n"
+            f"2. NATURAL COMMUNICATIVE FRICTION (NO ROBOTIC PEDANTRY):\n"
+            f"   - If Bhupendra makes a grammatical slip or inappropriate register choice, react with natural, believable human friction.\n"
+            f"   - E.g. If he uses a blunt imperative, react with surprise; if he uses wrong tense or mass noun errors, ask for clarification while naturally recasting the phrasing.\n"
+            f"   - Challenge his reasoning or ask for specific details to keep him actively speaking.\n"
+            f"3. SPOKEN VOICE PERFECTION:\n"
+            f"   - Keep turns concise (1 to 3 spoken sentences).\n"
+            f"   - Output clean conversational English with ZERO markdown symbols (*, -, #).\n"
+            f"   - Always end with an engaging scenario line inviting him to respond.\n"
+        )
+
+        # Overwrite live agent prompt dynamically
+        if hasattr(session, "update_agent"):
+            from livekit.agents import Agent
+            tools = getattr(session, "tools", [])
+            session.update_agent(Agent(instructions=dynamic_persona, tools=tools))
+            rag_logger.info("[SimulationEngine] Successfully injected dynamic scenario persona into AgentSession.")
+        elif hasattr(session, "agent") and hasattr(session.agent, "instructions"):
+            session.agent.instructions = dynamic_persona
+            rag_logger.info("[SimulationEngine] Successfully updated session.agent.instructions.")
+
+        return f"Scenario started: {scenario_topic}"
 
     def evaluate_utterance(self, chapter_idx: int, utterance: str) -> Dict[str, Any]:
         """
-        Dual-track evaluation:
-        - If grammar is sound: highlights natural native colloquialisms with light repetition.
-        - If grammar is incorrect: roleplays communicative friction, cites the rule, and generates an isomorphic practice sentence.
+        Evaluates utterance against RAG knowledge base for citations and feedback.
         """
-        # Search RAG for the active chapter's grammar rules
         rules = self.rag.hybrid_search(utterance, top_k=2, chapter_filter=chapter_idx)
         citation = rules[0]["source_title"] if rules else "Oxford Guide / Arihant Grammar"
 
-        # Basic syntactic heuristics
         has_error = False
         error_explanation = ""
         isomorphic_practice = ""
@@ -103,32 +142,27 @@ class SimulationEngine:
 
         lower_utt = utterance.lower().strip()
 
-        # Common ESL Pitfalls
+        # Semantic error checks
         if "am agree" in lower_utt or "is agree" in lower_utt:
             has_error = True
-            error_explanation = "'Agree' is a stative verb, not an adjective. Say 'I agree' rather than 'I am agree' (Oxford Ch 11 / Arihant P. 12)."
+            error_explanation = "'Agree' is a stative verb. Say 'I agree' rather than 'I am agree' (Oxford Ch 11)."
             isomorphic_practice = "Now try this parallel sentence: She ______ (believe) your story completely."
-        elif "did not wrote" in lower_utt or "did not went" in lower_utt or "did not saw" in lower_utt:
+        elif any(err in lower_utt for err in ("did not wrote", "did not went", "did not saw", "did not spoke")):
             has_error = True
-            error_explanation = "After the auxiliary 'did / did not', always use the bare infinitive verb (e.g. 'did not write', not 'did not wrote') (Oxford Ch 8)."
+            error_explanation = "After auxiliary 'did / did not', always use the bare infinitive verb (Oxford Ch 8)."
             isomorphic_practice = "Now try this isomorphic sentence: They did not ______ (speak) to the director yesterday."
         elif "one of my friend" in lower_utt:
             has_error = True
             error_explanation = "The phrase 'one of' must be followed by a plural noun: 'one of my friends' (Arihant Rule 5)."
             isomorphic_practice = "Now try this isomorphic sentence: One of our ______ (colleague) is traveling to Berlin."
-        elif "neither of them are" in lower_utt or "neither of them were" in lower_utt:
-            # Colloquial vs formal
-            colloquial_alt = "In informal speech, 'neither of them were' is common. In formal standard English, 'neither of them was' is expected."
-
-        # If sound and no error
-        if not has_error:
-            # Provide high-value colloquialism
+        else:
+            # Provide high-value colloquialism if sound
             if "very busy" in lower_utt:
-                colloquial_alt = "Native speakers often say 'I'm swamped' or 'I've got a lot on my plate' instead of 'I am very busy'. Try repeating: 'I'm swamped today.'"
+                colloquial_alt = "Native speakers often say 'I'm swamped' or 'I've got a lot on my plate'."
             elif "very tired" in lower_utt:
-                colloquial_alt = "You can also say 'I'm exhausted' or 'I'm beat'. Try repeating: 'I'm totally beat.'"
+                colloquial_alt = "You can also say 'I'm exhausted' or 'I'm beat'."
             elif "i think" in lower_utt:
-                colloquial_alt = "A natural conversational starter: 'To my mind...' or 'If you ask me...'"
+                colloquial_alt = "Natural conversational alternatives: 'To my mind...' or 'If you ask me...'"
 
         return {
             "has_error": has_error,

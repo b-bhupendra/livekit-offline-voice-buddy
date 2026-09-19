@@ -1,7 +1,7 @@
 ================================================================================
 FILE: mvp_talker_offline/backend/tests/verify_curriculum_engine.py
 LANGUAGE: python
-LINES: 189 | EST_TOKENS: ~2001
+LINES: 255 | EST_TOKENS: ~2744
 PURPOSE: Automated test suite verifying curriculum_store tables, variants, reconsideration, Pydantic authoring validation, GPUSessionArbiter concurrency gating, context injection, studio TTS, and LangGraph 8-node DAG
 ================================================================================
 
@@ -190,6 +190,72 @@ class TestCurriculumEngine(unittest.IsolatedAsyncioTestCase):
             "notify", "flag_and_stop"
         }
         self.assertTrue(expected_nodes.issubset(set(nodes.keys())), f"Missing nodes: {expected_nodes - set(nodes.keys())}")
+
+    def test_08_zero_tool_fast_path(self):
+        """Verify Zero-Tool Fast Path default and dynamic mounting/unmounting."""
+        from agent import BUDDY_FAST_PATH_TOOLS, TUTOR_MODE_TOOLS, mount_tutor_tools, unmount_tools_to_fastpath
+        self.assertEqual(len(BUDDY_FAST_PATH_TOOLS), 0, "Buddy fast path must start with 0 tools")
+        self.assertGreaterEqual(len(TUTOR_MODE_TOOLS), 20, "Tutor mode must hold full toolset")
+
+        # Test mock session mounting
+        class MockSession:
+            def __init__(self):
+                self._tools = []
+            @property
+            def tools(self):
+                return self._tools
+
+        mock_sess = MockSession()
+        self.assertEqual(len(mock_sess.tools), 0)
+        mount_tutor_tools(mock_sess)
+        self.assertEqual(len(mock_sess.tools), len(TUTOR_MODE_TOOLS))
+        unmount_tools_to_fastpath(mock_sess)
+        self.assertEqual(len(mock_sess.tools), 0)
+
+    def test_09_autonomous_crawler_and_canvas_html(self):
+        """Verify AutonomousCurriculumCrawler topic discovery and canvas_html in schema."""
+        from tutor.curriculum_crawler import get_crawler
+        from tutor.curriculum_authoring import CurriculumNode
+        crawler = get_crawler()
+        topics = crawler.discover_topics(chapter_filter=1)
+        self.assertIsInstance(topics, list)
+
+        # Verify CurriculumNode schema accepts canvas_html
+        node = CurriculumNode(
+            node_id="test_node_universal",
+            chapter_idx=1,
+            submodule="Test Universal Submodule",
+            title="Test Universal Diagram",
+            core_concept="Test concept",
+            lecture_paragraphs=["Paragraph 1", "Paragraph 2"],
+            canvas_type="universal_sandbox",
+            canvas_html="<div class='p-4 bg-slate-900 text-white'>Interactive SVG Model</div>",
+            citations=["Oxford Guide"]
+        )
+        self.assertIn("Interactive SVG Model", node.canvas_html)
+        self.assertEqual(node.canvas_type, "universal_sandbox")
+
+    async def test_10_dynamic_scenario_prompt_injection(self):
+        """Verify start_dynamic_scenario queries RAG and injects persona prompt into AgentSession."""
+        from engines.simulation_engine import SimulationEngine
+        sim = SimulationEngine()
+        
+        class MockAgent:
+            def __init__(self):
+                self.instructions = ""
+
+        class MockSession:
+            def __init__(self):
+                self.agent = MockAgent()
+                self.tools = []
+            def update_agent(self, new_agent):
+                self.agent = new_agent
+
+        sess = MockSession()
+        res = await sim.start_dynamic_scenario(sess, "negotiating flat maintenance with landlady", chapter_idx=3)
+        self.assertIn("Scenario started", res)
+        self.assertIn("LIVE, INTERACTIVE SCENARIO SIMULATION", sess.agent.instructions.upper())
+        self.assertIn("COMMUNICATIVE FRICTION", sess.agent.instructions.upper())
 
 
 if __name__ == "__main__":

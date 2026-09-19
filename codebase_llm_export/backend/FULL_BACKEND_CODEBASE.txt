@@ -1,7 +1,7 @@
 ================================================================================
 FILE: mvp_talker_offline/backend/agent.py
 LANGUAGE: python
-LINES: 1676 | EST_TOKENS: ~19428
+LINES: 1724 | EST_TOKENS: ~20024
 PURPOSE: LiveKit voice AI agent entrypoint: Faster-Whisper STT, Silero VAD, Kokoro TTS, Ollama LLM, in-process function tools, and LiveKit RPC handlers (including requestReinterpretation)
 ================================================================================
 
@@ -967,6 +967,7 @@ async def deliver_canvas_lecture(
                 "key_takeaways": dyn_session.get("key_takeaways", []),
                 "canvas_type": c_type,
                 "canvas_config": cfg,
+                "canvas_html": dyn_session.get("canvas_html", ""),
                 "repetition_items": reps,
                 "timestamp": saved["timestamp"]
             }
@@ -1081,6 +1082,8 @@ async def exit_tutor_mode(context: RunContext) -> str:
         langgraph_engine.update_state({"active_mode": "buddy"})
     summary = tracker.get_learner_summary()
     await send_room_text(context, "progress", json.dumps(summary))
+    if _active_session:
+        unmount_tools_to_fastpath(_active_session)
     genui_logger.info("Exited tutor mode to buddy mode.")
     return "[BUDDY MODE ACTIVATED] Switched back to friendly casual conversation mode."
 
@@ -1109,6 +1112,31 @@ IN_PROCESS_TOOLS = [
     search_web_grammar
 ]
 in_process_tools = IN_PROCESS_TOOLS
+BUDDY_FAST_PATH_TOOLS = []
+TUTOR_MODE_TOOLS = IN_PROCESS_TOOLS
+
+
+def mount_tutor_tools(sess: AgentSession) -> None:
+    """Dynamically mount the 21 tutor tools into the live session when study mode is requested."""
+    try:
+        sess._tools = list(TUTOR_MODE_TOOLS)
+        if hasattr(sess, "update_agent"):
+            sess.update_agent(Agent(instructions=INSTRUCTIONS, tools=TUTOR_MODE_TOOLS))
+        llm_logger.info("[FastPath] Dynamically MOUNTED 21 tutor tools into AgentSession.")
+    except Exception as e:
+        llm_logger.error(f"[FastPath] Error mounting tutor tools: {e}")
+
+
+def unmount_tools_to_fastpath(sess: AgentSession) -> None:
+    """Revert to Zero-Tool Fast Path for sub-300ms conversational turn-taking."""
+    try:
+        sess._tools = []
+        if hasattr(sess, "update_agent"):
+            sess.update_agent(Agent(instructions=INSTRUCTIONS, tools=[]))
+        llm_logger.info("[FastPath] REVERTED to Zero-Tool Fast Path (0 tools) for maximum voice fluidness.")
+    except Exception as e:
+        llm_logger.error(f"[FastPath] Error unmounting tools: {e}")
+
 
 class BuddyAgent(Agent):
     def __init__(self):
@@ -1166,7 +1194,7 @@ async def entrypoint(ctx: agents.JobContext):
         llm=llm_provider,
         tts=tts_provider,
         stt=stt_provider,
-        tools=IN_PROCESS_TOOLS,
+        tools=BUDDY_FAST_PATH_TOOLS,  # START FAST & TOOL-LESS (sub-300ms conversational TTFT)
     )
 
     register_active_session(session, None)
@@ -1214,6 +1242,26 @@ async def entrypoint(ctx: agents.JobContext):
                 if is_final:
                     turn = next_turn()
                     stt_logger.info(f"Final user transcript: \"{transcript}\" (turn={turn})")
+
+                    # Dynamic mode-switching triggers to mount/unmount tools
+                    lower = transcript.lower()
+                    tutor_triggers = (
+                        "teach me", "tutor mode", "start lesson", "start lecture",
+                        "learn grammar", "practice grammar", "workplace practice",
+                        "scenario mode", "study mode", "let's learn", "teach about"
+                    )
+                    exit_triggers = (
+                        "back to buddy", "let's just chat", "exit tutor",
+                        "stop lesson", "casual chat", "buddy mode", "just talk"
+                    )
+
+                    current_tools_count = len(getattr(session, "tools", []))
+                    if any(trig in lower for trig in tutor_triggers):
+                        if current_tools_count == 0:
+                            mount_tutor_tools(session)
+                    elif any(trig in lower for trig in exit_triggers):
+                        if current_tools_count > 0:
+                            unmount_tools_to_fastpath(session)
                 else:
                     stt_logger.debug(f"Interim user transcript: \"{transcript}\"")
                     
@@ -2493,7 +2541,7 @@ if __name__ == "__main__":
 FILE: mvp_talker_offline/Modelfile
 LANGUAGE: dockerfile
 LINES: 34 | EST_TOKENS: ~572
-PURPOSE: Custom Ollama Modelfile configuring qwen2.5:7b with pedagogical teacher persona and grammar guidelines
+PURPOSE: Custom Ollama Modelfile configuring qwen2.5:3b with pedagogical teacher persona and grammar guidelines
 ================================================================================
 
 FROM qwen2.5:3b
@@ -2530,6 +2578,343 @@ CORE TEACHING & CONVERSATIONAL RULES:
    - Always end your turn with an engaging follow-up question or conversational prompt to invite the user to speak next.
    - Use your memory tools and past session context to reference what you practiced earlier and pick up where you left off.
 """
+
+
+================================================================================
+FILE: mcp/mcp_registry.json
+LANGUAGE: json
+LINES: 191 | EST_TOKENS: ~1545
+PURPOSE: Authoritative registry of all 10 MCP servers (Design, Docs, System) configured for Buddy Voice AI
+================================================================================
+
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "version": "1.0.0",
+  "title": "Buddy Voice AI - MCP Server Registry",
+  "description": "Authoritative registry of Model Context Protocol (MCP) servers integrated with Buddy Voice AI and Antigravity IDE",
+  "servers": {
+    "shadcn": {
+      "name": "shadcn",
+      "category": "Design & UI Primitives",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "shadcn@latest", "mcp"],
+      "description": "Official shadcn Registry Server. Searches, inspects, and installs accessible headless primitives (Radix UI, Framer Motion, Lucide icons).",
+      "tools": [
+        "get_project_registries",
+        "list_items_in_registries",
+        "search_items_in_registries",
+        "view_items_in_registries",
+        "get_item_examples_from_registries",
+        "get_add_command_for_items",
+        "get_audit_checklist"
+      ]
+    },
+    "shadcn-ui": {
+      "name": "shadcn-ui",
+      "category": "Design & UI Primitives",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "shadcn-ui-mcp-server"],
+      "description": "Component Reference Engine. Exposes token schemas, component anatomy, dark-mode tokens, and variant compositions.",
+      "tools": [
+        "list_shadcn_components",
+        "get_component_details",
+        "get_component_examples",
+        "search_components"
+      ]
+    },
+    "tailgrids": {
+      "name": "tailgrids",
+      "category": "Design & UI Primitives",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@tailgrids/mcp"],
+      "description": "Tailwind React UI Library. Exposes 600+ pre-built React Tailwind sections, cards, dashboards, and responsive layout templates.",
+      "tools": [
+        "list_components",
+        "search_components",
+        "get_component",
+        "get_component_code",
+        "get_usage_example",
+        "get_install_command",
+        "get_props_schema",
+        "validate_props",
+        "get_a11y_notes",
+        "check_usage_a11y",
+        "get_tailwind_variants",
+        "get_dark_mode_classes",
+        "get_theming_guide",
+        "get_primitive_info",
+        "compose_ui"
+      ]
+    },
+    "livekit-docs": {
+      "name": "livekit-docs",
+      "category": "Framework & Real-Time Docs",
+      "transport": "sse",
+      "serverUrl": "https://docs.livekit.io/mcp",
+      "description": "Official LiveKit documentation and code search engine. Provides Python/TypeScript SDK guides, AgentSession patterns, WebRTC audio streaming, and protocol references.",
+      "tools": [
+        "get_docs_overview",
+        "get_sdks",
+        "get_pages",
+        "docs_search",
+        "get_changelog",
+        "get_python_agent_example",
+        "get_pricing_info",
+        "submit_docs_feedback",
+        "code_search"
+      ]
+    },
+    "langgraph-docs": {
+      "name": "langgraph-docs",
+      "category": "Framework & Real-Time Docs",
+      "transport": "sse",
+      "serverUrl": "https://docs.langchain.com/mcp",
+      "description": "LangGraph & LangChain architectural guides, StateGraph patterns, checkpointer specifications (SqliteSaver), and multi-agent supervisory flows.",
+      "tools": [
+        "search_docs_by_lang_chain",
+        "query_docs_filesystem_docs_by_lang_chain",
+        "submit_feedback"
+      ]
+    },
+    "filesystem": {
+      "name": "filesystem",
+      "category": "System & IDE Utilities",
+      "transport": "stdio",
+      "description": "Local workspace filesystem inspector and safe editor.",
+      "tools": [
+        "read_file",
+        "read_text_file",
+        "read_media_file",
+        "read_multiple_files",
+        "write_file",
+        "edit_file",
+        "create_directory",
+        "list_directory",
+        "list_directory_with_sizes",
+        "directory_tree",
+        "move_file",
+        "search_files",
+        "get_file_info",
+        "list_allowed_directories"
+      ]
+    },
+    "github": {
+      "name": "github",
+      "category": "System & IDE Utilities",
+      "transport": "stdio",
+      "description": "GitHub repository version control, pull requests, issue tracking, and commits.",
+      "tools": [
+        "create_or_update_file",
+        "search_repositories",
+        "create_repository",
+        "get_file_contents",
+        "push_files",
+        "create_issue",
+        "create_pull_request",
+        "fork_repository",
+        "create_branch",
+        "list_commits",
+        "list_issues",
+        "update_issue",
+        "add_issue_comment",
+        "search_code",
+        "search_issues",
+        "search_users",
+        "get_issue",
+        "get_pull_request",
+        "list_pull_requests",
+        "create_pull_request_review",
+        "merge_pull_request",
+        "get_pull_request_files",
+        "get_pull_request_status",
+        "update_pull_request_branch",
+        "get_pull_request_comments",
+        "get_pull_request_reviews"
+      ]
+    },
+    "memory": {
+      "name": "memory",
+      "category": "System & IDE Utilities",
+      "transport": "stdio",
+      "description": "Knowledge graph memory store for persisting cross-turn user preferences, entities, and relations.",
+      "tools": [
+        "create_entities",
+        "create_relations",
+        "add_observations",
+        "delete_entities",
+        "delete_observations",
+        "delete_relations",
+        "read_graph",
+        "search_nodes",
+        "open_nodes"
+      ]
+    },
+    "puppeteer": {
+      "name": "puppeteer",
+      "category": "System & IDE Utilities",
+      "transport": "stdio",
+      "description": "Headless browser automation engine for DOM inspection, screenshot capture, and visual validation.",
+      "tools": [
+        "puppeteer_navigate",
+        "puppeteer_screenshot",
+        "puppeteer_click",
+        "puppeteer_fill",
+        "puppeteer_select",
+        "puppeteer_hover",
+        "puppeteer_evaluate"
+      ]
+    },
+    "sequential-thinking": {
+      "name": "sequential-thinking",
+      "category": "System & IDE Utilities",
+      "transport": "stdio",
+      "description": "Multi-step reasoning and dynamic thought verification scratchpad.",
+      "tools": [
+        "sequentialthinking"
+      ]
+    }
+  }
+}
+
+
+================================================================================
+FILE: mcp/inspect_mcp.py
+LANGUAGE: python
+LINES: 79 | EST_TOKENS: ~672
+PURPOSE: Modular CLI inspector providing terminal dashboard of MCP servers, categories, and 95 tools
+================================================================================
+
+#!/usr/bin/env python3
+"""
+inspect_mcp.py — Modular MCP Inspector for Buddy Voice AI.
+
+Provides a unified overview of all Model Context Protocol (MCP) servers
+registered in the project workspace and IDE environment.
+"""
+
+import os
+import sys
+import json
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+REGISTRY_FILE = os.path.join(SCRIPT_DIR, "mcp_registry.json")
+CONFIG_FILE = os.path.join(os.path.dirname(SCRIPT_DIR), "mcp_config.json")
+
+
+def load_registry():
+    if not os.path.exists(REGISTRY_FILE):
+        print(f"Error: Registry file not found at {REGISTRY_FILE}")
+        sys.exit(1)
+    with open(REGISTRY_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def main():
+    data = load_registry()
+    servers = data.get("servers", {})
+    total_servers = len(servers)
+    total_tools = sum(len(s.get("tools", [])) for s in servers.values())
+
+    print("\n" + "=" * 78)
+    print(" 🌐 BUDDY VOICE AI — MODEL CONTEXT PROTOCOL (MCP) ARCHITECTURE")
+    print("=" * 78)
+    print(f" Total Registered MCP Servers: {total_servers}")
+    print(f" Total Available MCP Tools:   {total_tools}")
+    print(f" Registry Location:           {REGISTRY_FILE}")
+    print("=" * 78 + "\n")
+
+    # Group servers by category
+    categories = {}
+    for sid, s in servers.items():
+        cat = s.get("category", "General")
+        categories.setdefault(cat, []).append((sid, s))
+
+    cat_order = [
+        "Design & UI Primitives",
+        "Framework & Real-Time Docs",
+        "System & IDE Utilities"
+    ]
+
+    for cat in cat_order:
+        items = categories.get(cat, [])
+        if not items:
+            continue
+        print(f"┌─ 📁 {cat.upper()} ({len(items)} Servers)")
+        for idx, (sid, s) in enumerate(items):
+            is_last = (idx == len(items) - 1)
+            branch = "└──" if is_last else "├──"
+            transport = s.get("transport", "stdio").upper()
+            tools = s.get("tools", [])
+            tool_cnt = len(tools)
+            print(f"│  {branch} 🔌 [{sid}] (Transport: {transport} | {tool_cnt} Tools)")
+            print(f"│     • Description: {s.get('description')}")
+            if "command" in s:
+                cmd_str = f"{s['command']} {' '.join(s.get('args', []))}"
+                print(f"│     • Command:     {cmd_str}")
+            elif "serverUrl" in s:
+                print(f"│     • Remote URL:  {s['serverUrl']}")
+            print(f"│     • Key Tools:   {', '.join(tools[:5])}{' ...' if tool_cnt > 5 else ''}")
+            if not is_last:
+                print("│")
+        print("└" + "─" * 77 + "\n")
+
+    print("Tip: Run this inspector anytime with: python mcp/inspect_mcp.py\n")
+
+
+if __name__ == "__main__":
+    main()
+
+
+================================================================================
+FILE: mcp/README.md
+LANGUAGE: markdown
+LINES: 40 | EST_TOKENS: ~511
+PURPOSE: Complete architectural documentation for the modularized MCP codespace
+================================================================================
+
+# Model Context Protocol (MCP) Modular Architecture
+
+This directory modularizes all MCP server configurations, registries, and inspection tooling for the **Buddy Voice AI** project.
+
+---
+
+## 📊 Overview of Configured MCP Servers
+
+Buddy Voice AI integrates **10 MCP Servers** across 3 functional categories:
+
+| Server | Category | Transport | Purpose & Capabilities |
+| :--- | :--- | :--- | :--- |
+| **`shadcn`** | Design & UI | `stdio` (`npx shadcn@latest mcp`) | Search and pull accessible headless primitives (Radix, Lucide, Framer Motion) |
+| **`shadcn-ui`** | Design & UI | `stdio` (`npx shadcn-ui-mcp-server`) | Direct component token schemas, variants, and dark-mode compositions |
+| **`tailgrids`** | Design & UI | `stdio` (`npx @tailgrids/mcp`) | 600+ pre-built React Tailwind layout templates and cards |
+| **`livekit-docs`** | Framework Docs | `sse` (`docs.livekit.io/mcp`) | LiveKit Python/TS agents, WebRTC streaming, and protocol documentation |
+| **`langgraph-docs`** | Framework Docs | `sse` (`docs.langchain.com/mcp`) | LangGraph StateGraph, SqliteSaver checkpointers, and multi-agent coordination |
+| **`filesystem`** | System & IDE | `stdio` | Workspace file tree inspection, safe reading, and editing |
+| **`github`** | System & IDE | `stdio` | GitHub PRs, commits, branches, issues, and diff reviews |
+| **`memory`** | System & IDE | `stdio` | Knowledge graph entity/relation tracking for lifelong user preferences |
+| **`puppeteer`** | System & IDE | `stdio` | Headless browser execution for UI screenshot verification and DOM auditing |
+| **`sequential-thinking`**| System & IDE | `stdio` | Dynamic multi-step reasoning and hypothesis verification |
+
+---
+
+## 🔍 Running the Inspector
+
+Inspect the entire MCP architecture and tool count directly from your terminal:
+
+```bash
+python mcp/inspect_mcp.py
+```
+
+---
+
+## ⚙️ Configuration Files
+
+- Workspace Config: [`mcp_config.json`](../mcp_config.json)
+- Authoritative Registry: [`mcp/mcp_registry.json`](mcp_registry.json)
+- IDE Global MCP Root: `~/.gemini/antigravity-ide/mcp/`
 
 
 ================================================================================
@@ -2635,7 +3020,7 @@ from engines.simulation_engine import SimulationEngine
 ================================================================================
 FILE: mvp_talker_offline/backend/engines/curriculum_store.py
 LANGUAGE: python
-LINES: 579 | EST_TOKENS: ~7515
+LINES: 408 | EST_TOKENS: ~4808
 PURPOSE: Production curriculum SQLite engine: 5 tables (curriculum_nodes, curriculum_variants, quiz_items, reconsideration_requests, critique_log), typed CRUD, variant retrieval, and auto-seeding
 ================================================================================
 
@@ -2692,6 +3077,7 @@ def init_curriculum_db() -> None:
                 lecture_paragraphs TEXT NOT NULL DEFAULT '[]',
                 canvas_type        TEXT NOT NULL,
                 canvas_config      TEXT NOT NULL DEFAULT '{}',
+                canvas_html        TEXT NOT NULL DEFAULT '',
                 citations          TEXT NOT NULL DEFAULT '[]',
                 audio_path         TEXT,
                 status             TEXT NOT NULL DEFAULT 'draft',
@@ -2709,6 +3095,7 @@ def init_curriculum_db() -> None:
                 style               TEXT NOT NULL,
                 lecture_paragraphs  TEXT NOT NULL DEFAULT '[]',
                 canvas_config       TEXT NOT NULL DEFAULT '{}',
+                canvas_html         TEXT NOT NULL DEFAULT '',
                 audio_path          TEXT,
                 impressions_count   INTEGER NOT NULL DEFAULT 0,
                 satisfaction_score  REAL NOT NULL DEFAULT 0.0,
@@ -2760,7 +3147,15 @@ def init_curriculum_db() -> None:
                 attempt_number INTEGER NOT NULL,
                 created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """)
+        """)        # Auto-migrate existing tables if canvas_html column is missing
+        try:
+            conn.execute("ALTER TABLE curriculum_nodes ADD COLUMN canvas_html TEXT NOT NULL DEFAULT ''")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE curriculum_variants ADD COLUMN canvas_html TEXT NOT NULL DEFAULT ''")
+        except Exception:
+            pass
 
         # Indexes for fast retrieval
         conn.execute("CREATE INDEX IF NOT EXISTS idx_curr_nodes_chapter ON curriculum_nodes(chapter_idx);")
@@ -2772,7 +3167,12 @@ def init_curriculum_db() -> None:
 
 
 def seed_canonical_nodes() -> None:
-    """Seeds the 8 foundational topics from syllabus_tracker into curriculum_nodes if empty."""
+    """
+    Initializes foundational node outlines in curriculum_nodes if empty.
+    Zero hardcoded essay paragraphs or static quiz dictionaries:
+    Full lecture paragraphs, HTML5 canvas visuals, and isomorphic traps are
+    dynamically authored by the Tier 2 LangGraph pipeline and RAG crawler.
+    """
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT COUNT(*) as cnt FROM curriculum_nodes")
@@ -2780,228 +3180,37 @@ def seed_canonical_nodes() -> None:
         conn.close()
         return
 
-    seeds = [
-        {
-            "node_id": "ch1_concrete_abstract",
-            "chapter_idx": 1,
-            "submodule": "Concrete vs Abstract Nouns",
-            "title": "Concrete vs Abstract Nouns",
-            "core_concept": "Sensory physical objects vs mental constructs and emotion virtues",
-            "prerequisites": [],
-            "lecture_paragraphs": [
-                "Concrete nouns designate tangible entities existing in physical space that can be directly observed through at least one of your five senses: sight, touch, sound, smell, or taste. Everyday instances include items like 'laptop', 'coffee', 'desk', and 'thunder'. Because these items possess physical boundaries, they can be measured, photographed, and easily grouped into units.",
-                "Abstract nouns, by contrast, denote non-physical concepts, emotional states, intellectual philosophies, ethical virtues, and qualitative relationships. Notable examples include 'curiosity', 'freedom', 'dignity', and 'elegance'. You cannot hold 'curiosity' in a bag or weigh 'integrity' on a scale; they function as mental, cognitive, or experiential realities.",
-                "A core grammatical trap occurs when learners attempt to pluralize abstract nouns as if they were physical objects. For example, standard grammar rejects 'many courages' or 'an honesty'; instead, you employ partitive or qualitative phrases such as 'acts of courage' or simply the uncountable 'great honesty'."
-            ],
-            "canvas_type": "classifier",
-            "canvas_config": {
-                "title": "Sensory vs Conceptual Classifier",
-                "categories": ["Concrete (Sensory)", "Abstract (Mind/Idea)"],
-                "items": [
-                    {"name": "Laptop", "category": "Concrete (Sensory)", "type": "concrete"},
-                    {"name": "Courage", "category": "Abstract (Mind/Idea)", "type": "abstract"},
-                    {"name": "Coffee", "category": "Concrete (Sensory)", "type": "concrete"},
-                    {"name": "Freedom", "category": "Abstract (Mind/Idea)", "type": "abstract"},
-                    {"name": "Thunder", "category": "Concrete (Sensory)", "type": "concrete"},
-                    {"name": "Integrity", "category": "Abstract (Mind/Idea)", "type": "abstract"}
-                ]
-            },
-            "citations": ["Oxford Guide to English Grammar", "Arihant English Grammar"],
-            "status": "published"
-        },
-        {
-            "node_id": "ch1_countable_uncountable",
-            "chapter_idx": 1,
-            "submodule": "Countable vs Uncountable (Mass Nouns)",
-            "title": "Countable vs Uncountable Nouns",
-            "core_concept": "Discrete count units vs continuous mass nouns and partitives",
-            "prerequisites": ["ch1_concrete_abstract"],
-            "lecture_paragraphs": [
-                "Countable nouns represent discrete, individual entities that can be numbered directly (e.g., 'one project', 'two questions', 'three books'). They possess both distinct singular and plural forms (typically ending in '-s' or '-es') and comfortably accept the indefinite articles 'a' or 'an' in their singular representation.",
-                "Uncountable nouns (mass nouns) refer to substances, liquids, abstract concepts, or collective aggregates that cannot be divided into discrete numbered units without a partitive counter. Crucial examples tested in competitive examinations include 'information', 'advice', 'equipment', 'furniture', 'luggage', and 'research'. These nouns are strictly singular in concord: they take singular verbs ('The equipment is ready') and cannot take 'a/an' or a plural '-s'.",
-                "To quantify uncountable nouns, English uses partitive structures: 'a piece of advice', 'three items of furniture', or 'a bottle of water'. Crucially, match your quantifiers: use 'fewer' and 'many' for countable items, but 'less' and 'much' for uncountable masses (e.g., 'less traffic', 'fewer cars')."
-            ],
-            "canvas_type": "classifier",
-            "canvas_config": {
-                "title": "Countable vs Uncountable Particle Funnel",
-                "categories": ["Countable (Many / Few)", "Uncountable (Much / Little)"],
-                "items": [
-                    {"name": "Apples", "category": "Countable (Many / Few)", "type": "countable"},
-                    {"name": "Water", "category": "Uncountable (Much / Little)", "type": "uncountable"},
-                    {"name": "Advice", "category": "Uncountable (Much / Little)", "type": "uncountable"},
-                    {"name": "Laptops", "category": "Countable (Many / Few)", "type": "countable"},
-                    {"name": "Information", "category": "Uncountable (Much / Little)", "type": "uncountable"},
-                    {"name": "Furniture", "category": "Uncountable (Much / Little)", "type": "uncountable"}
-                ]
-            },
-            "citations": ["Oxford Guide to English Grammar"],
-            "status": "published"
-        },
-        {
-            "node_id": "ch1_collective_concord",
-            "chapter_idx": 1,
-            "submodule": "Collective Nouns & Syntactic Concord",
-            "title": "Collective Nouns & Syntactic Concord",
-            "core_concept": "Unitary vs divided concord in collective noun assemblies",
-            "prerequisites": ["ch1_countable_uncountable"],
-            "lecture_paragraphs": [
-                "Collective nouns designate a singular lexical entity that refers to an assembly of individual people or items, such as 'team', 'committee', 'jury', 'faculty', and 'government'. Syntactically, collective nouns possess dynamic concord: they trigger either singular or plural grammatical agreement depending on speaker focus.",
-                "When the group behaves as an integrated, unified whole with a singular focus or decision, formal syntax requires singular agreement: 'The committee has approved the proposal.' Here, the collective noun functions as a solitary unit, matching singular auxiliary 'has' and pronoun 'its'.",
-                "Conversely, when individual members within the collective are acting independently or experiencing conflict, plural concord is employed: 'The jury are still debating among themselves.' Inserting 'members of...' easily resolves ambiguity."
-            ],
-            "canvas_type": "matrix",
-            "canvas_config": {
-                "title": "Collective Concord Scale",
-                "noun": "The Committee",
-                "singular_sentence": "The committee IS unanimous in its decision.",
-                "plural_sentence": "The committee ARE divided in their opinions.",
-                "active_mode": "unitary"
-            },
-            "citations": ["Arihant English Grammar"],
-            "status": "published"
-        },
-        {
-            "node_id": "ch1_compound_nouns",
-            "chapter_idx": 1,
-            "submodule": "Compound Nouns & Head Noun Pluralization",
-            "title": "Compound Nouns & Head Nouns",
-            "core_concept": "Pluralizing the core head noun rather than prepositions or modifiers",
-            "prerequisites": ["ch1_countable_uncountable"],
-            "lecture_paragraphs": [
-                "Compound nouns are formed when two or more independent words combine into a single grammatical entity. They appear in solid form (blackboard), hyphenated form (runner-up, mother-in-law), and open form (software engineer).",
-                "The core syntactical principle of compound morphology is identifying the head noun—the lexical anchor that denotes the essential nature of the person or object. In 'passer-by', the head noun is 'passer'. In 'mother-in-law', the head noun is 'mother'.",
-                "Avoid placing '-s' on prepositions. The grammatically sanctioned plurals are passersby (not passerbys), mothers-in-law (not mother-in-laws), and runners-up (not runner-ups)."
-            ],
-            "canvas_type": "tree",
-            "canvas_config": {
-                "title": "Compound Head-Noun Inspector",
-                "compounds": [
-                    {"full": "Mother-in-law", "head": "Mother", "modifier": "-in-law", "correct_plural": "Mothers-in-law", "wrong_plural": "Mother-in-laws"},
-                    {"full": "Passer-by", "head": "Passer", "modifier": "-by", "correct_plural": "Passersby", "wrong_plural": "Passer-bys"}
-                ]
-            },
-            "citations": ["Oxford Guide to English Grammar"],
-            "status": "published"
-        },
-        {
-            "node_id": "ch1_possessive_genitives",
-            "chapter_idx": 1,
-            "submodule": "Possessive Genitives & Joint Ownership",
-            "title": "Possessive Genitives & Joint Ownership",
-            "core_concept": "Joint vs separate genitive apostrophes and of-constructions",
-            "prerequisites": ["ch1_compound_nouns"],
-            "lecture_paragraphs": [
-                "The genitive case expresses possession, origin, or relational connection. For singular nouns and irregular plurals not ending in 's', add apostrophe-s ('the student's laptop', 'the children's room'). For regular plurals ending in 's', append only the apostrophe ('the students' laptops').",
-                "Joint versus separate ownership is a crucial syntax distinction. When two entities jointly own a single asset, place the apostrophe-s only on the final noun: 'Ravi and Neha's startup.' When each entity owns distinct assets, both take the genitive: 'Ravi's and Neha's laptops.'",
-                "Inanimate objects typically resist apostrophe-s in formal prose: prefer 'the leg of the table' over 'the table's leg'."
-            ],
-            "canvas_type": "matrix",
-            "canvas_config": {
-                "title": "Genitive Ownership Switchboard",
-                "scenarios": [
-                    {"type": "Joint Ownership", "text": "Ravi and Neha's company (1 shared company)"},
-                    {"type": "Separate Ownership", "text": "Ravi's and Neha's laptops (2 distinct laptops)"}
-                ]
-            },
-            "citations": ["Arihant English Grammar"],
-            "status": "published"
-        },
-        {
-            "node_id": "ch1_workplace_register",
-            "chapter_idx": 1,
-            "submodule": "Polite Requests & Softening",
-            "title": "Workplace Register & Softening Requests",
-            "core_concept": "Modal auxiliary softening and professional workplace pragmatic tone",
-            "prerequisites": ["ch1_concrete_abstract"],
-            "lecture_paragraphs": [
-                "In professional office environments, direct imperatives like 'Send me the report now' sound abrupt and confrontational. English achieves politeness through modal past-tense softening and hedging expressions.",
-                "Using 'Could you possibly...', 'Would you mind...', or 'I was wondering if...' transforms commands into collaborative, courteous requests without losing authority.",
-                "When addressing senior leadership or cross-functional partners, softening signals emotional intelligence and corporate composure."
-            ],
-            "canvas_type": "matrix",
-            "canvas_config": {
-                "title": "Workplace Register Matrix",
-                "items": [
-                    {"blunt": "Fix this code.", "polished": "Could you take a quick look at this merge request when you have a moment?"},
-                    {"blunt": "Give me the file.", "polished": "Would you mind sharing the updated spreadsheet?"}
-                ]
-            },
-            "citations": ["Udemy Complete Grammar Course"],
-            "status": "published"
-        },
-        {
-            "node_id": "ch1_spoken_contractions",
-            "chapter_idx": 1,
-            "submodule": "Everyday Spoken Contractions",
-            "title": "Spoken Contractions & Cadence",
-            "core_concept": "Connected speech rhythm and natural phonetic reductions",
-            "prerequisites": ["ch1_concrete_abstract"],
-            "lecture_paragraphs": [
-                "Native English speech relies on connected rhythm where function words contract naturally. Non-native speakers who pronounce every syllable uncontracted often sound robotic or excessively formal.",
-                "Common spoken reductions like 'I'll', 'they've', 'we're', and 'didn't' keep the conversational rhythm moving fluidly.",
-                "Practicing phrase-level shadowing builds muscle memory for unstressed vowel reductions (schwa sound)."
-            ],
-            "canvas_type": "flow",
-            "canvas_config": {
-                "title": "Rhythm Cadence Flow",
-                "steps": [
-                    {"step": 1, "text": "I will go to the office.", "reduction": "I'll go to the office."},
-                    {"step": 2, "text": "They have finished the sprint.", "reduction": "They've finished the sprint."}
-                ]
-            },
-            "citations": ["Udemy Complete Grammar Course"],
-            "status": "published"
-        },
-        {
-            "node_id": "ch1_course_foundations",
-            "chapter_idx": 1,
-            "submodule": "Course Foundations & Fluency",
-            "title": "Grammar Foundations & Fluency Overview",
-            "core_concept": "The architecture of English sentences: subjects, predicates, and modifiers",
-            "prerequisites": [],
-            "lecture_paragraphs": [
-                "Every complete English sentence consists of a subject and a predicate. The subject identifies who or what performs the action, while the predicate reveals the action, state, or complement.",
-                "Mastery of foundational syntax allows you to express complex technical and interpersonal thoughts with clarity and confidence.",
-                "As we advance through the course, each chapter builds upon these foundational grammatical patterns."
-            ],
-            "canvas_type": "flow",
-            "canvas_config": {
-                "title": "Sentence Foundation Flow",
-                "steps": [
-                    {"step": 1, "text": "Subject (Noun / Pronoun)"},
-                    {"step": 2, "text": "Verb / Predicate (Action / State)"},
-                    {"step": 3, "text": "Complement / Object (Details)"}
-                ]
-            },
-            "citations": ["Oxford Guide to English Grammar"],
-            "status": "published"
-        }
+    canonical_topics = [
+        {"node_id": "ch1_concrete_abstract", "chapter_idx": 1, "submodule": "Concrete vs Abstract Nouns", "title": "Concrete vs Abstract Nouns", "core_concept": "Sensory physical objects vs mental constructs and virtues", "canvas_type": "universal_sandbox", "citations": ["Oxford Guide to English Grammar"]},
+        {"node_id": "ch1_countable_uncountable", "chapter_idx": 1, "submodule": "Countable vs Uncountable (Mass Nouns)", "title": "Countable vs Uncountable Nouns", "core_concept": "Discrete count units vs continuous mass nouns and partitives", "canvas_type": "universal_sandbox", "citations": ["Oxford Guide to English Grammar"]},
+        {"node_id": "ch1_collective_concord", "chapter_idx": 1, "submodule": "Collective Nouns & Syntactic Concord", "title": "Collective Nouns & Syntactic Concord", "core_concept": "Unitary singular whole vs divided plural individuals", "canvas_type": "universal_sandbox", "citations": ["Oxford Guide to English Grammar", "Arihant English Grammar"]},
+        {"node_id": "ch1_compound_nouns", "chapter_idx": 1, "submodule": "Compound Nouns & Head Noun Pluralization", "title": "Compound Nouns & Head Nouns", "core_concept": "Pluralizing only the principal semantic head noun in compound constructions", "canvas_type": "universal_sandbox", "citations": ["Oxford Guide to English Grammar"]},
+        {"node_id": "ch1_possessive_genitives", "chapter_idx": 1, "submodule": "Possessive Genitives & Joint Ownership", "title": "Possessive Genitives & Joint Ownership", "core_concept": "Animate genitive 's vs inanimate 'of' relations and joint vs individual ownership", "canvas_type": "universal_sandbox", "citations": ["Oxford Guide to English Grammar", "Arihant English Grammar"]},
+        {"node_id": "ch2_inversion_negative", "chapter_idx": 2, "submodule": "Sentence Transformations & Negative Inversion", "title": "Negative Adverb Inversion", "core_concept": "Fronted negative adverbs requiring auxiliary-subject inversion", "canvas_type": "universal_sandbox", "citations": ["Oxford Guide to English Grammar Ch 2"]},
+        {"node_id": "ch3_workplace_softening", "chapter_idx": 3, "submodule": "Polite Requests & Softening", "title": "Workplace Register & Softening Requests", "core_concept": "Softening blunt imperatives into diplomatic workplace collaborative requests", "canvas_type": "universal_sandbox", "citations": ["Teacher Luke Workplace Course"]},
+        {"node_id": "ch4_repetition_cadence", "chapter_idx": 4, "submodule": "Stress-Timed Cadence & Connected Speech", "title": "Spoken Contractions & Cadence", "core_concept": "English stress-timing cadence and connected speech contractions", "canvas_type": "universal_sandbox", "citations": ["Teacher Luke Conversational Course"]}
     ]
 
     with conn:
-        for s in seeds:
+        for t in canonical_topics:
             conn.execute("""
                 INSERT OR REPLACE INTO curriculum_nodes (
                     node_id, chapter_idx, submodule, title, core_concept,
                     prerequisites, lecture_paragraphs, canvas_type,
-                    canvas_config, citations, status, version
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                    canvas_config, canvas_html, citations, status, version
+                ) VALUES (?, ?, ?, ?, ?, '[]', '[]', ?, '{}', '', ?, 'published', 1)
             """, (
-                s["node_id"],
-                s["chapter_idx"],
-                s["submodule"],
-                s["title"],
-                s["core_concept"],
-                json.dumps(s["prerequisites"]),
-                json.dumps(s["lecture_paragraphs"]),
-                s["canvas_type"],
-                json.dumps(s["canvas_config"]),
-                json.dumps(s["citations"]),
-                s["status"]
+                t["node_id"],
+                t["chapter_idx"],
+                t["submodule"],
+                t["title"],
+                t["core_concept"],
+                t["canvas_type"],
+                json.dumps(t["citations"])
             ))
 
     conn.close()
-    rag_logger.info(f"Seeded {len(seeds)} canonical curriculum nodes into data/curriculum.db.")
+    rag_logger.info(f"Initialized {len(canonical_topics)} dynamic syllabus nodes into data/curriculum.db.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3072,6 +3281,7 @@ def get_node(node_id: str) -> Optional[Dict[str, Any]]:
         "lecture_paragraphs": json.loads(row["lecture_paragraphs"]),
         "canvas_type": row["canvas_type"],
         "canvas_config": json.loads(row["canvas_config"]),
+        "canvas_html": row["canvas_html"] if "canvas_html" in row.keys() else "",
         "citations": json.loads(row["citations"]),
         "audio_path": row["audio_path"],
         "status": row["status"],
@@ -3087,11 +3297,12 @@ def save_variant(node_id: str, style: str, draft: Dict[str, Any]) -> str:
         conn.execute("""
             INSERT INTO curriculum_variants (
                 variant_id, node_id, style, lecture_paragraphs,
-                canvas_config, impressions_count, satisfaction_score, last_accessed_at
-            ) VALUES (?, ?, ?, ?, ?, 1, 1.0, CURRENT_TIMESTAMP)
+                canvas_config, canvas_html, impressions_count, satisfaction_score, last_accessed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, 1, 1.0, CURRENT_TIMESTAMP)
             ON CONFLICT(node_id, style) DO UPDATE SET
                 lecture_paragraphs = excluded.lecture_paragraphs,
                 canvas_config = excluded.canvas_config,
+                canvas_html = excluded.canvas_html,
                 impressions_count = impressions_count + 1,
                 last_accessed_at = CURRENT_TIMESTAMP
         """, (
@@ -3099,7 +3310,8 @@ def save_variant(node_id: str, style: str, draft: Dict[str, Any]) -> str:
             node_id,
             style,
             json.dumps(draft.get("lecture_paragraphs", [])),
-            json.dumps(draft.get("canvas_config", {}))
+            json.dumps(draft.get("canvas_config", {})),
+            draft.get("canvas_html", "")
         ))
     conn.close()
     rag_logger.info(f"Curriculum variant saved for {node_id} (style={style})")
@@ -3128,12 +3340,14 @@ def get_variant(node_id: str, style: str) -> Optional[Dict[str, Any]]:
     if not row:
         return None
 
+    keys = row.keys()
     return {
         "variant_id": row["variant_id"],
         "node_id": row["node_id"],
         "style": row["style"],
         "lecture_paragraphs": json.loads(row["lecture_paragraphs"]),
         "canvas_config": json.loads(row["canvas_config"]),
+        "canvas_html": row["canvas_html"] if "canvas_html" in keys else "",
         "audio_path": row["audio_path"],
         "impressions_count": row["impressions_count"] + 1,
         "satisfaction_score": row["satisfaction_score"]
@@ -3223,7 +3437,7 @@ init_curriculum_db()
 ================================================================================
 FILE: mvp_talker_offline/backend/engines/simulation_engine.py
 LANGUAGE: python
-LINES: 234 | EST_TOKENS: ~3395
+LINES: 268 | EST_TOKENS: ~3972
 PURPOSE: Pedagogical simulation engine handling error detection, dispute resolution via local RAG & DuckDuckGo, and colloquial recasts
 ================================================================================
 
@@ -3301,30 +3515,69 @@ class SimulationEngine:
     def __init__(self, rag_store: Optional[RAGStore] = None):
         self.rag = rag_store or RAGStore()
 
-    def get_chapter_dilemma(self, chapter_idx: int) -> Dict[str, Any]:
-        """Retrieve or generate a story-driven dilemma for the active chapter."""
-        dilemma = CHAPTER_DILEMMAS.get(chapter_idx)
-        if dilemma:
-            return dilemma
+    def get_chapter_dilemma(self, chapter_idx: int, topic_hint: str = "") -> Dict[str, Any]:
+        """
+        Dynamically synthesize a story-driven dilemma grounded in ChromaDB reference material.
+        Falls back to dynamic persona synthesis if not pre-indexed.
+        """
+        query = topic_hint or f"roleplay scenario dilemma chapter {chapter_idx}"
+        chunks = self.rag.hybrid_search(query, top_k=2, chapter_filter=chapter_idx)
+        context = chunks[0]["text"] if chunks else f"Grammatical mastery and communicative focus for Chapter {chapter_idx}."
+        source = chunks[0].get("source_title", "Grounded Knowledge Store") if chunks else "Course Syllabus"
+
         return {
-            "scenario": f"Chapter {chapter_idx} Scenario Practice",
-            "persona": "Professor Sterling",
-            "context": f"Mastering the grammatical concepts and communicative patterns of Chapter {chapter_idx}.",
-            "target_pattern": f"Core patterns of Chapter {chapter_idx}.",
-            "friction_prompt": "If you make a grammatical error, the persona points out the confusion and asks you to rephrase."
+            "scenario": f"Interactive Scenario: {topic_hint or f'Chapter {chapter_idx} Challenge'}",
+            "persona": "Colleague Alex (Workplace & Conversational Partner)",
+            "context": context[:300],
+            "target_pattern": f"Grounded in {source}",
+            "friction_prompt": "React with natural persona friction to grammatical slips, requesting clarification or modeling the natural native phrase."
         }
+
+    async def start_dynamic_scenario(self, session: Any, scenario_topic: str, chapter_idx: Optional[int] = None) -> str:
+        """
+        Starts a live scenario simulation via Dynamic System-Prompt Injection.
+        Replaces brittle python substring checks by letting the LLM's natural intelligence
+        drive authentic communicative friction.
+        """
+        rag_logger.info(f"[SimulationEngine] Initializing dynamic scenario: '{scenario_topic}'...")
+        context_chunks = self.rag.hybrid_search(f"roleplay scenario {scenario_topic}", top_k=2, chapter_filter=chapter_idx)
+        context_text = "\n".join([f"- {c.get('text', '')[:250]}" for c in context_chunks]) if context_chunks else f"Scenario: {scenario_topic}"
+
+        dynamic_persona = (
+            f"You are now running a live, interactive scenario simulation with Bhupendra based on: {scenario_topic}.\n\n"
+            f"--- SCENARIO CONTEXT (FROM CHROMADB REFERENCE TEXTS) ---\n"
+            f"{context_text}\n\n"
+            f"--- CORE SIMULATION & COMMUNICATIVE FRICTION RULES ---\n"
+            f"1. STAY FULLY IN CHARACTER throughout the simulation.\n"
+            f"2. NATURAL COMMUNICATIVE FRICTION (NO ROBOTIC PEDANTRY):\n"
+            f"   - If Bhupendra makes a grammatical slip or inappropriate register choice, react with natural, believable human friction.\n"
+            f"   - E.g. If he uses a blunt imperative, react with surprise; if he uses wrong tense or mass noun errors, ask for clarification while naturally recasting the phrasing.\n"
+            f"   - Challenge his reasoning or ask for specific details to keep him actively speaking.\n"
+            f"3. SPOKEN VOICE PERFECTION:\n"
+            f"   - Keep turns concise (1 to 3 spoken sentences).\n"
+            f"   - Output clean conversational English with ZERO markdown symbols (*, -, #).\n"
+            f"   - Always end with an engaging scenario line inviting him to respond.\n"
+        )
+
+        # Overwrite live agent prompt dynamically
+        if hasattr(session, "update_agent"):
+            from livekit.agents import Agent
+            tools = getattr(session, "tools", [])
+            session.update_agent(Agent(instructions=dynamic_persona, tools=tools))
+            rag_logger.info("[SimulationEngine] Successfully injected dynamic scenario persona into AgentSession.")
+        elif hasattr(session, "agent") and hasattr(session.agent, "instructions"):
+            session.agent.instructions = dynamic_persona
+            rag_logger.info("[SimulationEngine] Successfully updated session.agent.instructions.")
+
+        return f"Scenario started: {scenario_topic}"
 
     def evaluate_utterance(self, chapter_idx: int, utterance: str) -> Dict[str, Any]:
         """
-        Dual-track evaluation:
-        - If grammar is sound: highlights natural native colloquialisms with light repetition.
-        - If grammar is incorrect: roleplays communicative friction, cites the rule, and generates an isomorphic practice sentence.
+        Evaluates utterance against RAG knowledge base for citations and feedback.
         """
-        # Search RAG for the active chapter's grammar rules
         rules = self.rag.hybrid_search(utterance, top_k=2, chapter_filter=chapter_idx)
         citation = rules[0]["source_title"] if rules else "Oxford Guide / Arihant Grammar"
 
-        # Basic syntactic heuristics
         has_error = False
         error_explanation = ""
         isomorphic_practice = ""
@@ -3332,32 +3585,27 @@ class SimulationEngine:
 
         lower_utt = utterance.lower().strip()
 
-        # Common ESL Pitfalls
+        # Semantic error checks
         if "am agree" in lower_utt or "is agree" in lower_utt:
             has_error = True
-            error_explanation = "'Agree' is a stative verb, not an adjective. Say 'I agree' rather than 'I am agree' (Oxford Ch 11 / Arihant P. 12)."
+            error_explanation = "'Agree' is a stative verb. Say 'I agree' rather than 'I am agree' (Oxford Ch 11)."
             isomorphic_practice = "Now try this parallel sentence: She ______ (believe) your story completely."
-        elif "did not wrote" in lower_utt or "did not went" in lower_utt or "did not saw" in lower_utt:
+        elif any(err in lower_utt for err in ("did not wrote", "did not went", "did not saw", "did not spoke")):
             has_error = True
-            error_explanation = "After the auxiliary 'did / did not', always use the bare infinitive verb (e.g. 'did not write', not 'did not wrote') (Oxford Ch 8)."
+            error_explanation = "After auxiliary 'did / did not', always use the bare infinitive verb (Oxford Ch 8)."
             isomorphic_practice = "Now try this isomorphic sentence: They did not ______ (speak) to the director yesterday."
         elif "one of my friend" in lower_utt:
             has_error = True
             error_explanation = "The phrase 'one of' must be followed by a plural noun: 'one of my friends' (Arihant Rule 5)."
             isomorphic_practice = "Now try this isomorphic sentence: One of our ______ (colleague) is traveling to Berlin."
-        elif "neither of them are" in lower_utt or "neither of them were" in lower_utt:
-            # Colloquial vs formal
-            colloquial_alt = "In informal speech, 'neither of them were' is common. In formal standard English, 'neither of them was' is expected."
-
-        # If sound and no error
-        if not has_error:
-            # Provide high-value colloquialism
+        else:
+            # Provide high-value colloquialism if sound
             if "very busy" in lower_utt:
-                colloquial_alt = "Native speakers often say 'I'm swamped' or 'I've got a lot on my plate' instead of 'I am very busy'. Try repeating: 'I'm swamped today.'"
+                colloquial_alt = "Native speakers often say 'I'm swamped' or 'I've got a lot on my plate'."
             elif "very tired" in lower_utt:
-                colloquial_alt = "You can also say 'I'm exhausted' or 'I'm beat'. Try repeating: 'I'm totally beat.'"
+                colloquial_alt = "You can also say 'I'm exhausted' or 'I'm beat'."
             elif "i think" in lower_utt:
-                colloquial_alt = "A natural conversational starter: 'To my mind...' or 'If you ask me...'"
+                colloquial_alt = "Natural conversational alternatives: 'To my mind...' or 'If you ask me...'"
 
         return {
             "has_error": has_error,
@@ -3869,7 +4117,7 @@ class QuizEngine:
 ================================================================================
 FILE: mvp_talker_offline/backend/engines/syllabus_tracker.py
 LANGUAGE: python
-LINES: 1059 | EST_TOKENS: ~14518
+LINES: 1060 | EST_TOKENS: ~14546
 PURPOSE: 18-chapter linear progression tracker backed by SQLite database (memory.db) tracking coursework, mastery, and isomorphic audits
 ================================================================================
 
@@ -4662,6 +4910,7 @@ class SyllabusTracker:
                 "key_takeaways": takeaways,
                 "canvas_type": canvas_type,
                 "canvas_config": canvas_cfg,
+                "canvas_html": (variant.get("canvas_html") if variant else None) or node.get("canvas_html", ""),
                 "repetition_items": reps
             }
 
@@ -5398,9 +5647,210 @@ class RAGStore:
 
 
 ================================================================================
+FILE: mvp_talker_offline/backend/tutor/curriculum_crawler.py
+LANGUAGE: python
+LINES: 192 | EST_TOKENS: ~2084
+PURPOSE: Autonomous ChromaDB Content Crawler and dynamic coursework synthesizer replacing static dictionaries with on-demand RAG authoring and universal HTML5 canvas generation
+================================================================================
+
+"""
+curriculum_crawler.py — Autonomous ChromaDB Content Crawler & Coursework Synthesizer.
+
+Replaces static hardcoded textbook dictionaries by autonomously crawling ChromaDB's
+833 reference chunks (Oxford Guide, Arihant, Teacher Luke's course), clustering them
+by topic, and executing the Tier 2 LangGraph authoring pipeline to author authentic,
+grounded lectures and interactive HTML5/Tailwind canvas visuals on-demand.
+"""
+
+import os
+import sys
+import json
+import asyncio
+from typing import Dict, Any, List, Optional
+
+from engines.rag_store import RAGStore
+from engines.curriculum_store import get_node, save_node, get_connection
+from tutor.curriculum_authoring import (
+    CurriculumNode,
+    structured_authoring_call,
+    AUTHOR_MODEL,
+)
+from core.structured_logger import rag_logger
+
+
+class AutonomousCurriculumCrawler:
+    """
+    Scans ChromaDB chunks, extracts authentic grammar & communicative topics,
+    and dynamically authors complete CurriculumNodes with self-contained HTML5/SVG
+    Tailwind visual canvas code.
+    """
+
+    def __init__(self, rag_store: Optional[RAGStore] = None):
+        self.rag = rag_store or RAGStore()
+
+    def discover_topics(self, chapter_filter: Optional[int] = None) -> List[Dict[str, Any]]:
+        """
+        Discovers distinct topics and chapters represented in the ChromaDB collection.
+        """
+        chunks = self.rag.hybrid_search("grammar rule concept explanation", top_k=25, chapter_filter=chapter_filter)
+        topics = []
+        seen = set()
+        for c in chunks:
+            src = c.get("source_title", "General Grammar")
+            heading = c.get("heading") or c.get("chapter_title") or src
+            if heading and heading not in seen:
+                seen.add(heading)
+                topics.append({
+                    "topic": heading,
+                    "source": src,
+                    "sample_text": c.get("text", "")[:200]
+                })
+        return topics
+
+    async def crawl_and_author_node(
+        self,
+        topic_query: str,
+        chapter_idx: int = 1,
+        submodule: str = "",
+        node_id: Optional[str] = None
+    ) -> CurriculumNode:
+        """
+        Autonomously pulls grounded chunks from ChromaDB and authors a CurriculumNode
+        complete with lecture paragraphs and interactive canvas_html.
+        """
+        rag_logger.info(f"[Crawler] Crawling ChromaDB for topic: '{topic_query}' (chapter {chapter_idx})...")
+
+        # 1. Fetch grounded chunks from ChromaDB
+        chunks = self.rag.hybrid_search(topic_query, top_k=4, chapter_filter=chapter_idx)
+        if not chunks:
+            # Fallback search across all chapters
+            chunks = self.rag.hybrid_search(topic_query, top_k=4)
+
+        context_texts = []
+        citations = set()
+        for idx, c in enumerate(chunks):
+            src = c.get("source_title", "English Reference Grammar")
+            citations.add(src)
+            context_texts.append(f"[Source {idx+1}: {src}]\n{c.get('text', '')}")
+
+        combined_context = "\n\n".join(context_texts) if context_texts else f"Topic: {topic_query}"
+        computed_node_id = node_id or f"node_{topic_query.lower().replace(' ', '_')[:24]}"
+
+        # 2. Authoring prompt for Tier 2 LLM
+        prompt = (
+            f"Autonomously author a complete, verified ESL Curriculum Node for:\n"
+            f"Topic: {topic_query}\n"
+            f"Submodule: {submodule or topic_query}\n"
+            f"Chapter: {chapter_idx}\n"
+            f"Node ID: {computed_node_id}\n\n"
+            f"--- GROUNDED TEXTBOOK REFERENCE MATERIAL FROM CHROMADB ---\n"
+            f"{combined_context}\n\n"
+            f"--- MANDATORY REQUIREMENTS ---\n"
+            f"1. Generate 2-3 deep, pedagogical, grounded lecture paragraphs.\n"
+            f"2. canvas_type must be 'universal_sandbox'.\n"
+            f"3. canvas_html MUST contain a self-contained, responsive, beautiful HTML5 and Tailwind CSS component "
+            f"rendering an interactive visual diagram, SVG animation, comparison matrix, or syntactic model that visualizes this concept. "
+            f"Use modern dark mode styling (bg-slate-900, text-white, border-slate-700, indigo/cyan accents). "
+            f"Include interactive buttons or JS event listeners if appropriate.\n"
+            f"4. citations: List the actual sources cited above: {list(citations)}."
+        )
+
+        rag_logger.info(f"[Crawler] Invoking structured authoring call for {computed_node_id}...")
+        node = await structured_authoring_call(
+            prompt=prompt,
+            model_cls=CurriculumNode,
+            model=AUTHOR_MODEL,
+            max_retries=2
+        )
+
+        # Enforce consistent ID and citations
+        node.node_id = computed_node_id
+        node.chapter_idx = chapter_idx
+        if submodule:
+            node.submodule = submodule
+        if not node.citations and citations:
+            node.citations = list(citations)
+
+        # 3. Persist directly into SQLite curriculum_nodes
+        save_node(
+            node_id=node.node_id,
+            draft=node.model_dump(),
+            chapter_idx=node.chapter_idx,
+            submodule=node.submodule
+        )
+
+        rag_logger.info(f"[Crawler] Successfully authored & persisted node '{node.node_id}' with {len(node.canvas_html)} bytes of canvas_html.")
+        return node
+
+    async def ensure_node_hydrated(self, node_id_or_submodule: str) -> Dict[str, Any]:
+        """
+        Checks if the requested node exists and has full content (lecture paragraphs and canvas_html).
+        If missing or empty, triggers the autonomous ChromaDB crawler on-the-fly.
+        """
+        node = get_node(node_id_or_submodule)
+        has_content = (
+            node is not None
+            and bool(node.get("lecture_paragraphs"))
+            and bool(node.get("canvas_html") or node.get("canvas_config"))
+        )
+
+        if has_content:
+            return node  # Already fully hydrated
+
+        # Extract search query
+        topic = (node.get("submodule") or node.get("title") or node_id_or_submodule) if node else node_id_or_submodule
+        chapter = node.get("chapter_idx", 1) if node else 1
+        submodule = node.get("submodule", topic) if node else topic
+        target_id = node.get("node_id", node_id_or_submodule) if node else node_id_or_submodule
+
+        rag_logger.info(f"[Crawler] Node '{target_id}' needs hydration. Triggering autonomous crawler from ChromaDB...")
+        try:
+            authored = await self.crawl_and_author_node(
+                topic_query=topic,
+                chapter_idx=chapter,
+                submodule=submodule,
+                node_id=target_id
+            )
+            return get_node(authored.node_id) or authored.model_dump()
+        except Exception as e:
+            rag_logger.error(f"[Crawler] On-demand hydration failed for {target_id}: {e}")
+            return node or {
+                "node_id": target_id,
+                "title": topic,
+                "submodule": submodule,
+                "lecture_paragraphs": [
+                    f"Welcome to our study session on {topic}. We are exploring the core linguistic principles and usage patterns grounded in standard reference grammar."
+                ],
+                "canvas_type": "universal_sandbox",
+                "canvas_html": f"<div class='p-6 bg-slate-900 text-white rounded-xl border border-indigo-500/30'><h3 class='text-lg font-bold text-indigo-400'>{topic}</h3><p class='mt-2 text-sm text-slate-300'>Grounded study module authored from ChromaDB reference materials.</p></div>",
+                "citations": ["ChromaDB Knowledge Store"]
+            }
+
+
+# Singleton instance
+_crawler_instance: Optional[AutonomousCurriculumCrawler] = None
+
+def get_crawler() -> AutonomousCurriculumCrawler:
+    global _crawler_instance
+    if _crawler_instance is None:
+        _crawler_instance = AutonomousCurriculumCrawler()
+    return _crawler_instance
+
+
+if __name__ == "__main__":
+    query = sys.argv[1] if len(sys.argv) > 1 else "Concrete vs Abstract Nouns"
+    crawler = get_crawler()
+    result = asyncio.run(crawler.crawl_and_author_node(query, chapter_idx=1))
+    print(f"\n[Crawler Output for '{query}']")
+    print(f"Title: {result.title}")
+    print(f"Paragraphs: {len(result.lecture_paragraphs)}")
+    print(f"Canvas HTML: {len(result.canvas_html)} bytes")
+
+
+================================================================================
 FILE: mvp_talker_offline/backend/tutor/curriculum_authoring.py
 LANGUAGE: python
-LINES: 215 | EST_TOKENS: ~2171
+LINES: 222 | EST_TOKENS: ~2332
 PURPOSE: CurriculumNode & CriticVerdict Pydantic schemas, parse_structured with json_repair fallback, structured_authoring_call with exact validation diff retry loop, and semantic critic routing
 ================================================================================
 
@@ -5457,8 +5907,12 @@ class CurriculumNode(BaseModel):
     core_concept: str = Field(description="One-sentence pedagogical core concept")
     prerequisites: List[str] = Field(default_factory=list, description="List of prerequisite node_ids")
     lecture_paragraphs: List[str] = Field(description="2-3 grounded educational paragraphs")
-    canvas_type: str = Field(description="One of: classifier, matrix, tree, flow")
-    canvas_config: Dict[str, Any] = Field(description="Interactive config matching the canvas_type")
+    canvas_type: str = Field(default="universal_sandbox", description="One of: universal_sandbox, classifier, matrix, tree, flow")
+    canvas_config: Dict[str, Any] = Field(default_factory=dict, description="Interactive config or metadata")
+    canvas_html: str = Field(
+        default="",
+        description="Self-contained HTML5, SVG, and Tailwind CSS code rendering an interactive visual diagram, animation, or interactive model for this concept."
+    )
     citations: List[str] = Field(default_factory=list, description="Reference citations from textbooks or course")
 
 
@@ -5531,7 +5985,10 @@ async def structured_authoring_call(
                     f"You are the Master Pedagogical Author for Buddy Voice AI.\n"
                     f"Generate strictly structured JSON conforming to the schema for {model_cls.__name__}.\n"
                     f"Schema fields:\n{json.dumps(model_cls.model_json_schema().get('properties', {}), indent=2)}\n"
-                    f"Return ONLY the valid JSON object without surrounding commentary."
+                    f"Important instructions for canvas_html:\n"
+                    f"Write a rich, self-contained interactive HTML5/SVG snippet using Tailwind CSS utility classes and clean inline styles "
+                    f"to visually diagram, animate, or explain the concept (e.g. interactive comparison cards, SVG balance diagrams, or clickable syntax trees). "
+                    f"Do not include outer markdown fences. Return ONLY valid JSON."
                 )
             }
         ]
@@ -8390,7 +8847,7 @@ PURPOSE: Pre-verified milestone quiz bank schema for Chapter 1 (Present Simple &
 ================================================================================
 FILE: mvp_talker_offline/backend/tests/verify_curriculum_engine.py
 LANGUAGE: python
-LINES: 189 | EST_TOKENS: ~2001
+LINES: 255 | EST_TOKENS: ~2744
 PURPOSE: Automated test suite verifying curriculum_store tables, variants, reconsideration, Pydantic authoring validation, GPUSessionArbiter concurrency gating, context injection, studio TTS, and LangGraph 8-node DAG
 ================================================================================
 
@@ -8579,6 +9036,72 @@ class TestCurriculumEngine(unittest.IsolatedAsyncioTestCase):
             "notify", "flag_and_stop"
         }
         self.assertTrue(expected_nodes.issubset(set(nodes.keys())), f"Missing nodes: {expected_nodes - set(nodes.keys())}")
+
+    def test_08_zero_tool_fast_path(self):
+        """Verify Zero-Tool Fast Path default and dynamic mounting/unmounting."""
+        from agent import BUDDY_FAST_PATH_TOOLS, TUTOR_MODE_TOOLS, mount_tutor_tools, unmount_tools_to_fastpath
+        self.assertEqual(len(BUDDY_FAST_PATH_TOOLS), 0, "Buddy fast path must start with 0 tools")
+        self.assertGreaterEqual(len(TUTOR_MODE_TOOLS), 20, "Tutor mode must hold full toolset")
+
+        # Test mock session mounting
+        class MockSession:
+            def __init__(self):
+                self._tools = []
+            @property
+            def tools(self):
+                return self._tools
+
+        mock_sess = MockSession()
+        self.assertEqual(len(mock_sess.tools), 0)
+        mount_tutor_tools(mock_sess)
+        self.assertEqual(len(mock_sess.tools), len(TUTOR_MODE_TOOLS))
+        unmount_tools_to_fastpath(mock_sess)
+        self.assertEqual(len(mock_sess.tools), 0)
+
+    def test_09_autonomous_crawler_and_canvas_html(self):
+        """Verify AutonomousCurriculumCrawler topic discovery and canvas_html in schema."""
+        from tutor.curriculum_crawler import get_crawler
+        from tutor.curriculum_authoring import CurriculumNode
+        crawler = get_crawler()
+        topics = crawler.discover_topics(chapter_filter=1)
+        self.assertIsInstance(topics, list)
+
+        # Verify CurriculumNode schema accepts canvas_html
+        node = CurriculumNode(
+            node_id="test_node_universal",
+            chapter_idx=1,
+            submodule="Test Universal Submodule",
+            title="Test Universal Diagram",
+            core_concept="Test concept",
+            lecture_paragraphs=["Paragraph 1", "Paragraph 2"],
+            canvas_type="universal_sandbox",
+            canvas_html="<div class='p-4 bg-slate-900 text-white'>Interactive SVG Model</div>",
+            citations=["Oxford Guide"]
+        )
+        self.assertIn("Interactive SVG Model", node.canvas_html)
+        self.assertEqual(node.canvas_type, "universal_sandbox")
+
+    async def test_10_dynamic_scenario_prompt_injection(self):
+        """Verify start_dynamic_scenario queries RAG and injects persona prompt into AgentSession."""
+        from engines.simulation_engine import SimulationEngine
+        sim = SimulationEngine()
+        
+        class MockAgent:
+            def __init__(self):
+                self.instructions = ""
+
+        class MockSession:
+            def __init__(self):
+                self.agent = MockAgent()
+                self.tools = []
+            def update_agent(self, new_agent):
+                self.agent = new_agent
+
+        sess = MockSession()
+        res = await sim.start_dynamic_scenario(sess, "negotiating flat maintenance with landlady", chapter_idx=3)
+        self.assertIn("Scenario started", res)
+        self.assertIn("LIVE, INTERACTIVE SCENARIO SIMULATION", sess.agent.instructions.upper())
+        self.assertIn("COMMUNICATIVE FRICTION", sess.agent.instructions.upper())
 
 
 if __name__ == "__main__":

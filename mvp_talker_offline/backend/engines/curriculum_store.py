@@ -51,6 +51,7 @@ def init_curriculum_db() -> None:
                 lecture_paragraphs TEXT NOT NULL DEFAULT '[]',
                 canvas_type        TEXT NOT NULL,
                 canvas_config      TEXT NOT NULL DEFAULT '{}',
+                canvas_html        TEXT NOT NULL DEFAULT '',
                 citations          TEXT NOT NULL DEFAULT '[]',
                 audio_path         TEXT,
                 status             TEXT NOT NULL DEFAULT 'draft',
@@ -68,6 +69,7 @@ def init_curriculum_db() -> None:
                 style               TEXT NOT NULL,
                 lecture_paragraphs  TEXT NOT NULL DEFAULT '[]',
                 canvas_config       TEXT NOT NULL DEFAULT '{}',
+                canvas_html         TEXT NOT NULL DEFAULT '',
                 audio_path          TEXT,
                 impressions_count   INTEGER NOT NULL DEFAULT 0,
                 satisfaction_score  REAL NOT NULL DEFAULT 0.0,
@@ -119,7 +121,15 @@ def init_curriculum_db() -> None:
                 attempt_number INTEGER NOT NULL,
                 created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """)
+        """)        # Auto-migrate existing tables if canvas_html column is missing
+        try:
+            conn.execute("ALTER TABLE curriculum_nodes ADD COLUMN canvas_html TEXT NOT NULL DEFAULT ''")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE curriculum_variants ADD COLUMN canvas_html TEXT NOT NULL DEFAULT ''")
+        except Exception:
+            pass
 
         # Indexes for fast retrieval
         conn.execute("CREATE INDEX IF NOT EXISTS idx_curr_nodes_chapter ON curriculum_nodes(chapter_idx);")
@@ -131,7 +141,12 @@ def init_curriculum_db() -> None:
 
 
 def seed_canonical_nodes() -> None:
-    """Seeds the 8 foundational topics from syllabus_tracker into curriculum_nodes if empty."""
+    """
+    Initializes foundational node outlines in curriculum_nodes if empty.
+    Zero hardcoded essay paragraphs or static quiz dictionaries:
+    Full lecture paragraphs, HTML5 canvas visuals, and isomorphic traps are
+    dynamically authored by the Tier 2 LangGraph pipeline and RAG crawler.
+    """
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT COUNT(*) as cnt FROM curriculum_nodes")
@@ -139,228 +154,37 @@ def seed_canonical_nodes() -> None:
         conn.close()
         return
 
-    seeds = [
-        {
-            "node_id": "ch1_concrete_abstract",
-            "chapter_idx": 1,
-            "submodule": "Concrete vs Abstract Nouns",
-            "title": "Concrete vs Abstract Nouns",
-            "core_concept": "Sensory physical objects vs mental constructs and emotion virtues",
-            "prerequisites": [],
-            "lecture_paragraphs": [
-                "Concrete nouns designate tangible entities existing in physical space that can be directly observed through at least one of your five senses: sight, touch, sound, smell, or taste. Everyday instances include items like 'laptop', 'coffee', 'desk', and 'thunder'. Because these items possess physical boundaries, they can be measured, photographed, and easily grouped into units.",
-                "Abstract nouns, by contrast, denote non-physical concepts, emotional states, intellectual philosophies, ethical virtues, and qualitative relationships. Notable examples include 'curiosity', 'freedom', 'dignity', and 'elegance'. You cannot hold 'curiosity' in a bag or weigh 'integrity' on a scale; they function as mental, cognitive, or experiential realities.",
-                "A core grammatical trap occurs when learners attempt to pluralize abstract nouns as if they were physical objects. For example, standard grammar rejects 'many courages' or 'an honesty'; instead, you employ partitive or qualitative phrases such as 'acts of courage' or simply the uncountable 'great honesty'."
-            ],
-            "canvas_type": "classifier",
-            "canvas_config": {
-                "title": "Sensory vs Conceptual Classifier",
-                "categories": ["Concrete (Sensory)", "Abstract (Mind/Idea)"],
-                "items": [
-                    {"name": "Laptop", "category": "Concrete (Sensory)", "type": "concrete"},
-                    {"name": "Courage", "category": "Abstract (Mind/Idea)", "type": "abstract"},
-                    {"name": "Coffee", "category": "Concrete (Sensory)", "type": "concrete"},
-                    {"name": "Freedom", "category": "Abstract (Mind/Idea)", "type": "abstract"},
-                    {"name": "Thunder", "category": "Concrete (Sensory)", "type": "concrete"},
-                    {"name": "Integrity", "category": "Abstract (Mind/Idea)", "type": "abstract"}
-                ]
-            },
-            "citations": ["Oxford Guide to English Grammar", "Arihant English Grammar"],
-            "status": "published"
-        },
-        {
-            "node_id": "ch1_countable_uncountable",
-            "chapter_idx": 1,
-            "submodule": "Countable vs Uncountable (Mass Nouns)",
-            "title": "Countable vs Uncountable Nouns",
-            "core_concept": "Discrete count units vs continuous mass nouns and partitives",
-            "prerequisites": ["ch1_concrete_abstract"],
-            "lecture_paragraphs": [
-                "Countable nouns represent discrete, individual entities that can be numbered directly (e.g., 'one project', 'two questions', 'three books'). They possess both distinct singular and plural forms (typically ending in '-s' or '-es') and comfortably accept the indefinite articles 'a' or 'an' in their singular representation.",
-                "Uncountable nouns (mass nouns) refer to substances, liquids, abstract concepts, or collective aggregates that cannot be divided into discrete numbered units without a partitive counter. Crucial examples tested in competitive examinations include 'information', 'advice', 'equipment', 'furniture', 'luggage', and 'research'. These nouns are strictly singular in concord: they take singular verbs ('The equipment is ready') and cannot take 'a/an' or a plural '-s'.",
-                "To quantify uncountable nouns, English uses partitive structures: 'a piece of advice', 'three items of furniture', or 'a bottle of water'. Crucially, match your quantifiers: use 'fewer' and 'many' for countable items, but 'less' and 'much' for uncountable masses (e.g., 'less traffic', 'fewer cars')."
-            ],
-            "canvas_type": "classifier",
-            "canvas_config": {
-                "title": "Countable vs Uncountable Particle Funnel",
-                "categories": ["Countable (Many / Few)", "Uncountable (Much / Little)"],
-                "items": [
-                    {"name": "Apples", "category": "Countable (Many / Few)", "type": "countable"},
-                    {"name": "Water", "category": "Uncountable (Much / Little)", "type": "uncountable"},
-                    {"name": "Advice", "category": "Uncountable (Much / Little)", "type": "uncountable"},
-                    {"name": "Laptops", "category": "Countable (Many / Few)", "type": "countable"},
-                    {"name": "Information", "category": "Uncountable (Much / Little)", "type": "uncountable"},
-                    {"name": "Furniture", "category": "Uncountable (Much / Little)", "type": "uncountable"}
-                ]
-            },
-            "citations": ["Oxford Guide to English Grammar"],
-            "status": "published"
-        },
-        {
-            "node_id": "ch1_collective_concord",
-            "chapter_idx": 1,
-            "submodule": "Collective Nouns & Syntactic Concord",
-            "title": "Collective Nouns & Syntactic Concord",
-            "core_concept": "Unitary vs divided concord in collective noun assemblies",
-            "prerequisites": ["ch1_countable_uncountable"],
-            "lecture_paragraphs": [
-                "Collective nouns designate a singular lexical entity that refers to an assembly of individual people or items, such as 'team', 'committee', 'jury', 'faculty', and 'government'. Syntactically, collective nouns possess dynamic concord: they trigger either singular or plural grammatical agreement depending on speaker focus.",
-                "When the group behaves as an integrated, unified whole with a singular focus or decision, formal syntax requires singular agreement: 'The committee has approved the proposal.' Here, the collective noun functions as a solitary unit, matching singular auxiliary 'has' and pronoun 'its'.",
-                "Conversely, when individual members within the collective are acting independently or experiencing conflict, plural concord is employed: 'The jury are still debating among themselves.' Inserting 'members of...' easily resolves ambiguity."
-            ],
-            "canvas_type": "matrix",
-            "canvas_config": {
-                "title": "Collective Concord Scale",
-                "noun": "The Committee",
-                "singular_sentence": "The committee IS unanimous in its decision.",
-                "plural_sentence": "The committee ARE divided in their opinions.",
-                "active_mode": "unitary"
-            },
-            "citations": ["Arihant English Grammar"],
-            "status": "published"
-        },
-        {
-            "node_id": "ch1_compound_nouns",
-            "chapter_idx": 1,
-            "submodule": "Compound Nouns & Head Noun Pluralization",
-            "title": "Compound Nouns & Head Nouns",
-            "core_concept": "Pluralizing the core head noun rather than prepositions or modifiers",
-            "prerequisites": ["ch1_countable_uncountable"],
-            "lecture_paragraphs": [
-                "Compound nouns are formed when two or more independent words combine into a single grammatical entity. They appear in solid form (blackboard), hyphenated form (runner-up, mother-in-law), and open form (software engineer).",
-                "The core syntactical principle of compound morphology is identifying the head noun—the lexical anchor that denotes the essential nature of the person or object. In 'passer-by', the head noun is 'passer'. In 'mother-in-law', the head noun is 'mother'.",
-                "Avoid placing '-s' on prepositions. The grammatically sanctioned plurals are passersby (not passerbys), mothers-in-law (not mother-in-laws), and runners-up (not runner-ups)."
-            ],
-            "canvas_type": "tree",
-            "canvas_config": {
-                "title": "Compound Head-Noun Inspector",
-                "compounds": [
-                    {"full": "Mother-in-law", "head": "Mother", "modifier": "-in-law", "correct_plural": "Mothers-in-law", "wrong_plural": "Mother-in-laws"},
-                    {"full": "Passer-by", "head": "Passer", "modifier": "-by", "correct_plural": "Passersby", "wrong_plural": "Passer-bys"}
-                ]
-            },
-            "citations": ["Oxford Guide to English Grammar"],
-            "status": "published"
-        },
-        {
-            "node_id": "ch1_possessive_genitives",
-            "chapter_idx": 1,
-            "submodule": "Possessive Genitives & Joint Ownership",
-            "title": "Possessive Genitives & Joint Ownership",
-            "core_concept": "Joint vs separate genitive apostrophes and of-constructions",
-            "prerequisites": ["ch1_compound_nouns"],
-            "lecture_paragraphs": [
-                "The genitive case expresses possession, origin, or relational connection. For singular nouns and irregular plurals not ending in 's', add apostrophe-s ('the student's laptop', 'the children's room'). For regular plurals ending in 's', append only the apostrophe ('the students' laptops').",
-                "Joint versus separate ownership is a crucial syntax distinction. When two entities jointly own a single asset, place the apostrophe-s only on the final noun: 'Ravi and Neha's startup.' When each entity owns distinct assets, both take the genitive: 'Ravi's and Neha's laptops.'",
-                "Inanimate objects typically resist apostrophe-s in formal prose: prefer 'the leg of the table' over 'the table's leg'."
-            ],
-            "canvas_type": "matrix",
-            "canvas_config": {
-                "title": "Genitive Ownership Switchboard",
-                "scenarios": [
-                    {"type": "Joint Ownership", "text": "Ravi and Neha's company (1 shared company)"},
-                    {"type": "Separate Ownership", "text": "Ravi's and Neha's laptops (2 distinct laptops)"}
-                ]
-            },
-            "citations": ["Arihant English Grammar"],
-            "status": "published"
-        },
-        {
-            "node_id": "ch1_workplace_register",
-            "chapter_idx": 1,
-            "submodule": "Polite Requests & Softening",
-            "title": "Workplace Register & Softening Requests",
-            "core_concept": "Modal auxiliary softening and professional workplace pragmatic tone",
-            "prerequisites": ["ch1_concrete_abstract"],
-            "lecture_paragraphs": [
-                "In professional office environments, direct imperatives like 'Send me the report now' sound abrupt and confrontational. English achieves politeness through modal past-tense softening and hedging expressions.",
-                "Using 'Could you possibly...', 'Would you mind...', or 'I was wondering if...' transforms commands into collaborative, courteous requests without losing authority.",
-                "When addressing senior leadership or cross-functional partners, softening signals emotional intelligence and corporate composure."
-            ],
-            "canvas_type": "matrix",
-            "canvas_config": {
-                "title": "Workplace Register Matrix",
-                "items": [
-                    {"blunt": "Fix this code.", "polished": "Could you take a quick look at this merge request when you have a moment?"},
-                    {"blunt": "Give me the file.", "polished": "Would you mind sharing the updated spreadsheet?"}
-                ]
-            },
-            "citations": ["Udemy Complete Grammar Course"],
-            "status": "published"
-        },
-        {
-            "node_id": "ch1_spoken_contractions",
-            "chapter_idx": 1,
-            "submodule": "Everyday Spoken Contractions",
-            "title": "Spoken Contractions & Cadence",
-            "core_concept": "Connected speech rhythm and natural phonetic reductions",
-            "prerequisites": ["ch1_concrete_abstract"],
-            "lecture_paragraphs": [
-                "Native English speech relies on connected rhythm where function words contract naturally. Non-native speakers who pronounce every syllable uncontracted often sound robotic or excessively formal.",
-                "Common spoken reductions like 'I'll', 'they've', 'we're', and 'didn't' keep the conversational rhythm moving fluidly.",
-                "Practicing phrase-level shadowing builds muscle memory for unstressed vowel reductions (schwa sound)."
-            ],
-            "canvas_type": "flow",
-            "canvas_config": {
-                "title": "Rhythm Cadence Flow",
-                "steps": [
-                    {"step": 1, "text": "I will go to the office.", "reduction": "I'll go to the office."},
-                    {"step": 2, "text": "They have finished the sprint.", "reduction": "They've finished the sprint."}
-                ]
-            },
-            "citations": ["Udemy Complete Grammar Course"],
-            "status": "published"
-        },
-        {
-            "node_id": "ch1_course_foundations",
-            "chapter_idx": 1,
-            "submodule": "Course Foundations & Fluency",
-            "title": "Grammar Foundations & Fluency Overview",
-            "core_concept": "The architecture of English sentences: subjects, predicates, and modifiers",
-            "prerequisites": [],
-            "lecture_paragraphs": [
-                "Every complete English sentence consists of a subject and a predicate. The subject identifies who or what performs the action, while the predicate reveals the action, state, or complement.",
-                "Mastery of foundational syntax allows you to express complex technical and interpersonal thoughts with clarity and confidence.",
-                "As we advance through the course, each chapter builds upon these foundational grammatical patterns."
-            ],
-            "canvas_type": "flow",
-            "canvas_config": {
-                "title": "Sentence Foundation Flow",
-                "steps": [
-                    {"step": 1, "text": "Subject (Noun / Pronoun)"},
-                    {"step": 2, "text": "Verb / Predicate (Action / State)"},
-                    {"step": 3, "text": "Complement / Object (Details)"}
-                ]
-            },
-            "citations": ["Oxford Guide to English Grammar"],
-            "status": "published"
-        }
+    canonical_topics = [
+        {"node_id": "ch1_concrete_abstract", "chapter_idx": 1, "submodule": "Concrete vs Abstract Nouns", "title": "Concrete vs Abstract Nouns", "core_concept": "Sensory physical objects vs mental constructs and virtues", "canvas_type": "universal_sandbox", "citations": ["Oxford Guide to English Grammar"]},
+        {"node_id": "ch1_countable_uncountable", "chapter_idx": 1, "submodule": "Countable vs Uncountable (Mass Nouns)", "title": "Countable vs Uncountable Nouns", "core_concept": "Discrete count units vs continuous mass nouns and partitives", "canvas_type": "universal_sandbox", "citations": ["Oxford Guide to English Grammar"]},
+        {"node_id": "ch1_collective_concord", "chapter_idx": 1, "submodule": "Collective Nouns & Syntactic Concord", "title": "Collective Nouns & Syntactic Concord", "core_concept": "Unitary singular whole vs divided plural individuals", "canvas_type": "universal_sandbox", "citations": ["Oxford Guide to English Grammar", "Arihant English Grammar"]},
+        {"node_id": "ch1_compound_nouns", "chapter_idx": 1, "submodule": "Compound Nouns & Head Noun Pluralization", "title": "Compound Nouns & Head Nouns", "core_concept": "Pluralizing only the principal semantic head noun in compound constructions", "canvas_type": "universal_sandbox", "citations": ["Oxford Guide to English Grammar"]},
+        {"node_id": "ch1_possessive_genitives", "chapter_idx": 1, "submodule": "Possessive Genitives & Joint Ownership", "title": "Possessive Genitives & Joint Ownership", "core_concept": "Animate genitive 's vs inanimate 'of' relations and joint vs individual ownership", "canvas_type": "universal_sandbox", "citations": ["Oxford Guide to English Grammar", "Arihant English Grammar"]},
+        {"node_id": "ch2_inversion_negative", "chapter_idx": 2, "submodule": "Sentence Transformations & Negative Inversion", "title": "Negative Adverb Inversion", "core_concept": "Fronted negative adverbs requiring auxiliary-subject inversion", "canvas_type": "universal_sandbox", "citations": ["Oxford Guide to English Grammar Ch 2"]},
+        {"node_id": "ch3_workplace_softening", "chapter_idx": 3, "submodule": "Polite Requests & Softening", "title": "Workplace Register & Softening Requests", "core_concept": "Softening blunt imperatives into diplomatic workplace collaborative requests", "canvas_type": "universal_sandbox", "citations": ["Teacher Luke Workplace Course"]},
+        {"node_id": "ch4_repetition_cadence", "chapter_idx": 4, "submodule": "Stress-Timed Cadence & Connected Speech", "title": "Spoken Contractions & Cadence", "core_concept": "English stress-timing cadence and connected speech contractions", "canvas_type": "universal_sandbox", "citations": ["Teacher Luke Conversational Course"]}
     ]
 
     with conn:
-        for s in seeds:
+        for t in canonical_topics:
             conn.execute("""
                 INSERT OR REPLACE INTO curriculum_nodes (
                     node_id, chapter_idx, submodule, title, core_concept,
                     prerequisites, lecture_paragraphs, canvas_type,
-                    canvas_config, citations, status, version
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                    canvas_config, canvas_html, citations, status, version
+                ) VALUES (?, ?, ?, ?, ?, '[]', '[]', ?, '{}', '', ?, 'published', 1)
             """, (
-                s["node_id"],
-                s["chapter_idx"],
-                s["submodule"],
-                s["title"],
-                s["core_concept"],
-                json.dumps(s["prerequisites"]),
-                json.dumps(s["lecture_paragraphs"]),
-                s["canvas_type"],
-                json.dumps(s["canvas_config"]),
-                json.dumps(s["citations"]),
-                s["status"]
+                t["node_id"],
+                t["chapter_idx"],
+                t["submodule"],
+                t["title"],
+                t["core_concept"],
+                t["canvas_type"],
+                json.dumps(t["citations"])
             ))
 
     conn.close()
-    rag_logger.info(f"Seeded {len(seeds)} canonical curriculum nodes into data/curriculum.db.")
+    rag_logger.info(f"Initialized {len(canonical_topics)} dynamic syllabus nodes into data/curriculum.db.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -431,6 +255,7 @@ def get_node(node_id: str) -> Optional[Dict[str, Any]]:
         "lecture_paragraphs": json.loads(row["lecture_paragraphs"]),
         "canvas_type": row["canvas_type"],
         "canvas_config": json.loads(row["canvas_config"]),
+        "canvas_html": row["canvas_html"] if "canvas_html" in row.keys() else "",
         "citations": json.loads(row["citations"]),
         "audio_path": row["audio_path"],
         "status": row["status"],
@@ -446,11 +271,12 @@ def save_variant(node_id: str, style: str, draft: Dict[str, Any]) -> str:
         conn.execute("""
             INSERT INTO curriculum_variants (
                 variant_id, node_id, style, lecture_paragraphs,
-                canvas_config, impressions_count, satisfaction_score, last_accessed_at
-            ) VALUES (?, ?, ?, ?, ?, 1, 1.0, CURRENT_TIMESTAMP)
+                canvas_config, canvas_html, impressions_count, satisfaction_score, last_accessed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, 1, 1.0, CURRENT_TIMESTAMP)
             ON CONFLICT(node_id, style) DO UPDATE SET
                 lecture_paragraphs = excluded.lecture_paragraphs,
                 canvas_config = excluded.canvas_config,
+                canvas_html = excluded.canvas_html,
                 impressions_count = impressions_count + 1,
                 last_accessed_at = CURRENT_TIMESTAMP
         """, (
@@ -458,7 +284,8 @@ def save_variant(node_id: str, style: str, draft: Dict[str, Any]) -> str:
             node_id,
             style,
             json.dumps(draft.get("lecture_paragraphs", [])),
-            json.dumps(draft.get("canvas_config", {}))
+            json.dumps(draft.get("canvas_config", {})),
+            draft.get("canvas_html", "")
         ))
     conn.close()
     rag_logger.info(f"Curriculum variant saved for {node_id} (style={style})")
@@ -487,12 +314,14 @@ def get_variant(node_id: str, style: str) -> Optional[Dict[str, Any]]:
     if not row:
         return None
 
+    keys = row.keys()
     return {
         "variant_id": row["variant_id"],
         "node_id": row["node_id"],
         "style": row["style"],
         "lecture_paragraphs": json.loads(row["lecture_paragraphs"]),
         "canvas_config": json.loads(row["canvas_config"]),
+        "canvas_html": row["canvas_html"] if "canvas_html" in keys else "",
         "audio_path": row["audio_path"],
         "impressions_count": row["impressions_count"] + 1,
         "satisfaction_score": row["satisfaction_score"]

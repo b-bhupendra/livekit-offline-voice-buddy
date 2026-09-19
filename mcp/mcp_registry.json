@@ -1,0 +1,191 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "version": "1.0.0",
+  "title": "Buddy Voice AI - MCP Server Registry",
+  "description": "Authoritative registry of Model Context Protocol (MCP) servers integrated with Buddy Voice AI and Antigravity IDE",
+  "servers": {
+    "shadcn": {
+      "name": "shadcn",
+      "category": "Design & UI Primitives",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "shadcn@latest", "mcp"],
+      "description": "Official shadcn Registry Server. Searches, inspects, and installs accessible headless primitives (Radix UI, Framer Motion, Lucide icons).",
+      "tools": [
+        "get_project_registries",
+        "list_items_in_registries",
+        "search_items_in_registries",
+        "view_items_in_registries",
+        "get_item_examples_from_registries",
+        "get_add_command_for_items",
+        "get_audit_checklist"
+      ]
+    },
+    "shadcn-ui": {
+      "name": "shadcn-ui",
+      "category": "Design & UI Primitives",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "shadcn-ui-mcp-server"],
+      "description": "Component Reference Engine. Exposes token schemas, component anatomy, dark-mode tokens, and variant compositions.",
+      "tools": [
+        "list_shadcn_components",
+        "get_component_details",
+        "get_component_examples",
+        "search_components"
+      ]
+    },
+    "tailgrids": {
+      "name": "tailgrids",
+      "category": "Design & UI Primitives",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@tailgrids/mcp"],
+      "description": "Tailwind React UI Library. Exposes 600+ pre-built React Tailwind sections, cards, dashboards, and responsive layout templates.",
+      "tools": [
+        "list_components",
+        "search_components",
+        "get_component",
+        "get_component_code",
+        "get_usage_example",
+        "get_install_command",
+        "get_props_schema",
+        "validate_props",
+        "get_a11y_notes",
+        "check_usage_a11y",
+        "get_tailwind_variants",
+        "get_dark_mode_classes",
+        "get_theming_guide",
+        "get_primitive_info",
+        "compose_ui"
+      ]
+    },
+    "livekit-docs": {
+      "name": "livekit-docs",
+      "category": "Framework & Real-Time Docs",
+      "transport": "sse",
+      "serverUrl": "https://docs.livekit.io/mcp",
+      "description": "Official LiveKit documentation and code search engine. Provides Python/TypeScript SDK guides, AgentSession patterns, WebRTC audio streaming, and protocol references.",
+      "tools": [
+        "get_docs_overview",
+        "get_sdks",
+        "get_pages",
+        "docs_search",
+        "get_changelog",
+        "get_python_agent_example",
+        "get_pricing_info",
+        "submit_docs_feedback",
+        "code_search"
+      ]
+    },
+    "langgraph-docs": {
+      "name": "langgraph-docs",
+      "category": "Framework & Real-Time Docs",
+      "transport": "sse",
+      "serverUrl": "https://docs.langchain.com/mcp",
+      "description": "LangGraph & LangChain architectural guides, StateGraph patterns, checkpointer specifications (SqliteSaver), and multi-agent supervisory flows.",
+      "tools": [
+        "search_docs_by_lang_chain",
+        "query_docs_filesystem_docs_by_lang_chain",
+        "submit_feedback"
+      ]
+    },
+    "filesystem": {
+      "name": "filesystem",
+      "category": "System & IDE Utilities",
+      "transport": "stdio",
+      "description": "Local workspace filesystem inspector and safe editor.",
+      "tools": [
+        "read_file",
+        "read_text_file",
+        "read_media_file",
+        "read_multiple_files",
+        "write_file",
+        "edit_file",
+        "create_directory",
+        "list_directory",
+        "list_directory_with_sizes",
+        "directory_tree",
+        "move_file",
+        "search_files",
+        "get_file_info",
+        "list_allowed_directories"
+      ]
+    },
+    "github": {
+      "name": "github",
+      "category": "System & IDE Utilities",
+      "transport": "stdio",
+      "description": "GitHub repository version control, pull requests, issue tracking, and commits.",
+      "tools": [
+        "create_or_update_file",
+        "search_repositories",
+        "create_repository",
+        "get_file_contents",
+        "push_files",
+        "create_issue",
+        "create_pull_request",
+        "fork_repository",
+        "create_branch",
+        "list_commits",
+        "list_issues",
+        "update_issue",
+        "add_issue_comment",
+        "search_code",
+        "search_issues",
+        "search_users",
+        "get_issue",
+        "get_pull_request",
+        "list_pull_requests",
+        "create_pull_request_review",
+        "merge_pull_request",
+        "get_pull_request_files",
+        "get_pull_request_status",
+        "update_pull_request_branch",
+        "get_pull_request_comments",
+        "get_pull_request_reviews"
+      ]
+    },
+    "memory": {
+      "name": "memory",
+      "category": "System & IDE Utilities",
+      "transport": "stdio",
+      "description": "Knowledge graph memory store for persisting cross-turn user preferences, entities, and relations.",
+      "tools": [
+        "create_entities",
+        "create_relations",
+        "add_observations",
+        "delete_entities",
+        "delete_observations",
+        "delete_relations",
+        "read_graph",
+        "search_nodes",
+        "open_nodes"
+      ]
+    },
+    "puppeteer": {
+      "name": "puppeteer",
+      "category": "System & IDE Utilities",
+      "transport": "stdio",
+      "description": "Headless browser automation engine for DOM inspection, screenshot capture, and visual validation.",
+      "tools": [
+        "puppeteer_navigate",
+        "puppeteer_screenshot",
+        "puppeteer_click",
+        "puppeteer_fill",
+        "puppeteer_select",
+        "puppeteer_hover",
+        "puppeteer_evaluate"
+      ]
+    },
+    "sequential-thinking": {
+      "name": "sequential-thinking",
+      "category": "System & IDE Utilities",
+      "transport": "stdio",
+      "description": "Multi-step reasoning and dynamic thought verification scratchpad.",
+      "tools": [
+        "sequentialthinking"
+      ]
+    }
+  }
+}

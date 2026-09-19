@@ -960,6 +960,7 @@ async def deliver_canvas_lecture(
                 "key_takeaways": dyn_session.get("key_takeaways", []),
                 "canvas_type": c_type,
                 "canvas_config": cfg,
+                "canvas_html": dyn_session.get("canvas_html", ""),
                 "repetition_items": reps,
                 "timestamp": saved["timestamp"]
             }
@@ -1074,6 +1075,8 @@ async def exit_tutor_mode(context: RunContext) -> str:
         langgraph_engine.update_state({"active_mode": "buddy"})
     summary = tracker.get_learner_summary()
     await send_room_text(context, "progress", json.dumps(summary))
+    if _active_session:
+        unmount_tools_to_fastpath(_active_session)
     genui_logger.info("Exited tutor mode to buddy mode.")
     return "[BUDDY MODE ACTIVATED] Switched back to friendly casual conversation mode."
 
@@ -1102,6 +1105,31 @@ IN_PROCESS_TOOLS = [
     search_web_grammar
 ]
 in_process_tools = IN_PROCESS_TOOLS
+BUDDY_FAST_PATH_TOOLS = []
+TUTOR_MODE_TOOLS = IN_PROCESS_TOOLS
+
+
+def mount_tutor_tools(sess: AgentSession) -> None:
+    """Dynamically mount the 21 tutor tools into the live session when study mode is requested."""
+    try:
+        sess._tools = list(TUTOR_MODE_TOOLS)
+        if hasattr(sess, "update_agent"):
+            sess.update_agent(Agent(instructions=INSTRUCTIONS, tools=TUTOR_MODE_TOOLS))
+        llm_logger.info("[FastPath] Dynamically MOUNTED 21 tutor tools into AgentSession.")
+    except Exception as e:
+        llm_logger.error(f"[FastPath] Error mounting tutor tools: {e}")
+
+
+def unmount_tools_to_fastpath(sess: AgentSession) -> None:
+    """Revert to Zero-Tool Fast Path for sub-300ms conversational turn-taking."""
+    try:
+        sess._tools = []
+        if hasattr(sess, "update_agent"):
+            sess.update_agent(Agent(instructions=INSTRUCTIONS, tools=[]))
+        llm_logger.info("[FastPath] REVERTED to Zero-Tool Fast Path (0 tools) for maximum voice fluidness.")
+    except Exception as e:
+        llm_logger.error(f"[FastPath] Error unmounting tools: {e}")
+
 
 class BuddyAgent(Agent):
     def __init__(self):
@@ -1159,7 +1187,7 @@ async def entrypoint(ctx: agents.JobContext):
         llm=llm_provider,
         tts=tts_provider,
         stt=stt_provider,
-        tools=IN_PROCESS_TOOLS,
+        tools=BUDDY_FAST_PATH_TOOLS,  # START FAST & TOOL-LESS (sub-300ms conversational TTFT)
     )
 
     register_active_session(session, None)
@@ -1207,6 +1235,26 @@ async def entrypoint(ctx: agents.JobContext):
                 if is_final:
                     turn = next_turn()
                     stt_logger.info(f"Final user transcript: \"{transcript}\" (turn={turn})")
+
+                    # Dynamic mode-switching triggers to mount/unmount tools
+                    lower = transcript.lower()
+                    tutor_triggers = (
+                        "teach me", "tutor mode", "start lesson", "start lecture",
+                        "learn grammar", "practice grammar", "workplace practice",
+                        "scenario mode", "study mode", "let's learn", "teach about"
+                    )
+                    exit_triggers = (
+                        "back to buddy", "let's just chat", "exit tutor",
+                        "stop lesson", "casual chat", "buddy mode", "just talk"
+                    )
+
+                    current_tools_count = len(getattr(session, "tools", []))
+                    if any(trig in lower for trig in tutor_triggers):
+                        if current_tools_count == 0:
+                            mount_tutor_tools(session)
+                    elif any(trig in lower for trig in exit_triggers):
+                        if current_tools_count > 0:
+                            unmount_tools_to_fastpath(session)
                 else:
                     stt_logger.debug(f"Interim user transcript: \"{transcript}\"")
                     

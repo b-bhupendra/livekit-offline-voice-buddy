@@ -787,6 +787,7 @@ class SyllabusTracker:
                 "key_takeaways": takeaways,
                 "canvas_type": canvas_type,
                 "canvas_config": canvas_cfg,
+                "canvas_html": (variant.get("canvas_html") if variant else None) or node.get("canvas_html", ""),
                 "repetition_items": reps
             }
 

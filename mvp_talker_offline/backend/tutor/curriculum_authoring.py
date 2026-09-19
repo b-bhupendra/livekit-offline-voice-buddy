@@ -51,8 +51,12 @@ class CurriculumNode(BaseModel):
     core_concept: str = Field(description="One-sentence pedagogical core concept")
     prerequisites: List[str] = Field(default_factory=list, description="List of prerequisite node_ids")
     lecture_paragraphs: List[str] = Field(description="2-3 grounded educational paragraphs")
-    canvas_type: str = Field(description="One of: classifier, matrix, tree, flow")
-    canvas_config: Dict[str, Any] = Field(description="Interactive config matching the canvas_type")
+    canvas_type: str = Field(default="universal_sandbox", description="One of: universal_sandbox, classifier, matrix, tree, flow")
+    canvas_config: Dict[str, Any] = Field(default_factory=dict, description="Interactive config or metadata")
+    canvas_html: str = Field(
+        default="",
+        description="Self-contained HTML5, SVG, and Tailwind CSS code rendering an interactive visual diagram, animation, or interactive model for this concept."
+    )
     citations: List[str] = Field(default_factory=list, description="Reference citations from textbooks or course")
 
 
@@ -125,7 +129,10 @@ async def structured_authoring_call(
                     f"You are the Master Pedagogical Author for Buddy Voice AI.\n"
                     f"Generate strictly structured JSON conforming to the schema for {model_cls.__name__}.\n"
                     f"Schema fields:\n{json.dumps(model_cls.model_json_schema().get('properties', {}), indent=2)}\n"
-                    f"Return ONLY the valid JSON object without surrounding commentary."
+                    f"Important instructions for canvas_html:\n"
+                    f"Write a rich, self-contained interactive HTML5/SVG snippet using Tailwind CSS utility classes and clean inline styles "
+                    f"to visually diagram, animate, or explain the concept (e.g. interactive comparison cards, SVG balance diagrams, or clickable syntax trees). "
+                    f"Do not include outer markdown fences. Return ONLY valid JSON."
                 )
             }
         ]

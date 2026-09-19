@@ -649,11 +649,11 @@ export const InlineCanvasLectureCard: React.FC<InlineCanvasLectureCardProps> = (
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
             <Sparkles size={13} color="var(--accent)" />
             <span style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--accent)', fontWeight: 600 }}>
-              Interactive Visual Primitive: {canvasType}
+              {data.canvas_html ? 'Universal GenUI Sandbox (Tailwind & HTML5)' : `Interactive Visual Primitive: ${canvasType}`}
             </span>
           </div>
 
-          {(canvasType === 'balance' || canvasType === 'tree') && (
+          {(canvasType === 'balance' || canvasType === 'tree') && !data.canvas_html && (
             <div style={{ display: 'flex', gap: '6px' }}>
               <button
                 onClick={() => setActiveInteractiveMode('unitary')}
@@ -702,7 +702,7 @@ export const InlineCanvasLectureCard: React.FC<InlineCanvasLectureCardProps> = (
             </div>
           )}
 
-          {canvasType === 'matrix' && (
+          {canvasType === 'matrix' && !data.canvas_html && (
             <div style={{ display: 'flex', gap: '6px' }}>
               {((cfg.pairs as Array<any>) || [1, 2]).map((_, idx) => (
                 <button
@@ -725,15 +725,41 @@ export const InlineCanvasLectureCard: React.FC<InlineCanvasLectureCardProps> = (
           )}
         </div>
 
-        <canvas
-          ref={canvasRef}
-          style={{
-            width: '100%',
-            height: '230px',
-            display: 'block',
-            borderRadius: 'var(--radius-md)'
-          }}
-        />
+        {data.canvas_html ? (
+          <div
+            style={{
+              width: '100%',
+              minHeight: '260px',
+              borderRadius: 'var(--radius-md)',
+              overflow: 'hidden',
+              background: '#090d16',
+              border: '1px solid rgba(255, 255, 255, 0.08)'
+            }}
+          >
+            <iframe
+              title="Universal GenUI Interactive Model"
+              sandbox="allow-scripts"
+              srcDoc={`<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><script src="https://cdn.tailwindcss.com"></script><style>body { background: #090d16; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 14px; } ::-webkit-scrollbar { width: 5px; height: 5px; } ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }</style></head><body>${data.canvas_html}</body></html>`}
+              style={{
+                width: '100%',
+                minHeight: '260px',
+                height: '100%',
+                border: 'none',
+                display: 'block'
+              }}
+            />
+          </div>
+        ) : (
+          <canvas
+            ref={canvasRef}
+            style={{
+              width: '100%',
+              height: '230px',
+              display: 'block',
+              borderRadius: 'var(--radius-md)'
+            }}
+          />
+        )}
       </div>
 
       {/* ── Spoken Sentence Repetition & Shadowing Section ── */}

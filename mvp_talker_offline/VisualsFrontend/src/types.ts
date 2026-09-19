@@ -137,8 +137,9 @@ export interface CanvasLectureProps {
   spoken_summary: string;
   paragraphs: string[];
   key_takeaways?: string[];
-  canvas_type: 'particle_classifier' | 'concord_balance' | 'noun_hierarchy' | 'compound_builder' | 'repetition_flow' | 'workplace_matrix' | string;
+  canvas_type: 'particle_classifier' | 'concord_balance' | 'noun_hierarchy' | 'compound_builder' | 'repetition_flow' | 'workplace_matrix' | 'universal_sandbox' | string;
   canvas_config?: Record<string, unknown>;
+  canvas_html?: string;
   style_hint?: string;
   citations?: Array<string | { text: string; source: string; rule?: string }>;
   repetition_items?: Array<{
