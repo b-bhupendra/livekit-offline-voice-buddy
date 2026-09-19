@@ -1,14 +1,4 @@
 ================================================================================
-FILE: mvp_talker_offline/backend/tests/__init__.py
-LANGUAGE: python
-LINES: 1 | EST_TOKENS: ~11
-PURPOSE: Tests package marker
-================================================================================
-
-"""Backend verification and test suites."""
-
-
-================================================================================
 FILE: mvp_talker_offline/backend/tests/verify_curriculum_engine.py
 LANGUAGE: python
 LINES: 189 | EST_TOKENS: ~2001

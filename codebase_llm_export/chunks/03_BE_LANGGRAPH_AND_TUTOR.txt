@@ -1,20 +1,4 @@
 ================================================================================
-FILE: mvp_talker_offline/backend/tutor/__init__.py
-LANGUAGE: python
-LINES: 7 | EST_TOKENS: ~50
-PURPOSE: Tutor package re-exports: langgraph_engine
-================================================================================
-
-"""LangGraph tutor graph and curriculum generation."""
-
-try:
-    from tutor.langgraph_tutor_graph import langgraph_engine, TutorState
-except Exception:
-    langgraph_engine = None
-    TutorState = None
-
-
-================================================================================
 FILE: mvp_talker_offline/backend/tutor/curriculum_authoring.py
 LANGUAGE: python
 LINES: 215 | EST_TOKENS: ~2171

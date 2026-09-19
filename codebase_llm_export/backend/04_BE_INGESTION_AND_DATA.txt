@@ -1,14 +1,4 @@
 ================================================================================
-FILE: mvp_talker_offline/backend/ingestion/__init__.py
-LANGUAGE: python
-LINES: 1 | EST_TOKENS: ~15
-PURPOSE: Ingestion package marker
-================================================================================
-
-"""Data ingestion pipeline for textbook and PDF processing."""
-
-
-================================================================================
 FILE: mvp_talker_offline/backend/ingestion/knowledge_ingestor.py
 LANGUAGE: python
 LINES: 411 | EST_TOKENS: ~5871

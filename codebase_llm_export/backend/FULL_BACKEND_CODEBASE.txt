@@ -2210,7 +2210,7 @@ BOOKS_DIR = os.getenv("BOOKS_DIR", str(Path.home() / "buddy_reference_books"))
 ================================================================================
 FILE: mvp_talker_offline/backend/core/audio_server.py
 LANGUAGE: python
-LINES: 268 | EST_TOKENS: ~2475
+LINES: 273 | EST_TOKENS: ~2510
 PURPOSE: Isolated FastAPI microservice serving local Kokoro/Piper neural TTS (/v1/audio/speech) and LiveKit JWT token minting (/api/token)
 ================================================================================
 
@@ -2240,6 +2240,11 @@ if env_path.exists():
     load_dotenv(dotenv_path=env_path)
 else:
     load_dotenv()
+
+import sys
+backend_root = str(Path(__file__).resolve().parent.parent)
+if backend_root not in sys.path:
+    sys.path.insert(0, backend_root)
 
 os.environ["HF_HUB_OFFLINE"] = "1"
 
@@ -5393,22 +5398,6 @@ class RAGStore:
 
 
 ================================================================================
-FILE: mvp_talker_offline/backend/tutor/__init__.py
-LANGUAGE: python
-LINES: 7 | EST_TOKENS: ~50
-PURPOSE: Tutor package re-exports: langgraph_engine
-================================================================================
-
-"""LangGraph tutor graph and curriculum generation."""
-
-try:
-    from tutor.langgraph_tutor_graph import langgraph_engine, TutorState
-except Exception:
-    langgraph_engine = None
-    TutorState = None
-
-
-================================================================================
 FILE: mvp_talker_offline/backend/tutor/curriculum_authoring.py
 LANGUAGE: python
 LINES: 215 | EST_TOKENS: ~2171
@@ -7158,16 +7147,6 @@ PURPOSE: LangGraph Studio & CLI configuration exposing tutor_graph and curriculu
 
 
 ================================================================================
-FILE: mvp_talker_offline/backend/ingestion/__init__.py
-LANGUAGE: python
-LINES: 1 | EST_TOKENS: ~15
-PURPOSE: Ingestion package marker
-================================================================================
-
-"""Data ingestion pipeline for textbook and PDF processing."""
-
-
-================================================================================
 FILE: mvp_talker_offline/backend/ingestion/knowledge_ingestor.py
 LANGUAGE: python
 LINES: 411 | EST_TOKENS: ~5871
@@ -8407,16 +8386,6 @@ PURPOSE: Pre-verified milestone quiz bank schema for Chapter 1 (Present Simple &
     }
   }
 ]
-
-================================================================================
-FILE: mvp_talker_offline/backend/tests/__init__.py
-LANGUAGE: python
-LINES: 1 | EST_TOKENS: ~11
-PURPOSE: Tests package marker
-================================================================================
-
-"""Backend verification and test suites."""
-
 
 ================================================================================
 FILE: mvp_talker_offline/backend/tests/verify_curriculum_engine.py

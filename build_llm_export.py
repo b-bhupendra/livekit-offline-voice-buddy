@@ -3,14 +3,13 @@
 Generates high-fidelity, LLM-optimized codebase exports for both Frontend and Backend.
 
 Provides:
-- 4 Full Codebase Bundles at root level:
-    1. FULL_PROJECT_CODEBASE.txt (Combined Architecture, BE, and FE)
-    2. FULL_FRONTEND_CODEBASE.txt (All FE files)
-    3. FULL_BACKEND_CODEBASE.txt (All BE files)
-    4. FULL_SPECS_AND_ARCHITECTURE.txt (All design docs and plans)
-- Single consolidated 'chunks/' directory containing 9 logical chunks (< 25K tokens each)
-- Separated 'frontend/' and 'backend/' directories with architectural overviews
-- Automated codebase audit verifying zero untracked source files
+- 3 Full Codebase Bundles at root level:
+    1. FULL_PROJECT_CODEBASE.txt (Combined BE + FE - All 59 project files)
+    2. FULL_FRONTEND_CODEBASE.txt (All 24 FE files)
+    3. FULL_BACKEND_CODEBASE.txt (All 35 BE files)
+- Single consolidated 'chunks/' directory containing all 8 self-contained chunks (< 25K tokens each)
+- Separated 'frontend/' and 'backend/' directories with architectural overviews and dedicated chunks
+- Both .mcp.json and mcp_config.json verified and tracked
 - Delimiters and metadata headers formatted for zero-ambiguity parsing by any LLM
 """
 
@@ -50,23 +49,7 @@ def format_file_block(rel_path: str, purpose: str, language: str) -> str:
     return f"{header}\n{content}\n\n"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# ARCHITECTURE & DESIGN SPECS DEFINITIONS
-# ─────────────────────────────────────────────────────────────────────────────
-
-SPEC_CHUNKS = {
-    "00_ARCHITECTURE_AND_SPECS.txt": [
-        ("buddy.md", "Core design doctrine: Voice-first buddy persona, offline-first philosophy, reactive GenUI, and turn-taking rules", "markdown"),
-        ("buddy-implementation-plan.md", "Comprehensive two-tier architectural plan: LiveKit agent loop, GPU arbiter, in-process Kokoro TTS, and SQLite curriculum store", "markdown"),
-        ("buddy-implementation-plan (1).md", "Deep curriculum engine coding plan: LangGraph 8-node DAG, reconsideration request logging, and dynamic course sessions", "markdown"),
-        ("README.md", "Monorepo root README with fast startup guide and architectural overview", "markdown"),
-        ("mvp_talker_offline/README.md", "Backend package README with console and server run commands", "markdown"),
-        ("agent.py", "Root-level launcher delegating directly to mvp_talker_offline/backend/agent.py", "python"),
-        ("pyproject.toml", "Root Python project configuration and dependency metadata", "toml"),
-    ]
-}
-
-# ─────────────────────────────────────────────────────────────────────────────
-# FRONTEND DEFINITIONS (mvp_talker_offline/VisualsFrontend)
+# FRONTEND DEFINITIONS (mvp_talker_offline/VisualsFrontend) — 24 Files Total
 # ─────────────────────────────────────────────────────────────────────────────
 
 FE_CHUNKS = {
@@ -112,56 +95,23 @@ Built with React 19, TypeScript, Vite, Framer Motion, and Zustand, it serves as 
 - **Event-Driven Conversation Timeline**:
   - Entire layout centers on a unified, chronological `feed: FeedItem[]` array.
   - Transcript utterances, in-flight token streaming cards (`StreamingCard`), interactive quiz cards (`InlineQuizCard`), linguistic dispute verdicts (`InlineDisputeCard`), study notes (`InlineNotesCard`), syntactic movement cards (`InlineGrammarMovementCard`), and canvas lecture cards (`InlineCanvasLectureCard`) render directly inline at their exact chronological position in the chat stream.
-- **Top Header Bar**:
-  - Live Audio / Engine status indicator pill (`Live Audio Connected` / `Engine Ready`).
-  - Active chapter display pill.
-  - Action triggers: `Quick Quiz`, `Notes`, and `Syllabus & Stats` drawer toggle.
-- **Floating Voice & Audio Dock**:
-  - Docked at the bottom of the viewport with an animated 9-bar active audio wave visualizer, pulsing voice halo ring, auto-expanding composer, and quick prompt action chips.
-- **Slide-Over Syllabus & Mastery Drawer**:
-  - On-demand slide-over panel on the right side displaying current chapter details, mastery statistics (Accuracy Rate, Correct Answers, Errors Detected), 18-chapter linear curriculum roadmap, and isomorphic remediation queue.
-- **Real-Time LiveKit Transport** (`useLiveKit.ts`):
-  - Connects to LiveKit room via WebRTC data channels and text streams (`transcript`, `genui`, `genui_token`).
+- **Design Token System (`index.css`)**:
+  - Standardized dark-mode surface elevation tokens (`--surface-0` through `--surface-3`).
+  - Specular hairline borders (`var(--border-specular)` / `rgba(255, 255, 255, 0.1)`).
+  - Ambient radial mesh background (`.ambient-mesh-canvas`) and pulsing voice halo rings (`.voice-halo`).
+- **Interactive Generative Primitives (`InlineCanvasLectureCard.tsx`)**:
+  - 5 verified primitives: Syntactic Tree, Concord Balance, Cadence Flow, Workplace Matrix, Particle Classifier.
+  - Direct Analogy Reinterpretation Toolbar (`⚡ Software Analogy`, `💼 Workplace Style`, `🌱 Everyday Intuition`).
+- **Floating Voice & Audio Dock (`AudioDock.tsx`)**:
+  - 9-bar reactive equalizer with cyan-to-violet gradient heights and glowing mic halo.
+- **Slide-Over Syllabus & Mastery Drawer (`SlideOverDrawer.tsx`)**:
+  - 18-chapter linear curriculum roadmap, mastery statistics, and isomorphic remediation queue.
+- **Real-Time LiveKit Transport (`useLiveKit.ts`)**:
   - Native RPC caller for `getSyllabus`, `getQuiz`, `submitQuizAnswer`, `disputeAnswer`, `deliverCanvasLecture`, and `requestReinterpretation`.
-
-## 3. Directory Tree
-```
-mvp_talker_offline/
-└── VisualsFrontend/
-    ├── package.json               # React 19, Vite, Zustand, Framer-Motion, Lucide, LiveKit Client
-    ├── vite.config.ts            # Vite config
-    ├── tsconfig.json             # TypeScript config
-    ├── index.html                # HTML entrypoint
-    └── src/
-        ├── main.tsx              # React DOM render with Inter font
-        ├── index.css             # Minimalist surface tokens & typography
-        ├── types.ts              # FeedItem, QuizQuestion, ContentionProps, CanvasLectureProps
-        ├── store.ts              # Unified timeline Zustand store with LiveKit RPC
-        ├── App.tsx               # Conversational Live Stage
-        ├── hooks/
-        │   └── useLiveKit.ts     # LiveKit WebRTC transport & RPC hook
-        ├── utils/
-        │   └── bionic.ts         # Bionic reading algorithm
-        └── components/
-            ├── layout/           # Layout shell components
-            │   ├── Header.tsx    # Top status bar & chapter display
-            │   ├── AudioDock.tsx # Floating voice dock & waveform
-            │   └── SlideOverDrawer.tsx # 18-chapter roadmap & analytics drawer
-            ├── cards/            # Inline feed artifact cards
-            │   ├── InlineQuizCard.tsx       # Interactive quiz card
-            │   ├── InlineDisputeCard.tsx    # Linguistic dispute ruling
-            │   ├── InlineNotesCard.tsx      # Study notes with Bionic reading
-            │   ├── InlineGrammarMovementCard.tsx # Syntactic movement with Framer Motion
-            │   ├── InlineSheetErrorCard.tsx # Sheet error diagnostics
-            │   ├── InlineCanvasLectureCard.tsx # Canvas lecture with 5 visual primitives & analogy toolbar
-            │   └── StreamingCard.tsx        # Live LLM token typewriter
-            └── syllabus/         # Syllabus & curriculum UI
-                └── SyllabusSection.tsx # Chapter roadmap & mastery tracking
-```
 """
 
 # ─────────────────────────────────────────────────────────────────────────────
-# BACKEND DEFINITIONS (mvp_talker_offline/backend)
+# BACKEND DEFINITIONS (mvp_talker_offline/backend) — 35 Files Total
 # ─────────────────────────────────────────────────────────────────────────────
 
 BE_CHUNKS = {
@@ -185,7 +135,6 @@ BE_CHUNKS = {
         ("mvp_talker_offline/backend/engines/rag_store.py", "ChromaDB-backed hybrid RAG store: ANN vector search (HNSW) + BM25 keyword search with Reciprocal Rank Fusion; vectors persisted to data/chroma_db/ — no re-indexing on restart", "python"),
     ],
     "03_BE_LANGGRAPH_AND_TUTOR.txt": [
-        ("mvp_talker_offline/backend/tutor/__init__.py", "Tutor package re-exports: langgraph_engine", "python"),
         ("mvp_talker_offline/backend/tutor/curriculum_authoring.py", "CurriculumNode & CriticVerdict Pydantic schemas, parse_structured with json_repair fallback, structured_authoring_call with exact validation diff retry loop, and semantic critic routing", "python"),
         ("mvp_talker_offline/backend/tutor/curriculum_pipeline.py", "Shared 8-node LangGraph StateGraph (build, refine, reconsider) compiled with SqliteSaver at data/langgraph_checkpoints.db", "python"),
         ("mvp_talker_offline/backend/tutor/curriculum_jobs.py", "Thin background job dispatch layer (enqueue_build, enqueue_refine, enqueue_reconsider) gated on GPUSessionArbiter", "python"),
@@ -197,13 +146,11 @@ BE_CHUNKS = {
         ("mvp_talker_offline/langgraph.json", "LangGraph Studio & CLI configuration exposing tutor_graph and curriculum_pipeline DAGs", "json"),
     ],
     "04_BE_INGESTION_AND_DATA.txt": [
-        ("mvp_talker_offline/backend/ingestion/__init__.py", "Ingestion package marker", "python"),
         ("mvp_talker_offline/backend/ingestion/knowledge_ingestor.py", "Textbook & PDF ingestion pipeline indexing Oxford Guide, Arihant Grammar, Espresso English, and narrative stories into SQLite & RAG", "python"),
         ("mvp_talker_offline/data/curriculum.json", "Official 18-chapter English grammar curriculum definition with title, topics, rules, and coursework requirements", "json"),
         ("mvp_talker_offline/data/quiz_banks/chapter_01_bank.json", "Pre-verified milestone quiz bank schema for Chapter 1 (Present Simple & Continuous) with citations and explanations", "json"),
     ],
     "05_BE_TESTS.txt": [
-        ("mvp_talker_offline/backend/tests/__init__.py", "Tests package marker", "python"),
         ("mvp_talker_offline/backend/tests/verify_curriculum_engine.py", "Automated test suite verifying curriculum_store tables, variants, reconsideration, Pydantic authoring validation, GPUSessionArbiter concurrency gating, context injection, studio TTS, and LangGraph 8-node DAG", "python"),
         ("mvp_talker_offline/backend/tests/verify_phase1.py", "Automated test suite verifying RAG search, syllabus progression, quiz evaluation, and dispute handling", "python"),
         ("mvp_talker_offline/backend/tests/verify_phase2.py", "Automated test suite verifying embedding outage fallback, offline dispute, SQLite isomorphic audits, and learner state sync", "python"),
@@ -271,42 +218,42 @@ MASTER_README_MD = """# Codebase Context Export for LLMs
 This directory contains clean, structured, and chunked exports of the entire codebase for **Buddy — The Offline Voice AI English Grammar Coach**.
 
 The project is organized under the monorepo folder **`mvp_talker_offline/`**:
-- **`mvp_talker_offline/backend/`**: Python LiveKit Voice Agent with submodules: `core/`, `engines/`, `tutor/`, `ingestion/`, `tests/`.
-- **`mvp_talker_offline/VisualsFrontend/`**: React 19 / TypeScript / Vite / Zustand conversational UI with `components/layout/`, `components/cards/`, `components/syllabus/`.
+- **`mvp_talker_offline/backend/`**: Python LiveKit Voice Agent with submodules: `core/`, `engines/`, `tutor/`, `ingestion/`, `tests/` (35 files).
+- **`mvp_talker_offline/VisualsFrontend/`**: React 19 / TypeScript / Vite / Zustand conversational UI with `components/layout/`, `components/cards/`, `components/syllabus/` (24 files).
 - **`mvp_talker_offline/data/`**: Curriculum schema, quiz banks, and narrative practice stories.
 - **`mvp_talker_offline/models/`**: Offline neural Piper/Kokoro TTS voice models.
 
 ---
 
-## 1. ALL 4 FULL CODEBASE BUNDLES (Root Level)
+## 1. ALL 3 FULL CODEBASE BUNDLES (Root Level)
 
 For zero-navigation feeding into large-context LLMs (Claude 3.5 Sonnet, GPT-4o, Gemini 1.5/2.0 Pro):
 
 | Bundle File | Scope | Description |
 |---|---|---|
-| **`FULL_PROJECT_CODEBASE.txt`** | **Complete Project (Specs + BE + FE)** | All design documents and active source files across the entire codebase |
-| **`FULL_FRONTEND_CODEBASE.txt`** | **Full Frontend Stack** | All frontend files (React 19, Zustand, LiveKit WebRTC, components) |
-| **`FULL_BACKEND_CODEBASE.txt`** | **Full Backend Stack** | All backend files (LiveKit Agent, FastAPI audio, engines, data) |
-| **`FULL_SPECS_AND_ARCHITECTURE.txt`** | **Architecture & Design Plans** | All architectural specs, curriculum engine coding plans, and doctrines |
+| **`FULL_PROJECT_CODEBASE.txt`** | **Complete Project (59 files)** | All active source files across the entire backend and frontend in one continuous document |
+| **`FULL_FRONTEND_CODEBASE.txt`** | **Full Frontend Stack (24 files)** | All frontend files (React 19, Zustand, LiveKit WebRTC, components) |
+| **`FULL_BACKEND_CODEBASE.txt`** | **Full Backend Stack (35 files)** | All backend files (LiveKit Agent, FastAPI audio, engines, data) |
 
 ---
 
-## 2. ALL CHUNKS IN A SINGLE FOLDER (`chunks/`)
+## 2. ALL 8 CHUNKS IN A SINGLE FOLDER (`chunks/`)
 
-For smaller context models (8k – 32k tokens) or targeted subagent prompts, all 9 chunks are unified in one directory:
+For smaller context models (8k – 32k tokens) or targeted subagent prompts, all 8 self-contained chunks are unified in one directory:
 
 ```
 codebase_llm_export/chunks/
-├── 00_ARCHITECTURE_AND_SPECS.txt     # buddy.md, implementation plans, pyproject.toml, READMEs
-├── 01_BE_CORE_PIPELINE.txt          # agent.py, core/config, core/audio_server, Modelfile, requirements
-├── 02_BE_ENGINES.txt                # engines/__init__, simulation_engine, quiz_engine, syllabus_tracker, rag_store
-├── 03_BE_LANGGRAPH_AND_TUTOR.txt    # tutor/langgraph_tutor_graph, curriculum_authoring, pipeline, jobs
-├── 04_BE_INGESTION_AND_DATA.txt     # ingestion/knowledge_ingestor, curriculum.json, chapter_01_bank
-├── 05_BE_TESTS.txt                  # tests/verify_curriculum_engine, verify_phase1-5, headless_console_test
-├── 06_FE_CORE_AND_CONFIG.txt        # package.json, vite.config, tsconfig, index.html, index.css, .mcp.json
-├── 07_FE_STATE_AND_SERVICES.txt     # types.ts, store.ts, useLiveKit.ts, bionic.ts
-└── 08_FE_CONVERSATIONAL_STAGE.txt   # App.tsx, layout/, cards/, syllabus/ components
+├── 01_BE_CORE_PIPELINE.txt          # agent.py, core/config, core/audio_server, Modelfile, requirements (9 files)
+├── 02_BE_ENGINES.txt                # engines/__init__, simulation_engine, quiz_engine, syllabus_tracker, rag_store (6 files)
+├── 03_BE_LANGGRAPH_AND_TUTOR.txt    # tutor/langgraph_tutor_graph, curriculum_authoring, pipeline, jobs (9 files)
+├── 04_BE_INGESTION_AND_DATA.txt     # ingestion/knowledge_ingestor, curriculum.json, chapter_01_bank (3 files)
+├── 05_BE_TESTS.txt                  # tests/verify_curriculum_engine, verify_phase1-5, headless_console_test (8 files)
+├── 06_FE_CORE_AND_CONFIG.txt        # package.json, vite.config, tsconfig, index.html, index.css, .mcp.json (7 files)
+├── 07_FE_STATE_AND_SERVICES.txt     # types.ts, store.ts, useLiveKit.ts, bionic.ts (5 files)
+└── 08_FE_CONVERSATIONAL_STAGE.txt   # App.tsx, layout/, cards/, syllabus/ components (12 files)
 ```
+
+Total: Exactly **59 project files** across **8 self-contained chunks**.
 """
 
 def generate_exports():
@@ -321,25 +268,7 @@ def generate_exports():
     # Master README
     (EXPORT_DIR / "README.md").write_text(MASTER_README_MD.strip() + "\n", encoding="utf-8")
 
-    # 1. Architecture & Specs Chunk
-    spec_chunk_contents = {}
-    full_spec_content = []
-    for chunk_filename, file_list in SPEC_CHUNKS.items():
-        chunk_content = []
-        for rel_path, purpose, lang in file_list:
-            block = format_file_block(rel_path, purpose, lang)
-            chunk_content.append(block)
-            full_spec_content.append(block)
-        text = "".join(chunk_content)
-        spec_chunk_contents[chunk_filename] = text
-        (CHUNKS_DIR / chunk_filename).write_text(text, encoding="utf-8")
-        print(f"  [Spec Chunk] Wrote {chunk_filename} ({len(file_list)} files)")
-
-    full_spec_str = "".join(full_spec_content)
-    (EXPORT_DIR / "FULL_SPECS_AND_ARCHITECTURE.txt").write_text(full_spec_str, encoding="utf-8")
-    print(f"  [Spec Bundle] Wrote FULL_SPECS_AND_ARCHITECTURE.txt ({len(full_spec_content)} files total)")
-
-    # 2. Frontend Overview & Chunks
+    # 1. Frontend Overview & Chunks (24 files)
     (FE_DIR / "00_FRONTEND_OVERVIEW.md").write_text(FE_OVERVIEW_MD.strip() + "\n", encoding="utf-8")
 
     full_fe_content = []
@@ -360,7 +289,7 @@ def generate_exports():
     (EXPORT_DIR / "FULL_FRONTEND_CODEBASE.txt").write_text(full_fe_str, encoding="utf-8")
     print(f"  [FE Bundle] Wrote FULL_FRONTEND_CODEBASE.txt ({len(full_fe_content)} files total)")
 
-    # 3. Backend Overview & Chunks
+    # 2. Backend Overview & Chunks (35 files)
     (BE_DIR / "00_BACKEND_OVERVIEW.md").write_text(BE_OVERVIEW_MD.strip() + "\n", encoding="utf-8")
 
     full_be_content = []
@@ -381,21 +310,20 @@ def generate_exports():
     (EXPORT_DIR / "FULL_BACKEND_CODEBASE.txt").write_text(full_be_str, encoding="utf-8")
     print(f"  [BE Bundle] Wrote FULL_BACKEND_CODEBASE.txt ({len(full_be_content)} files total)")
 
-    # 4. Combined Master Bundle (Specs + BE + FE)
+    # 3. Combined Master Bundle (BE + FE Together — 59 files)
     combined_project_header = (
         "=" * 80 + "\n"
         "BUDDY CONVERSATIONAL VOICE AI & GENERATIVE UI — COMPLETE PROJECT EXPORT\n"
-        "INCLUDES: ARCHITECTURE & SPECS, BACKEND (LiveKit Agent, Engines, Pipeline) & FRONTEND (React 19 Canvas UI)\n"
+        "INCLUDES: ALL 59 MONOREPO SOURCE FILES (BACKEND 35 + FRONTEND 24)\n"
         "=" * 80 + "\n\n"
     )
-    combined_project_content = combined_project_header + full_spec_str + full_be_str + full_fe_str
+    combined_project_content = combined_project_header + full_be_str + full_fe_str
     (EXPORT_DIR / "FULL_PROJECT_CODEBASE.txt").write_text(combined_project_content, encoding="utf-8")
-    total_files = len(full_spec_content) + len(full_be_content) + len(full_fe_content)
+    total_files = len(full_be_content) + len(full_fe_content)
     print(f"  [Combined Project Bundle] Wrote FULL_PROJECT_CODEBASE.txt ({total_files} files total)")
 
-    # 5. Consolidated Single 'chunks/' Directory — 9 chunks: 1 Spec + 5 BE + 3 FE
+    # 4. Consolidated Single 'chunks/' Directory — Exactly 8 chunks: 5 BE + 3 FE
     all_chunks_map = {
-        "00_ARCHITECTURE_AND_SPECS.txt":  spec_chunk_contents["00_ARCHITECTURE_AND_SPECS.txt"],
         "01_BE_CORE_PIPELINE.txt":        be_chunk_contents["01_BE_CORE_PIPELINE.txt"],
         "02_BE_ENGINES.txt":              be_chunk_contents["02_BE_ENGINES.txt"],
         "03_BE_LANGGRAPH_AND_TUTOR.txt":  be_chunk_contents["03_BE_LANGGRAPH_AND_TUTOR.txt"],
@@ -409,7 +337,7 @@ def generate_exports():
         (CHUNKS_DIR / chunk_name).write_text(chunk_text, encoding="utf-8")
         print(f"  [Consolidated Chunk] Wrote chunks/{chunk_name}")
 
-    print(f"\nExport complete! {total_files} files packaged across 9 chunks into:\n  {EXPORT_DIR}")
+    print(f"\nExport complete! Exactly {total_files} project files packaged across 8 chunks into:\n  {EXPORT_DIR}")
 
 if __name__ == "__main__":
     generate_exports()
