@@ -1,7 +1,7 @@
 ================================================================================
 FILE: mvp_talker_offline/VisualsFrontend/src/App.tsx
 LANGUAGE: typescript
-LINES: 331 | EST_TOKENS: ~3402
+LINES: 334 | EST_TOKENS: ~3486
 PURPOSE: Conversational Live Stage: Timeline feed, ambient mesh canvas, top status bar, bottom audio dock, and slide-over drawer
 ================================================================================
 
@@ -159,11 +159,14 @@ export default function App() {
               >
                 <Sparkles size={22} color="var(--accent)" />
               </div>
-              <div style={{ fontSize: '16px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '6px' }}>
-                Buddy Conversational Grammar Engine
+              <div style={{ fontSize: '16.5px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}>
+                Buddy Conversational Live Stage
               </div>
-              <div style={{ fontSize: '13.5px', maxWidth: '380px', lineHeight: 1.5 }}>
-                Speak via microphone or use the prompt dock below to ask questions, challenge rules, or launch interactive quizzes.
+              <div style={{ fontSize: '12px', color: 'var(--accent)', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase', marginBottom: '8px' }}>
+                Primary Interface • Gemini Live & ChatGPT Canvas Model
+              </div>
+              <div style={{ fontSize: '13.5px', maxWidth: '420px', lineHeight: 1.55, color: 'var(--text-secondary)' }}>
+                Speak naturally through your microphone. Live educational lectures, interactive syntactic trees, quizzes, and bionic notes appear right here inside your voice stream.
               </div>
             </div>
           ) : (
@@ -341,7 +344,7 @@ export default function App() {
 ================================================================================
 FILE: mvp_talker_offline/VisualsFrontend/src/components/layout/Header.tsx
 LANGUAGE: typescript
-LINES: 216 | EST_TOKENS: ~1838
+LINES: 216 | EST_TOKENS: ~1840
 PURPOSE: Top navigation bar with engine status indicator, active chapter pill, and quick triggers
 ================================================================================
 
@@ -426,7 +429,7 @@ export const Header: React.FC = () => {
             }}
             className={(sseConnected || livekitConnected) ? 'pulse-beacon' : ''}
           />
-          <span>{(sseConnected || livekitConnected) ? 'Live WebRTC Voice' : 'Engine Ready'}</span>
+          <span>{(sseConnected || livekitConnected) ? 'Live Voice Canvas (Primary)' : 'Canvas Ready'}</span>
         </div>
 
         {/* Mode Selector Pill: Buddy Mode vs Tutor Mode */}

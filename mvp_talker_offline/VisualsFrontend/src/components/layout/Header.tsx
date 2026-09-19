@@ -79,7 +79,7 @@ export const Header: React.FC = () => {
             }}
             className={(sseConnected || livekitConnected) ? 'pulse-beacon' : ''}
           />
-          <span>{(sseConnected || livekitConnected) ? 'Live WebRTC Voice' : 'Engine Ready'}</span>
+          <span>{(sseConnected || livekitConnected) ? 'Live Voice Canvas (Primary)' : 'Canvas Ready'}</span>
         </div>
 
         {/* Mode Selector Pill: Buddy Mode vs Tutor Mode */}

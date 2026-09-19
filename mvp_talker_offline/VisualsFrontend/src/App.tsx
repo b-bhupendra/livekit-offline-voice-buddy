@@ -152,11 +152,14 @@ export default function App() {
               >
                 <Sparkles size={22} color="var(--accent)" />
               </div>
-              <div style={{ fontSize: '16px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '6px' }}>
-                Buddy Conversational Grammar Engine
+              <div style={{ fontSize: '16.5px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}>
+                Buddy Conversational Live Stage
               </div>
-              <div style={{ fontSize: '13.5px', maxWidth: '380px', lineHeight: 1.5 }}>
-                Speak via microphone or use the prompt dock below to ask questions, challenge rules, or launch interactive quizzes.
+              <div style={{ fontSize: '12px', color: 'var(--accent)', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase', marginBottom: '8px' }}>
+                Primary Interface • Gemini Live & ChatGPT Canvas Model
+              </div>
+              <div style={{ fontSize: '13.5px', maxWidth: '420px', lineHeight: 1.55, color: 'var(--text-secondary)' }}>
+                Speak naturally through your microphone. Live educational lectures, interactive syntactic trees, quizzes, and bionic notes appear right here inside your voice stream.
               </div>
             </div>
           ) : (
